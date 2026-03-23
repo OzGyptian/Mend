@@ -2,7 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch } from 'firebase/firestore';
 import { Enterprise, Project } from '../types';
-import { Plus, Briefcase, TrendingUp, Users, DollarSign, ArrowUpRight, Trash2, AlertTriangle, X } from 'lucide-react';
+import { Plus, Briefcase, TrendingUp, Users, DollarSign, ArrowUpRight, Trash2, AlertTriangle, X, CalendarCheck2, ShieldAlert, Activity, PieChart } from 'lucide-react';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 interface EnterpriseDashboardProps {
   enterprise: Enterprise | null;
@@ -17,6 +23,9 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
   const [newProject, setNewProject] = useState({ name: '', code: '', budget: 0 });
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const codeExists = !isSubmitting && projects.some(p => p.projectCode === newProject.code);
 
   const isEnterpriseAdmin = isSystemOwner || enterprise?.users?.[userId]?.role === 'Enterprise System Admin' || enterprise?.adminUsers.includes(userId);
 
@@ -41,11 +50,18 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
     e.preventDefault();
     if (!enterprise) return;
 
+    if (codeExists) {
+      alert('This Project Code already exists!');
+      return;
+    }
+
     try {
+      setIsSubmitting(true);
       const now = new Date().toISOString();
+      const finalName = newProject.name.trim() || 'Project Name';
       await addDoc(collection(db, 'projects'), {
         enterpriseId: enterprise.id,
-        projectName: newProject.name,
+        projectName: finalName,
         projectCode: newProject.code,
         projectBudget: Number(newProject.budget),
         startDate: now.split('T')[0],
@@ -59,6 +75,8 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
       setNewProject({ name: '', code: '', budget: 0 });
     } catch (error) {
       console.error('Failed to create project', error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -98,9 +116,9 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
 
   const stats = [
     { label: 'Total Projects', value: projects.length, icon: Briefcase, color: 'text-blue-600' },
-    { label: 'Total Budget', value: `$${(projects.reduce((acc, p) => acc + p.projectBudget, 0) / 1e6).toFixed(1)}M`, icon: DollarSign, color: 'text-emerald-600' },
-    { label: 'Enterprise Users', value: Object.keys(enterprise?.users || {}).length, icon: Users, color: 'text-purple-600' },
-    { label: 'Avg Variance', value: '+4.2%', icon: TrendingUp, color: 'text-[#FF6321]' },
+    { label: 'Portfolio Budget', value: `$${(projects.reduce((acc, p) => acc + p.projectBudget, 0) / 1e6).toFixed(1)}M`, icon: DollarSign, color: 'text-emerald-600' },
+    { label: 'Month-End Status', value: '85% Complete', icon: CalendarCheck2, color: 'text-amber-600' },
+    { label: 'Performance Index', value: '1.04', icon: Activity, color: 'text-[#FF6321]' },
   ];
 
   return (
@@ -108,8 +126,8 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
       <div className="w-full max-w-[1600px] mx-auto flex-1 flex flex-col">
         <div className="flex justify-between items-end mb-10">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight mb-2 dark:text-white">Enterprise Overview</h1>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">Manage your portfolio and enterprise-wide cost performance.</p>
+            <h1 className="text-3xl font-bold tracking-tight mb-2 dark:text-white">Overall Project Performance</h1>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">Integrated month-end performance tracking across all project modules.</p>
           </div>
           {isEnterpriseAdmin && (
             <button 
@@ -120,6 +138,29 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
               Create Project
             </button>
           )}
+        </div>
+
+        {/* Module Overview Section */}
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-12">
+          {[
+            { label: 'Cost', icon: DollarSign, status: 'Active', color: 'bg-emerald-500' },
+            { label: 'Schedule', icon: CalendarCheck2, status: 'Coming Soon', color: 'bg-amber-500' },
+            { label: 'Risk', icon: ShieldAlert, status: 'Coming Soon', color: 'bg-red-500' },
+            { label: 'Safety', icon: Activity, status: 'Coming Soon', color: 'bg-blue-500' },
+            { label: 'Procurement', icon: Briefcase, status: 'Coming Soon', color: 'bg-purple-500' },
+            { label: 'Field Progress', icon: TrendingUp, status: 'Coming Soon', color: 'bg-indigo-500' },
+          ].map((module, i) => (
+            <div key={i} className="bg-white dark:bg-[#141414] p-4 rounded-xl border border-gray-200 dark:border-white/10 shadow-sm opacity-80 hover:opacity-100 transition-opacity cursor-default">
+              <div className="flex items-center justify-between mb-3">
+                <div className="p-2 rounded-lg bg-gray-50 dark:bg-white/5">
+                  <module.icon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                </div>
+                <div className={`w-2 h-2 rounded-full ${module.color}`} />
+              </div>
+              <p className="text-sm font-bold dark:text-white mb-1">{module.label}</p>
+              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">{module.status}</p>
+            </div>
+          ))}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
@@ -270,7 +311,6 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Name</label>
                 <input 
-                  required
                   type="text" 
                   value={newProject.name}
                   onChange={e => setNewProject({...newProject, name: e.target.value})}
@@ -279,18 +319,28 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
                 />
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Code</label>
+                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
+                  Project Code <span className="text-red-500">*</span>
+                </label>
                 <input 
                   required
                   type="text" 
                   value={newProject.code}
                   onChange={e => setNewProject({...newProject, code: e.target.value})}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/5 dark:text-white"
+                  className={cn(
+                    "w-full p-3 bg-gray-50 dark:bg-white/5 border rounded-xl focus:outline-none focus:ring-2 dark:text-white transition-all",
+                    codeExists 
+                      ? "border-red-500 focus:ring-red-500/20" 
+                      : "border-gray-200 dark:border-white/10 focus:ring-black/5"
+                  )}
                   placeholder="e.g. BR-2024-001"
                 />
+                {codeExists && (
+                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This Project Code already exists!</p>
+                )}
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Budget ($)</label>
+                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Budget ($) <span className="text-red-500">*</span></label>
                 <input 
                   required
                   type="number" 
@@ -309,7 +359,8 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-colors"
+                  disabled={!newProject.code || codeExists}
+                  className="flex-1 py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   Create Project
                 </button>

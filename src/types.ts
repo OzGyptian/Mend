@@ -17,8 +17,11 @@ export interface ResourceRate {
   id: string;
   name: string;
   unit: string;
-  rate: number;
+  rate?: number;
   category?: string;
+  udf1?: string;
+  udf2?: string;
+  udf3?: string;
 }
 
 export interface Enterprise {
@@ -101,4 +104,13 @@ export interface UserProfile {
   email: string;
   displayName: string;
   photoURL?: string;
+}
+
+export interface SavedView {
+  id: string;
+  name: string;
+  tableId: string;
+  columns: string[];
+  userId: string;
+  createdAt: string;
 }

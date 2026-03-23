@@ -12,7 +12,7 @@ import SystemAdmin from './components/SystemAdmin';
 import EnterpriseAdmin from './components/EnterpriseAdmin';
 import ProjectAdmin from './components/ProjectAdmin';
 import LandingPage from './components/LandingPage';
-import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut } from 'lucide-react';
+import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2 } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -324,15 +324,17 @@ export default function App() {
         <div className="flex-1 bg-[#141414] text-white p-12 flex flex-col justify-between">
           <div>
             <div className="flex items-center gap-2 mb-12">
-              <div className="w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black">BU</div>
-              <span className="font-bold tracking-tight text-xl text-white">CostForecast Pro</span>
+              <div className="w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black">
+                <CalendarCheck2 className="w-5 h-5" />
+              </div>
+              <span className="font-bold tracking-tight text-xl text-white">Mend</span>
             </div>
             <h1 className="text-6xl font-light tracking-tight leading-none mb-6">
-              Precision forecasting for <br />
-              <span className="italic font-serif">complex projects.</span>
+              Master your <br />
+              <span className="italic font-serif">month-end cycle.</span>
             </h1>
             <p className="text-white/60 max-w-md">
-              Access your commercial dashboards, manage variations, and track project spend in real-time.
+              Mend (Month End) is the integrated platform for construction project performance. Track cost, schedule, risk, and procurement in one unified reporting cycle.
             </p>
           </div>
           <div className="flex gap-8 text-[10px] font-mono uppercase tracking-widest opacity-40">
@@ -351,13 +353,13 @@ export default function App() {
                 <p className="text-sm text-gray-500 mb-8 leading-relaxed">
                   To ensure a secure connection and fix login issues on iPhone/Safari, please launch the application in a new window.
                 </p>
-                <button 
-                  onClick={openInNewTab}
-                  className="w-full py-4 bg-[#FF6321] text-black rounded-xl font-bold hover:bg-[#FF6321]/90 transition-all shadow-lg shadow-[#FF6321]/20 flex items-center justify-center gap-3"
-                >
-                  <ExternalLink className="w-5 h-5" />
-                  Launch CostForecast Pro
-                </button>
+                  <button 
+                    onClick={openInNewTab}
+                    className="w-full py-4 bg-[#FF6321] text-black rounded-xl font-bold hover:bg-[#FF6321]/90 transition-all shadow-lg shadow-[#FF6321]/20 flex items-center justify-center gap-3"
+                  >
+                    <ExternalLink className="w-5 h-5" />
+                    Launch Mend
+                  </button>
                 <p className="mt-6 text-[10px] text-gray-400 uppercase tracking-widest font-bold">
                   Secure Enterprise Access
                 </p>
@@ -456,7 +458,7 @@ export default function App() {
           <div className="w-16 h-16 bg-[#FF6321]/10 rounded-full flex items-center justify-center mx-auto mb-6">
             <Building2 className="w-8 h-8 text-[#FF6321]" />
           </div>
-          <h2 className="text-2xl font-bold mb-4">Welcome to CostForecast</h2>
+          <h2 className="text-2xl font-bold mb-4">Welcome to Mend</h2>
           <p className="text-sm text-gray-500 mb-8 leading-relaxed">
             You are not currently associated with an enterprise. Please contact your administrator or create a new enterprise workspace.
           </p>

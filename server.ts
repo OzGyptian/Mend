@@ -38,7 +38,7 @@ async function startServer() {
         subject: `Invitation: Join ${enterpriseName}`,
         html: `
           <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #FF6321; margin-top: 0;">CostForecast Pro</h2>
+            <h2 style="color: #FF6321; margin-top: 0;">Mend</h2>
             <p>Hello,</p>
             <p><strong>${inviterName}</strong> has invited you to join the <strong>${enterpriseName}</strong> workspace.</p>
             <p>Click the button below to accept your invitation and set up your account:</p>
@@ -49,7 +49,7 @@ async function startServer() {
               <strong>Security Note:</strong> You will be asked to verify your email address after registering to ensure your account is secure.
             </p>
             <hr style="border: 0; border-top: 1px solid #eee; margin: 24px 0;" />
-            <p style="color: #999; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Powered by CostForecast Pro</p>
+            <p style="color: #999; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;">Powered by Mend</p>
           </div>
         `,
       });

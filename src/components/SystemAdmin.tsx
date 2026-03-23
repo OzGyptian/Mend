@@ -4,6 +4,12 @@ import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, writeBatch }
 import { Enterprise } from '../types';
 import { Plus, Trash2, Edit2, Building2, Shield, Search, AlertTriangle, X, Download, Upload, Filter, Eye, EyeOff, Lock, Unlock, Check, ChevronDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 
 interface SystemAdminProps {
   onSwitchEnterprise?: (id: string) => void;
@@ -15,6 +21,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEnterprise, setEditingEnterprise] = useState<Enterprise | null>(null);
   const [formData, setFormData] = useState({ name: '', enterpriseId: '' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string | string[], name: string, type: 'single' | 'bulk' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -26,6 +33,8 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const [isFrozen, setIsFrozen] = useState(true);
   const [importPreview, setImportPreview] = useState<any[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const idExists = !isSubmitting && !editingEnterprise && enterprises.some(e => e.enterpriseId === formData.enterpriseId);
 
   const columns = [
     { id: 'enterpriseId', label: 'Enterprise ID' },
@@ -53,12 +62,21 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
     }
 
     try {
+      setIsSubmitting(true);
+      const finalName = formData.name.trim() || 'Enterprise Name';
       if (editingEnterprise) {
         await updateDoc(doc(db, 'enterprises', editingEnterprise.id), {
-          name: formData.name,
+          name: finalName,
           enterpriseId: formData.enterpriseId,
         });
       } else {
+        // Check for uniqueness again on submit
+        if (enterprises.some(e => e.enterpriseId === formData.enterpriseId)) {
+          alert('This ID already Exists!');
+          setIsSubmitting(false);
+          return;
+        }
+
         // Initialize 10 static attributes for both project and line items
         const defaultAttributes = Array.from({ length: 10 }, (_, i) => ({
           id: (i + 1).toString().padStart(2, '0'),
@@ -67,7 +85,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
         }));
 
         await addDoc(collection(db, 'enterprises'), {
-          name: formData.name,
+          name: finalName,
           enterpriseId: formData.enterpriseId,
           adminUsers: [], 
           users: {},
@@ -81,6 +99,8 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
       setFormData({ name: '', enterpriseId: '' });
     } catch (error) {
       console.error('Operation failed', error);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -521,7 +541,9 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
             <h2 className="text-xl font-bold mb-6 dark:text-white">{editingEnterprise ? 'Edit' : 'Add'} Enterprise</h2>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Enterprise ID (Max 10 chars)</label>
+                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
+                  Enterprise ID (Max 10 chars) <span className="text-red-500">*</span>
+                </label>
                 <input 
                   required
                   type="text" 
@@ -529,13 +551,20 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
                   value={formData.enterpriseId}
                   onChange={e => setFormData({...formData, enterpriseId: e.target.value})}
                   placeholder="e.g. ENT-001"
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/5 dark:text-white"
+                  className={cn(
+                    "w-full p-3 bg-gray-50 dark:bg-white/5 border rounded-xl focus:outline-none focus:ring-2 dark:text-white transition-all",
+                    idExists 
+                      ? "border-red-500 focus:ring-red-500/20" 
+                      : "border-gray-200 dark:border-white/10 focus:ring-black/5 dark:focus:ring-white/5"
+                  )}
                 />
+                {idExists && (
+                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This ID already Exists!</p>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Enterprise Name (Max 50 chars)</label>
                 <input 
-                  required
                   type="text" 
                   maxLength={50}
                   value={formData.name}
@@ -554,7 +583,8 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-colors"
+                  disabled={!formData.enterpriseId || idExists}
+                  className="flex-1 py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   {editingEnterprise ? 'Update' : 'Create'}
                 </button>

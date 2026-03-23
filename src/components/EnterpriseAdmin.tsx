@@ -1,9 +1,23 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc } from 'firebase/firestore';
-import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue } from '../types';
-import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock } from 'lucide-react';
+import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, SavedView } from '../types';
+import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+
+const RESOURCE_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor'];
+const RESOURCE_UNITS = [
+  // International
+  'm', 'm2', 'm3', 'ton', 'kg', 'no', 'item', 'hour', 'week', 'month',
+  // American
+  'ft', 'ft2', 'ft3', 'lb', 'gal', 'yd', 'yd2', 'yd3', 'in', 'in2', 'in3'
+];
 
 interface EnterpriseAdminProps {
   enterprise: Enterprise;
@@ -35,9 +49,18 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
 
   const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem', attrId: string, valueId: string | null } | null>(null);
-  const [isEditingResource, setIsEditingResource] = useState<{ id: string | null } | null>(null);
+  const [isEditingResource, setIsEditingResource] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [valueFormData, setValueFormData] = useState({ id: '', description: '', sortOrder: 0 });
-  const [resourceFormData, setResourceFormData] = useState({ id: '', name: '', unit: '', rate: 0, category: '' });
+  const [resourceFormData, setResourceFormData] = useState({ 
+    id: '', 
+    name: '', 
+    unit: '', 
+    rate: 0, 
+    category: '',
+    udf1: '',
+    udf2: '',
+    udf3: ''
+  });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Table Control States
@@ -45,7 +68,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     users: ['photo', 'name', 'email', 'joined', 'access'],
     projects: ['photo', 'name', 'code', 'created', 'users', 'sheets'],
     attrValues: ['id', 'description', 'sortOrder'],
-    resourceRates: ['id', 'name', 'category', 'unit', 'rate']
+    resourceRates: ['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3']
   });
   const [isColumnMenuOpen, setIsColumnMenuOpen] = useState<string | null>(null);
   const [isFrozen, setIsFrozen] = useState<Record<string, boolean>>({
@@ -58,6 +81,38 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [userSort, setUserSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
   const [attrSort, setAttrSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'sortOrder', direction: 'asc' });
   const [resourceSort, setResourceSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newViewName, setNewViewName] = useState('');
+  const [isSavedViewMenuOpen, setIsSavedViewMenuOpen] = useState<string | null>(null);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+
+  const getAttributes = (type: 'project' | 'lineItem') => {
+    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+    const attrs = (enterprise as any)[field] || [];
+    
+    // Legacy check: if it's an array of strings, convert to new structure
+    if (attrs.length > 0 && typeof attrs[0] === 'string') {
+      return Array.from({ length: 10 }, (_, i) => ({
+        id: (i + 1).toString().padStart(2, '0'),
+        title: attrs[i] || '',
+        values: []
+      }));
+    }
+
+    // New structure or empty
+    const result = [...attrs];
+    while (result.length < 10) {
+      result.push({
+        id: (result.length + 1).toString().padStart(2, '0'),
+        title: '',
+        values: []
+      });
+    }
+    return result as ProjectAttribute[];
+  };
+
+  const resourceIdExists = !isSubmitting && !isEditingResource?.id && (enterprise.resourceRates || []).some(r => r.id === resourceFormData.id);
+  const valueIdExists = !isSubmitting && !isEditingValue?.valueId && isEditingValue && (getAttributes(isEditingValue.type).find(a => a.id === isEditingValue.attrId)?.values || []).some(v => v.id === valueFormData.id);
 
   useEffect(() => {
     const q = query(collection(db, 'projects'), where('enterpriseId', '==', enterprise.id));
@@ -328,31 +383,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }));
   };
 
-  const getAttributes = (type: 'project' | 'lineItem') => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
-    const attrs = (enterprise as any)[field] || [];
-    
-    // Legacy check: if it's an array of strings, convert to new structure
-    if (attrs.length > 0 && typeof attrs[0] === 'string') {
-      return Array.from({ length: 10 }, (_, i) => ({
-        id: (i + 1).toString().padStart(2, '0'),
-        title: attrs[i] || '',
-        values: []
-      }));
-    }
-
-    // New structure or empty
-    const result = [...attrs];
-    while (result.length < 10) {
-      result.push({
-        id: (result.length + 1).toString().padStart(2, '0'),
-        title: '',
-        values: []
-      });
-    }
-    return result as ProjectAttribute[];
-  };
-
   const projectAttributes = useMemo(() => getAttributes('project'), [enterprise.projectAttributes]);
   const lineItemAttributes = useMemo(() => getAttributes('lineItem'), [enterprise.lineItemAttributes]);
 
@@ -377,23 +407,34 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   };
 
   const addAttributeValue = async (type: 'project' | 'lineItem', attrId: string, value: ProjectAttributeValue) => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
-    const currentAttrs = getAttributes(type);
-    const newAttrs = currentAttrs.map(a => {
-      if (a.id === attrId) {
-        const values = a.values || [];
-        // Prevent duplicate ID
-        if (values.some(v => v.id === value.id)) {
-          alert(`Value ID "${value.id}" already exists for this attribute.`);
-          return a;
+    try {
+      setIsSubmitting(true);
+      const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+      const currentAttrs = getAttributes(type);
+      const finalValue = {
+        ...value,
+        description: value.description.trim() || 'Value Description'
+      };
+      const newAttrs = currentAttrs.map(a => {
+        if (a.id === attrId) {
+          const values = a.values || [];
+          // Prevent duplicate ID
+          if (values.some(v => v.id === value.id)) {
+            alert(`Value ID "${value.id}" already exists for this attribute.`);
+            return a;
+          }
+          return { ...a, values: [...values, finalValue] };
         }
-        return { ...a, values: [...values, value] };
-      }
-      return a;
-    });
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      [field]: newAttrs
-    });
+        return a;
+      });
+      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        [field]: newAttrs
+      });
+    } catch (error) {
+      console.error('Failed to add attribute value', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const removeAttributeValue = async (type: 'project' | 'lineItem', attrId: string, valueId: string) => {
@@ -574,15 +615,34 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     alert('Import completed successfully.');
   };
 
-  const addResourceRate = async (resource: any) => {
-    const currentResources = enterprise.resourceRates || [];
-    if (currentResources.some(r => r.id === resource.id)) {
-      alert(`Resource ID "${resource.id}" already exists.`);
-      return;
+  const addResourceRate = async (resource: any, index?: number) => {
+    try {
+      setIsSubmitting(true);
+      const currentResources = [...(enterprise.resourceRates || [])];
+      if (currentResources.some(r => r.id === resource.id)) {
+        alert(`Resource ID "${resource.id}" already exists.`);
+        setIsSubmitting(false);
+        return;
+      }
+      const finalResource = {
+        ...resource,
+        name: resource.name.trim() || 'Resource Name'
+      };
+      
+      if (typeof index === 'number') {
+        currentResources.splice(index, 0, finalResource);
+      } else {
+        currentResources.push(finalResource);
+      }
+
+      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        resourceRates: currentResources
+      });
+    } catch (error) {
+      console.error('Failed to add resource rate', error);
+    } finally {
+      setIsSubmitting(false);
     }
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      resourceRates: [...currentResources, resource]
-    });
   };
 
   const updateResourceRate = async (id: string, updates: any) => {
@@ -1145,12 +1205,73 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     <Download className="w-5 h-5" />
                   </button>
                   <div className="relative">
+                    <button onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'resourceRates' ? null : 'resourceRates')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
+                      <Bookmark className="w-5 h-5" /> Views
+                    </button>
+                    {isSavedViewMenuOpen === 'resourceRates' && (
+                      <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3">
+                        <div className="mb-3">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 block">Save Current View</label>
+                          <div className="flex gap-2">
+                            <input 
+                              type="text"
+                              value={newViewName}
+                              onChange={(e) => setNewViewName(e.target.value)}
+                              placeholder="View name (e.g. Summary)"
+                              className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg dark:text-white"
+                            />
+                            <button 
+                              onClick={() => {
+                                if (!newViewName.trim()) return;
+                                const newView: SavedView = {
+                                  id: Math.random().toString(36).substr(2, 9),
+                                  name: newViewName,
+                                  tableId: 'resourceRates',
+                                  columns: visibleColumns.resourceRates,
+                                  userId: auth.currentUser?.uid || '',
+                                  createdAt: new Date().toISOString()
+                                };
+                                setSavedViews(prev => [...prev, newView]);
+                                setNewViewName('');
+                              }}
+                              className="p-1 bg-black dark:bg-white text-white dark:text-black rounded-lg"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1 max-h-48 overflow-auto">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1 block">Saved Views</label>
+                          {savedViews.filter(v => v.tableId === 'resourceRates').map(view => (
+                            <div key={view.id} className="flex items-center justify-between group/view">
+                              <button 
+                                onClick={() => setVisibleColumns(prev => ({ ...prev, resourceRates: view.columns }))}
+                                className="flex-1 text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg"
+                              >
+                                {view.name}
+                              </button>
+                              <button 
+                                onClick={() => setSavedViews(prev => prev.filter(v => v.id !== view.id))}
+                                className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover/view:opacity-100 transition-opacity"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                          {savedViews.filter(v => v.tableId === 'resourceRates').length === 0 && (
+                            <p className="text-[10px] text-gray-500 italic p-2">No saved views yet.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative">
                     <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'resourceRates' ? null : 'resourceRates')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
                       <Eye className="w-5 h-5" /> Columns
                     </button>
                     {isColumnMenuOpen === 'resourceRates' && (
                       <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                        {['id', 'name', 'category', 'unit', 'rate'].map(col => (
+                        {['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'].map(col => (
                           <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
                             <input 
                               type="checkbox"
@@ -1161,7 +1282,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                               }))}
                               className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
                             />
-                            <span className="text-xs dark:text-white capitalize">{col}</span>
+                            <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
                           </label>
                         ))}
                       </div>
@@ -1181,7 +1302,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   )}
                   <button 
                     onClick={() => {
-                      setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '' });
+                      setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
                       setIsEditingResource({ id: null });
                     }}
                     className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
@@ -1214,8 +1335,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       {visibleColumns.resourceRates.includes('name') && <th onClick={() => handleResourceSort('name')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-black dark:hover:text-white">Resource Name {resourceSort.field === 'name' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.resourceRates.includes('category') && <th onClick={() => handleResourceSort('category')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-black dark:hover:text-white">Category {resourceSort.field === 'category' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.resourceRates.includes('unit') && <th onClick={() => handleResourceSort('unit')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-black dark:hover:text-white">Unit {resourceSort.field === 'unit' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('rate') && <th onClick={() => handleResourceSort('rate')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-black dark:hover:text-white">Rate {resourceSort.field === 'rate' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 text-right">Actions</th>
+                      {visibleColumns.resourceRates.includes('rate') && <th onClick={() => handleResourceSort('rate')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-black dark:hover:text-white text-right pr-4">Rate {resourceSort.field === 'rate' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
+                      {visibleColumns.resourceRates.includes('udf1') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">UDF 1</th>}
+                      {visibleColumns.resourceRates.includes('udf2') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">UDF 2</th>}
+                      {visibleColumns.resourceRates.includes('udf3') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">UDF 3</th>}
+                      <th className="p-2 w-12 sticky right-0 z-30 bg-gray-50/30 dark:bg-[#1a1a1a] border-l border-gray-100 dark:border-white/10"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-white/5">
@@ -1241,37 +1365,71 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.resourceRates.includes('name') && <td className="p-2 text-xs font-bold dark:text-white">{resource.name}</td>}
                         {visibleColumns.resourceRates.includes('category') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.category || 'Uncategorized'}</td>}
                         {visibleColumns.resourceRates.includes('unit') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.unit}</td>}
-                        {visibleColumns.resourceRates.includes('rate') && <td className="p-2 text-xs font-mono dark:text-white">${resource.rate.toLocaleString()}</td>}
-                        <td className="p-2 text-right">
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
-                              onClick={() => {
-                                setResourceFormData({
-                                  id: resource.id,
-                                  name: resource.name,
-                                  unit: resource.unit,
-                                  rate: resource.rate,
-                                  category: resource.category || ''
-                                });
-                                setIsEditingResource({ id: resource.id });
-                              }}
-                              className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                            <button 
-                              onClick={() => setDeleteConfirm({ type: 'rate', id: resource.id })}
-                              className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
+                        {visibleColumns.resourceRates.includes('rate') && <td className="p-2 text-xs text-right pr-4 font-mono dark:text-white">{resource.rate ? `$${resource.rate.toLocaleString()}` : '-'}</td>}
+                        {visibleColumns.resourceRates.includes('udf1') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf1 || '-'}</td>}
+                        {visibleColumns.resourceRates.includes('udf2') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf2 || '-'}</td>}
+                        {visibleColumns.resourceRates.includes('udf3') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf3 || '-'}</td>}
+                        <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
+                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div className="relative group/menu">
+                              <button className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5">
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                              <div className="absolute right-0 bottom-full mb-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2 hidden group-hover/menu:block">
+                                <button 
+                                  onClick={() => {
+                                    const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
+                                    setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
+                                    setIsEditingResource({ id: null, insertIndex: index });
+                                  }}
+                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                >
+                                  <Plus className="w-3 h-3" /> Insert Above
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
+                                    setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
+                                    setIsEditingResource({ id: null, insertIndex: index + 1 });
+                                  }}
+                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                >
+                                  <Plus className="w-3 h-3" /> Insert Below
+                                </button>
+                                <hr className="my-1 border-gray-100 dark:border-white/10" />
+                                <button 
+                                  onClick={() => {
+                                    setResourceFormData({ 
+                                      id: resource.id, 
+                                      name: resource.name, 
+                                      unit: resource.unit, 
+                                      rate: resource.rate || 0, 
+                                      category: resource.category || '',
+                                      udf1: resource.udf1 || '',
+                                      udf2: resource.udf2 || '',
+                                      udf3: resource.udf3 || ''
+                                    });
+                                    setIsEditingResource({ id: resource.id });
+                                  }}
+                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                >
+                                  <Edit2 className="w-3 h-3" /> Edit
+                                </button>
+                                <button 
+                                  onClick={() => setDeleteConfirm({ type: 'rate', id: resource.id, name: resource.name })}
+                                  className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                >
+                                  <Trash2 className="w-3 h-3" /> Delete
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         </td>
                       </tr>
                     ))}
                     {filteredResources.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="p-12 text-center">
+                        <td colSpan={10} className="p-12 text-center">
                           <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
                             <Settings className="w-8 h-8 text-gray-300" />
                           </div>
@@ -1507,69 +1665,114 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
 
       {isEditingResource && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
             <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingResource.id ? 'Edit' : 'Add'} Resource</h2>
             <form onSubmit={(e) => {
               e.preventDefault();
               if (isEditingResource.id) {
                 updateResourceRate(isEditingResource.id, resourceFormData);
               } else {
-                addResourceRate(resourceFormData);
+                addResourceRate(resourceFormData, isEditingResource.insertIndex);
               }
               setIsEditingResource(null);
             }} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Resource ID</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                    Resource ID <span className="text-red-500">*</span>
+                  </label>
                   <input 
                     required
                     disabled={!!isEditingResource.id}
                     type="text"
+                    maxLength={15}
                     value={resourceFormData.id}
                     onChange={e => setResourceFormData({ ...resourceFormData, id: e.target.value })}
-                    className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white disabled:opacity-50"
+                    className={cn(
+                      "w-full p-4 bg-gray-50 dark:bg-white/5 border rounded-2xl text-sm focus:outline-none focus:ring-2 dark:text-white disabled:opacity-50 transition-all",
+                      resourceIdExists 
+                        ? "border-red-500 focus:ring-red-500/20" 
+                        : "border-gray-200 dark:border-white/10 focus:ring-black/5"
+                    )}
                   />
+                  {resourceIdExists && (
+                    <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This ID already Exists!</p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Category</label>
-                  <input 
-                    type="text"
+                  <select 
                     value={resourceFormData.category}
                     onChange={e => setResourceFormData({ ...resourceFormData, category: e.target.value })}
-                    placeholder="e.g. Labor"
                     className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                  />
+                  >
+                    <option value="">Select Category</option>
+                    {RESOURCE_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Resource Name</label>
                 <input 
-                  required
                   type="text"
                   value={resourceFormData.name}
                   onChange={e => setResourceFormData({ ...resourceFormData, name: e.target.value })}
+                  placeholder="e.g. Senior Engineer"
                   className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Unit</label>
-                  <input 
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Unit <span className="text-red-500">*</span></label>
+                  <select 
                     required
-                    type="text"
                     value={resourceFormData.unit}
                     onChange={e => setResourceFormData({ ...resourceFormData, unit: e.target.value })}
-                    placeholder="e.g. Hour"
                     className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                  />
+                  >
+                    <option value="">Select Unit</option>
+                    {RESOURCE_UNITS.map(unit => (
+                      <option key={unit} value={unit}>{unit}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Rate ($)</label>
                   <input 
-                    required
                     type="number"
                     value={resourceFormData.rate}
                     onChange={e => setResourceFormData({ ...resourceFormData, rate: parseFloat(e.target.value) || 0 })}
+                    className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">UDF 1</label>
+                  <input 
+                    type="text"
+                    value={resourceFormData.udf1}
+                    onChange={e => setResourceFormData({ ...resourceFormData, udf1: e.target.value })}
+                    className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">UDF 2</label>
+                  <input 
+                    type="text"
+                    value={resourceFormData.udf2}
+                    onChange={e => setResourceFormData({ ...resourceFormData, udf2: e.target.value })}
+                    className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">UDF 3</label>
+                  <input 
+                    type="text"
+                    value={resourceFormData.udf3}
+                    onChange={e => setResourceFormData({ ...resourceFormData, udf3: e.target.value })}
                     className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
                   />
                 </div>
@@ -1584,7 +1787,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 </button>
                 <button 
                   type="submit"
-                  className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors"
+                  disabled={!resourceFormData.id || resourceIdExists}
+                  className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   {isEditingResource.id ? 'Update' : 'Add'}
                 </button>
@@ -1691,15 +1895,25 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Value ID</label>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
+                  Value ID <span className="text-red-500">*</span>
+                </label>
                 <input 
                   type="text"
                   value={valueFormData.id}
                   onChange={e => setValueFormData({ ...valueFormData, id: e.target.value })}
                   placeholder="e.g. V01"
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white"
+                  className={cn(
+                    "w-full p-3 bg-gray-50 dark:bg-white/5 border rounded-xl focus:outline-none focus:ring-2 dark:text-white transition-all",
+                    valueIdExists 
+                      ? "border-red-500 focus:ring-red-500/20" 
+                      : "border-gray-200 dark:border-white/10 focus:ring-blue-500/20"
+                  )}
                   disabled={!!isEditingValue.valueId}
                 />
+                {valueIdExists && (
+                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This ID already Exists!</p>
+                )}
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Description</label>
@@ -1712,8 +1926,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Sort Order</label>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Sort Order <span className="text-red-500">*</span></label>
                 <input 
+                  required
                   type="number"
                   value={valueFormData.sortOrder}
                   onChange={e => setValueFormData({ ...valueFormData, sortOrder: parseInt(e.target.value) || 0 })}
@@ -1729,8 +1944,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 Cancel
               </button>
               <button 
+                disabled={!valueFormData.id || valueIdExists}
                 onClick={async () => {
-                  if (!valueFormData.id || !valueFormData.description) return;
+                  if (!valueFormData.id) return;
                   if (isEditingValue.valueId) {
                     await updateAttributeValue(isEditingValue.type, isEditingValue.attrId, isEditingValue.valueId, valueFormData);
                   } else {
@@ -1738,7 +1954,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   }
                   setIsEditingValue(null);
                 }}
-                className="px-8 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                className="px-8 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 {isEditingValue.valueId ? 'Save Changes' : 'Add Value'}
               </button>

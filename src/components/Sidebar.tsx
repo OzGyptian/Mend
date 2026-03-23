@@ -1,4 +1,4 @@
-import { Layout, Briefcase, FileText, Settings, Shield, ChevronRight, LogOut, ChevronLeft, Sun, Moon, Menu } from 'lucide-react';
+import { Layout, Briefcase, FileText, Settings, Shield, ChevronRight, LogOut, ChevronLeft, Sun, Moon, Menu, CalendarCheck2 } from 'lucide-react';
 import { Enterprise, Project, Sheet } from '../types';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -75,8 +75,10 @@ export default function Sidebar({
 
       <div className="p-6 overflow-hidden">
         <div className={cn("flex items-center gap-2 mb-8", isCollapsed && "justify-center")}>
-          <div className="shrink-0 w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-white dark:text-black text-sm">BU</div>
-          {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">CostForecast Pro</span>}
+          <div className="shrink-0 w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-white dark:text-black text-sm">
+            <CalendarCheck2 className="w-4 h-4" />
+          </div>
+          {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">Mend</span>}
         </div>
 
         <nav className="space-y-1">

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, BarChart3, Users, Zap, ArrowRight, CheckCircle2, Building2 } from 'lucide-react';
+import { Shield, BarChart3, Users, Zap, ArrowRight, CheckCircle2, Building2, CalendarCheck2, TrendingUp, Activity, PieChart } from 'lucide-react';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -13,8 +13,10 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
       <nav className="fixed top-0 left-0 right-0 h-20 bg-white/80 backdrop-blur-md z-50 border-b border-gray-100">
         <div className="max-w-7xl mx-auto h-full px-6 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black">BU</div>
-            <span className="font-bold tracking-tight text-xl">CostForecast Pro</span>
+            <div className="w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black">
+              <CalendarCheck2 className="w-5 h-5" />
+            </div>
+            <span className="font-bold tracking-tight text-xl">Mend</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-500">
             <a href="#features" className="hover:text-black transition-colors">Features</a>
@@ -43,15 +45,15 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
         <div className="max-w-7xl mx-auto">
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-widest mb-8">
-              <Zap className="w-3 h-3" />
-              Next-Gen Project Controls
+              <Activity className="w-3 h-3" />
+              Month-End Performance Tracking
             </div>
             <h1 className="text-7xl md:text-8xl font-light tracking-tighter leading-[0.9] mb-8">
-              Precision forecasting for <br />
-              <span className="italic font-serif">complex projects.</span>
+              Master your <br />
+              <span className="italic font-serif text-[#FF6321]">month-end cycle.</span>
             </h1>
             <p className="text-xl text-gray-500 mb-12 leading-relaxed max-w-xl">
-              The enterprise-grade commercial dashboard for modern construction. Track variations, manage project spend, and forecast with confidence.
+              Mend (Month End) is the integrated platform for construction project performance. Track cost, schedule, risk, and procurement in one unified reporting cycle.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <button 
@@ -92,29 +94,29 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
           <div className="grid md:grid-cols-3 gap-12">
             <div className="space-y-6">
               <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
-                <BarChart3 className="w-6 h-6" />
+                <TrendingUp className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Real-time Dashboards</h3>
+              <h3 className="text-2xl font-bold">Performance Trends</h3>
               <p className="text-gray-500 leading-relaxed">
-                Live visibility into project performance. Track EAC, Cost-to-Go, and variations across your entire portfolio.
+                Visualize monthly movement and trends for all your KPIs. See exactly how your projects are performing over time.
               </p>
             </div>
             <div className="space-y-6">
               <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
-                <Users className="w-6 h-6" />
+                <PieChart className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Enterprise Hierarchy</h3>
+              <h3 className="text-2xl font-bold">Integrated Modules</h3>
               <p className="text-gray-500 leading-relaxed">
-                Structured access control from global enterprise level down to individual project sheets.
+                Cost, Schedule, Risk, and Safety—all interlinked and integrated for a complete project health overview.
               </p>
             </div>
             <div className="space-y-6">
               <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
-                <Zap className="w-6 h-6" />
+                <CalendarCheck2 className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Smart Distribution</h3>
+              <h3 className="text-2xl font-bold">Reporting Cycles</h3>
               <p className="text-gray-500 leading-relaxed">
-                Automated time-phasing with bell curves, front-loading, and manual overrides for precise cash flow.
+                Streamline your month-end reporting. Standardize data collection and automate performance summaries.
               </p>
             </div>
           </div>
@@ -150,15 +152,17 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
       <footer className="py-12 px-6 border-t border-gray-100">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black text-xs">BU</div>
-            <span className="font-bold tracking-tight text-sm">CostForecast Pro</span>
+            <div className="w-6 h-6 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black text-xs">
+              <CalendarCheck2 className="w-4 h-4" />
+            </div>
+            <span className="font-bold tracking-tight text-sm">Mend</span>
           </div>
           <div className="flex gap-8 text-xs text-gray-400 font-medium">
             <a href="#" className="hover:text-black transition-colors">Privacy</a>
             <a href="#" className="hover:text-black transition-colors">Terms</a>
             <a href="#" className="hover:text-black transition-colors">Contact</a>
           </div>
-          <p className="text-xs text-gray-400">© 2026 CostForecast Pro. All rights reserved.</p>
+          <p className="text-xs text-gray-400">© 2026 Mend. All rights reserved.</p>
         </div>
       </footer>
     </div>
