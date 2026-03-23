@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "Enterprise": {
+      "title": "Enterprise",
+      "description": "Represents a company using the system.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Company name" },
+        "adminUsers": { "type": "array", "items": { "type": "string" }, "description": "List of admin UIDs" },
+        "settings": { "type": "object", "description": "Enterprise-wide settings" }
+      },
+      "required": ["name", "adminUsers"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A construction project within an enterprise.",
+      "type": "object",
+      "properties": {
+        "enterpriseId": { "type": "string" },
+        "projectName": { "type": "string" },
+        "projectCode": { "type": "string" },
+        "projectBudget": { "type": "number" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "users": { "type": "object", "description": "Map of UID to role (e.g., 'admin', 'editor', 'viewer')" }
+      },
+      "required": ["enterpriseId", "projectName", "projectCode"]
+    },
+    "Sheet": {
+      "title": "Sheet",
+      "description": "A forecasting sheet within a project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "sheetName": { "type": "string" },
+        "forecastMethod": { "type": "string", "enum": ["commitment", "time-based"] },
+        "version": { "type": "string" },
+        "lockedStatus": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "users": { "type": "array", "items": { "type": "string" }, "description": "List of UIDs with access" }
+      },
+      "required": ["projectId", "sheetName", "forecastMethod"]
+    },
+    "ForecastRow": {
+      "title": "Forecast Row",
+      "description": "A single line item in a forecast sheet.",
+      "type": "object",
+      "properties": {
+        "sheetId": { "type": "string" },
+        "costCode": { "type": "string" },
+        "description": { "type": "string" },
+        "vendor": { "type": "string" },
+        "budget": { "type": "number" },
+        "committedCost": { "type": "number" },
+        "actualCostToDate": { "type": "number" },
+        "costToGo": { "type": "number" },
+        "eac": { "type": "number" },
+        "timePhasing": { "type": "object", "description": "Monthly forecast values" },
+        "distributionMethod": { "type": "string", "enum": ["manual", "even", "front", "back", "custom"] }
+      },
+      "required": ["sheetId", "costCode"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "Record of activities for security and compliance.",
+      "type": "object",
+      "properties": {
+        "enterpriseId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "details": { "type": "object" }
+      },
+      "required": ["enterpriseId", "userId", "action", "timestamp"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "A secure invitation for a user to join an enterprise.",
+      "type": "object",
+      "properties": {
+        "enterpriseId": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "token": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "expired"] },
+        "invitedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["enterpriseId", "email", "token", "status", "invitedBy", "createdAt", "expiresAt"]
+    }
+  },
+  "firestore": {
+    "/enterprises/{enterpriseId}": {
+      "schema": "Enterprise",
+      "description": "Enterprise root documents"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Project documents"
+    },
+    "/sheets/{sheetId}": {
+      "schema": "Sheet",
+      "description": "Forecasting sheets"
+    },
+    "/sheets/{sheetId}/rows/{rowId}": {
+      "schema": "ForecastRow",
+      "description": "Rows within a sheet"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "System-wide audit logs"
+    },
+    "/invitations/{invitationId}": {
+      "schema": "Invitation",
+      "description": "Secure invitations to join enterprises"
+    }
+  }
+}

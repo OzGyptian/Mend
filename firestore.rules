@@ -1,0 +1,76 @@
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSystemAdmin() {
+      return isAuthenticated() && 
+             request.auth.token.email == "tarek.guindy@gmail.com" && 
+             request.auth.token.email_verified == true;
+    }
+
+    function isEmailVerified() {
+      return isAuthenticated() && request.auth.token.email_verified == true;
+    }
+
+    function isAdminOfEnterprise(enterpriseId) {
+      return isAuthenticated() && (
+        isSystemAdmin() || 
+        request.auth.uid in get(/databases/$(database)/documents/enterprises/$(enterpriseId)).data.adminUsers
+      );
+    }
+
+    function canAccessProject(projectId) {
+      return isEmailVerified() && (
+        request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.users || 
+        isAdminOfEnterprise(get(/databases/$(database)/documents/projects/$(projectId)).data.enterpriseId)
+      );
+    }
+
+    function canAccessSheet(sheetId) {
+      return canAccessProject(get(/databases/$(database)/documents/sheets/$(sheetId)).data.projectId);
+    }
+
+    match /enterprises/{enterpriseId} {
+      allow read: if isEmailVerified() && (request.auth.uid in resource.data.adminUsers || isSystemAdmin());
+      allow create: if isAuthenticated(); // Allow self-registration of enterprises
+      allow update: if isEmailVerified() && isAdminOfEnterprise(enterpriseId);
+      allow delete: if isSystemAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if canAccessProject(projectId);
+      allow create: if isEmailVerified() && isAdminOfEnterprise(request.resource.data.enterpriseId);
+      allow update: if canAccessProject(projectId);
+      allow delete: if isEmailVerified() && isAdminOfEnterprise(resource.data.enterpriseId);
+    }
+
+    match /sheets/{sheetId} {
+      allow read: if canAccessSheet(sheetId);
+      allow create: if isEmailVerified() && canAccessProject(request.resource.data.projectId);
+      allow update: if canAccessSheet(sheetId);
+      allow delete: if isEmailVerified() && canAccessProject(resource.data.projectId);
+
+      match /rows/{rowId} {
+        allow read: if canAccessSheet(sheetId);
+        allow write: if canAccessSheet(sheetId);
+      }
+    }
+
+    match /invitations/{invitationId} {
+      allow read: if isAuthenticated();
+      allow create: if isEmailVerified() && isAdminOfEnterprise(request.resource.data.enterpriseId);
+      allow update: if isAuthenticated() && 
+                      request.auth.token.email.lower() == resource.data.email.lower() &&
+                      request.resource.data.status == 'accepted' &&
+                      resource.data.status == 'pending';
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isSystemAdmin();
+      allow create: if isAuthenticated();
+    }
+  }
+}
