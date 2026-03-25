@@ -20,6 +20,7 @@ export default function App() {
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
+  const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [view, setView] = useState<'enterprise' | 'project' | 'sheet' | 'system-admin' | 'enterprise-admin' | 'project-admin'>('enterprise');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -193,6 +194,8 @@ export default function App() {
           console.error('Bootstrap failed', error);
         }
       }
+    }, (error) => {
+      console.error("Bootstrap check error:", error);
     });
     return () => unsubscribe();
   }, [user]);
@@ -507,7 +510,9 @@ export default function App() {
     <div className={`h-screen flex overflow-hidden ${theme === 'dark' ? 'dark' : ''}`}>
       <Sidebar 
         currentView={view} 
+        currentModule={currentModule}
         setView={setView} 
+        setModule={setCurrentModule}
         enterprise={currentEnterprise}
         project={currentProject}
         sheet={currentSheet}
@@ -517,7 +522,6 @@ export default function App() {
         setTheme={setTheme}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
-        onClearEnterprise={() => setSystemOwnerEnterpriseId(null)}
       />
       <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0A0A0A] transition-colors duration-300">
         <Header 
@@ -536,6 +540,7 @@ export default function App() {
               isSystemOwner={isSystemOwner}
               onSelectProject={(p) => {
                 setCurrentProject(p);
+                setCurrentModule('dashboard');
                 setView('project');
               }}
             />
@@ -544,6 +549,7 @@ export default function App() {
             <ProjectDashboard 
               project={currentProject} 
               enterprise={currentEnterprise}
+              currentModule={currentModule}
               onSelectSheet={(s) => {
                 setCurrentSheet(s);
                 setView('sheet');

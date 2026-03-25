@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { Enterprise } from '../types';
-import { Plus, Trash2, Edit2, Building2, Shield, Search, AlertTriangle, X, Download, Upload, Filter, Eye, EyeOff, Lock, Unlock, Check, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Edit2, Building2, Shield, Search, AlertTriangle, X, Download, Upload, Filter, Eye, EyeOff, Lock, Unlock, Check, ChevronDown, CheckCircle2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -22,6 +23,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const [editingEnterprise, setEditingEnterprise] = useState<Enterprise | null>(null);
   const [formData, setFormData] = useState({ name: '', enterpriseId: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showImportSuccessModal, setShowImportSuccessModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string | string[], name: string, type: 'single' | 'bulk' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -46,6 +48,8 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'enterprises'), (snapshot) => {
       setEnterprises(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Enterprise)));
+    }, (error) => {
+      console.error("Enterprises fetch error:", error);
     });
     return () => unsubscribe();
   }, []);
@@ -223,6 +227,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
 
     await batch.commit();
     setImportPreview(null);
+    setShowImportSuccessModal(true);
   };
 
   return (
@@ -618,6 +623,31 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
           </div>
         </div>
       </div>
+      {showImportSuccessModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 dark:border-white/10"
+          >
+            <div className="p-8 text-center">
+              <div className="w-16 h-16 bg-green-100 dark:bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                <CheckCircle2 className="w-8 h-8 text-green-600 dark:text-green-400" />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Import Successful</h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                Your data has been imported successfully into the system.
+              </p>
+              <button
+                onClick={() => setShowImportSuccessModal(false)}
+                className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+              >
+                Got it
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

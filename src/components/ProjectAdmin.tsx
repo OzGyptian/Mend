@@ -2,20 +2,50 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { Project, Enterprise } from '../types';
-import { Calendar, Users, Settings, Save, List, Layout, Database, ShieldCheck, Table } from 'lucide-react';
+import { 
+  Calendar, 
+  Users, 
+  Settings, 
+  Save, 
+  Layout, 
+  Database, 
+  ShieldCheck, 
+  Table, 
+  ChevronDown, 
+  ChevronRight,
+  DollarSign,
+  Clock,
+  RefreshCw,
+  PenTool,
+  HardHat,
+  ShoppingCart,
+  Briefcase,
+  FileText
+} from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
-import AgGridMasterListEditor from './AgGridMasterListEditor';
 
 interface ProjectAdminProps {
   project: Project;
   enterprise: Enterprise;
 }
 
-type AdminTab = 'general' | 'calendar' | 'masterLists' | 'access';
+type AdminTab = 
+  | 'general' 
+  | 'calendar' 
+  | 'costMgmt' 
+  | 'scheduleMgmt' 
+  | 'changeMgmt' 
+  | 'designMgmt' 
+  | 'fieldMgmt' 
+  | 'procurement' 
+  | 'subContractMgmt' 
+  | 'invoicing' 
+  | 'access';
 
 export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('general');
   const [saving, setSaving] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<string[]>([]);
   
   const [formData, setFormData] = useState({
     projectName: project.projectName,
@@ -69,7 +99,6 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
         dateLastModified: new Date().toISOString()
       });
       console.log('Project settings updated successfully');
-      alert('Project settings updated successfully');
     } catch (error) {
       console.error('Update failed', error);
       alert('Failed to update project settings. Check console for details.');
@@ -88,35 +117,150 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
     await updateDoc(doc(db, 'projects', project.id), { users: newUsers });
   };
 
-  const tabs: { id: AdminTab; label: string; icon: any }[] = [
-    { id: 'general', label: 'General Info', icon: Settings },
-    { id: 'calendar', label: 'Calendar', icon: Calendar },
-    { id: 'masterLists', label: 'Master Lists', icon: Table },
-    { id: 'access', label: 'Access Control', icon: Users },
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => 
+      prev.includes(sectionId) 
+        ? prev.filter(id => id !== sectionId) 
+        : [...prev, sectionId]
+    );
+  };
+
+  const adminSections = [
+    {
+      id: 'general',
+      label: 'General Admin',
+      icon: <Settings className="w-4 h-4" />,
+      items: [
+        { id: 'general', label: 'General Info', icon: <Layout className="w-4 h-4" /> },
+        { id: 'calendar', label: 'Project Calendar', icon: <Calendar className="w-4 h-4" /> },
+        { id: 'access', label: 'Access Control', icon: <Users className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'cost',
+      label: 'Cost Management',
+      icon: <DollarSign className="w-4 h-4" />,
+      items: [
+        { id: 'costMgmt', label: 'Cost Settings', icon: <Database className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'schedule',
+      label: 'Schedule Management',
+      icon: <Clock className="w-4 h-4" />,
+      items: [
+        { id: 'scheduleMgmt', label: 'Schedule Settings', icon: <Calendar className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'change',
+      label: 'Change Management',
+      icon: <RefreshCw className="w-4 h-4" />,
+      items: [
+        { id: 'changeMgmt', label: 'Change Settings', icon: <RefreshCw className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'design',
+      label: 'Design Management',
+      icon: <PenTool className="w-4 h-4" />,
+      items: [
+        { id: 'designMgmt', label: 'Design Settings', icon: <PenTool className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'field',
+      label: 'Field Management',
+      icon: <HardHat className="w-4 h-4" />,
+      items: [
+        { id: 'fieldMgmt', label: 'Field Settings', icon: <HardHat className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'procurement',
+      label: 'Procurement',
+      icon: <ShoppingCart className="w-4 h-4" />,
+      items: [
+        { id: 'procurement', label: 'Procurement Settings', icon: <ShoppingCart className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'subcontract',
+      label: 'Sub-Contract Management',
+      icon: <Briefcase className="w-4 h-4" />,
+      items: [
+        { id: 'subContractMgmt', label: 'Sub-Contract Settings', icon: <Briefcase className="w-4 h-4" /> },
+      ]
+    },
+    {
+      id: 'invoicing',
+      label: 'Invoicing',
+      icon: <FileText className="w-4 h-4" />,
+      items: [
+        { id: 'invoicing', label: 'Invoicing Settings', icon: <FileText className="w-4 h-4" /> },
+      ]
+    }
   ];
 
   return (
     <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300">
       {/* Sidebar Navigation */}
-      <div className="w-64 bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col shrink-0">
+      <div className="w-72 bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col shrink-0">
         <div className="p-6 border-b border-gray-200 dark:border-white/10">
           <h1 className="text-xl font-bold dark:text-white">Project Admin</h1>
           <p className="text-xs text-gray-500 mt-1">{project.projectName}</p>
         </div>
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                activeTab === tab.id 
-                  ? 'bg-black dark:bg-white text-white dark:text-black shadow-lg' 
-                  : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              {tab.label}
-            </button>
+        <div className="px-4 py-2 border-b border-gray-200 dark:border-white/10 flex gap-2">
+          <button
+            onClick={() => setExpandedSections(adminSections.map(s => s.id))}
+            className="flex-1 px-2 py-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-gray-100 dark:bg-white/5 rounded-lg transition-all"
+          >
+            Expand All
+          </button>
+          <button
+            onClick={() => setExpandedSections([])}
+            className="flex-1 px-2 py-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-gray-100 dark:bg-white/5 rounded-lg transition-all"
+          >
+            Collapse All
+          </button>
+        </div>
+        <nav className="flex-1 p-4 space-y-2 overflow-y-auto custom-scrollbar">
+          {adminSections.map(section => (
+            <div key={section.id} className="space-y-1">
+              <button
+                onClick={() => toggleSection(section.id)}
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-bold uppercase tracking-widest text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  {section.icon}
+                  {section.label}
+                </div>
+                {expandedSections.includes(section.id) ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
+              </button>
+              
+              {expandedSections.includes(section.id) && (
+                <div className="space-y-1 ml-2 border-l border-gray-100 dark:border-white/5 pl-2">
+                  {section.items.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id as AdminTab)}
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                        activeTab === item.id 
+                          ? 'bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10' 
+                          : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5'
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ))}
         </nav>
         <div className="p-4 border-t border-gray-200 dark:border-white/10">
@@ -210,41 +354,13 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
             </div>
           )}
 
-          {activeTab === 'masterLists' && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm flex flex-col">
-                <div className="flex justify-between items-center mb-6 shrink-0">
-                  <h2 className="text-lg font-bold dark:text-white">Master Lists</h2>
-                  <p className="text-sm text-gray-400">Manage your project master lists separately.</p>
-                </div>
-                
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="h-[400px]">
-                    <AgGridMasterListEditor 
-                      items={formData.categories}
-                      label="Categories"
-                      onSave={(items) => setFormData(prev => ({ ...prev, categories: items }))}
-                      theme={enterprise.theme || 'light'}
-                    />
-                  </div>
-                  <div className="h-[400px]">
-                    <AgGridMasterListEditor 
-                      items={formData.controlAccounts}
-                      label="Control Accounts"
-                      onSave={(items) => setFormData(prev => ({ ...prev, controlAccounts: items }))}
-                      theme={enterprise.theme || 'light'}
-                    />
-                  </div>
-                  <div className="h-[400px]">
-                    <AgGridMasterListEditor 
-                      items={formData.orderNumbers}
-                      label="Order Numbers"
-                      onSave={(items) => setFormData(prev => ({ ...prev, orderNumbers: items }))}
-                      theme={enterprise.theme || 'light'}
-                    />
-                  </div>
-                </div>
+          {['costMgmt', 'scheduleMgmt', 'changeMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
+            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl">
+              <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
+                <Settings className="w-8 h-8 text-gray-300" />
               </div>
+              <h3 className="text-lg font-bold dark:text-white mb-2">Module Settings Under Development</h3>
+              <p className="text-sm text-gray-500 max-w-xs">Project-specific settings for this module are currently being implemented.</p>
             </div>
           )}
 

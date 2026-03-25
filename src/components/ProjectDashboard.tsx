@@ -2,15 +2,38 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch, collectionGroup } from 'firebase/firestore';
 import { Project, Sheet, Enterprise, ForecastRow } from '../types';
-import { Plus, FileText, Calendar, Lock, Unlock, ChevronRight, Filter, Download, Trash2, AlertTriangle, X } from 'lucide-react';
+import { 
+  Plus, 
+  FileText, 
+  Calendar, 
+  Lock, 
+  Unlock, 
+  ChevronRight, 
+  Filter, 
+  Download, 
+  Trash2, 
+  AlertTriangle, 
+  X,
+  PieChart,
+  DollarSign,
+  TrendingUp,
+  Activity,
+  Users as UsersIcon,
+  Receipt,
+  ShoppingCart,
+  PenTool,
+  HardHat,
+  RefreshCw
+} from 'lucide-react';
 
 interface ProjectDashboardProps {
   project: Project;
   enterprise: Enterprise;
+  currentModule: string;
   onSelectSheet: (sheet: Sheet) => void;
 }
 
-export default function ProjectDashboard({ project, enterprise, onSelectSheet }: ProjectDashboardProps) {
+export default function ProjectDashboard({ project, enterprise, currentModule, onSelectSheet }: ProjectDashboardProps) {
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [sheetStats, setSheetStats] = useState<Record<string, { eac: number, etc: number }>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -48,6 +71,8 @@ export default function ProjectDashboard({ project, enterprise, onSelectSheet }:
           [sheet.id]: { eac: totalEac, etc: totalEtc }
         }));
       });
+    }, (error) => {
+      console.error("Sheets fetch error:", error);
     });
     return () => unsubscribe();
   }, [project]);
@@ -97,13 +122,184 @@ export default function ProjectDashboard({ project, enterprise, onSelectSheet }:
     }
   };
 
+  const renderModuleContent = () => {
+    switch (currentModule) {
+      case 'dashboard':
+        return (
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[
+                { label: 'Total EAC', value: `$${(Object.values(sheetStats).reduce((acc, s) => acc + s.eac, 0) / 1e6).toFixed(1)}M`, icon: DollarSign, color: 'text-blue-600' },
+                { label: 'Total ETC', value: `$${(Object.values(sheetStats).reduce((acc, s) => acc + s.etc, 0) / 1e6).toFixed(1)}M`, icon: TrendingUp, color: 'text-emerald-600' },
+                { label: 'Active Sheets', value: sheets.length, icon: FileText, color: 'text-amber-600' },
+                { label: 'Performance Index', value: '1.04', icon: Activity, color: 'text-[#FF6321]' },
+              ].map((stat, i) => (
+                <div key={i} className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm transition-colors">
+                  <div className="flex justify-between items-start mb-4">
+                    <div className={`p-2 rounded-lg bg-gray-50 dark:bg-white/5 ${stat.color}`}>
+                      <stat.icon className="w-5 h-5" />
+                    </div>
+                  </div>
+                  <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-widest font-semibold mb-1">{stat.label}</p>
+                  <p className="text-2xl font-bold dark:text-white">{stat.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-6">Recent Activity</h3>
+                <div className="space-y-4">
+                  {sheets.slice(0, 5).map((sheet, i) => (
+                    <div key={i} className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer" onClick={() => onSelectSheet(sheet)}>
+                      <div className="w-8 h-8 bg-blue-50 dark:bg-blue-500/10 rounded-lg flex items-center justify-center text-blue-600 dark:text-blue-400">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-bold dark:text-white">{sheet.sheetName} updated</p>
+                        <p className="text-[10px] text-gray-400 uppercase tracking-widest">{new Date(sheet.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-300" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-6">Module Status</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { label: 'Cost Mgmt', status: 'Active', icon: DollarSign, color: 'text-emerald-500' },
+                    { label: 'Change Mgmt', status: 'Coming Soon', icon: RefreshCw, color: 'text-amber-500' },
+                    { label: 'Design Mgmt', status: 'Coming Soon', icon: PenTool, color: 'text-blue-500' },
+                    { label: 'Field Mgmt', status: 'Coming Soon', icon: HardHat, color: 'text-purple-500' },
+                  ].map((m, i) => (
+                    <div key={i} className="p-4 rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5">
+                      <div className="flex items-center gap-2 mb-2">
+                        <m.icon className={`w-4 h-4 ${m.color}`} />
+                        <span className="text-xs font-bold dark:text-white">{m.label}</span>
+                      </div>
+                      <span className="text-[9px] uppercase tracking-widest text-gray-400 font-bold">{m.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      case 'cost':
+        return (
+          <div className="flex-1 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden transition-colors flex flex-col">
+            <div className="p-4 border-b border-gray-100 dark:border-white/5 flex justify-between items-center bg-gray-50/50 dark:bg-white/5">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Forecasting Sheets</h2>
+              <div className="flex gap-2">
+                <button className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-white dark:hover:bg-white/5 rounded transition-all">
+                  <Filter className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-white/5">
+              {sheets.length === 0 ? (
+                <div className="p-12 text-center">
+                  <FileText className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
+                  <p className="text-gray-500 dark:text-gray-400 text-sm">No forecasting sheets found for this project.</p>
+                  <button 
+                    onClick={() => setIsModalOpen(true)}
+                    className="mt-4 text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline"
+                  >
+                    Create your first sheet
+                  </button>
+                </div>
+              ) : (
+                sheets.map((sheet) => (
+                  <div 
+                    key={sheet.id}
+                    onClick={() => onSelectSheet(sheet)}
+                    className="group flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-white/5 transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${sheet.forecastMethod === 'commitment' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400'}`}>
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{sheet.sheetName}</h3>
+                        <div className="flex items-center gap-3 mt-1">
+                          <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest bg-gray-100 dark:bg-white/5 px-1.5 py-0.5 rounded">
+                            {sheet.forecastMethod}
+                          </span>
+                          <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">
+                            Version {sheet.version}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-8">
+                      <div className="text-right hidden md:block">
+                        <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest mb-1">
+                          {sheet.forecastMethod === 'commitment' ? 'Total EAC' : 'Total ETC'}
+                        </p>
+                        <div className="text-xs font-bold dark:text-white">
+                          ${(sheetStats[sheet.id]?.[sheet.forecastMethod === 'commitment' ? 'eac' : 'etc'] || 0).toLocaleString()}
+                        </div>
+                      </div>
+
+                      <div className="text-right hidden sm:block">
+                        <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest mb-1">Last Updated</p>
+                        <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+                          <Calendar className="w-3 h-3" />
+                          {new Date(sheet.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-4">
+                        {sheet.lockedStatus ? (
+                          <Lock className="w-4 h-4 text-gray-300 dark:text-white/20" />
+                        ) : (
+                          <Unlock className="w-4 h-4 text-emerald-400" />
+                        )}
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSheetToDelete(sheet);
+                          }}
+                          className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                          title="Delete Sheet"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                        <ChevronRight className="w-4 h-4 text-gray-300 dark:text-white/20 group-hover:text-gray-600 dark:group-hover:text-white transition-all" />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        );
+      default:
+        return (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+            <div className="w-16 h-16 bg-blue-50 dark:bg-blue-500/10 rounded-full flex items-center justify-center text-blue-600 dark:text-blue-400 mb-6">
+              <Activity className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold dark:text-white mb-2">{currentModule.charAt(0).toUpperCase() + currentModule.slice(1)} Management</h2>
+            <p className="text-gray-500 dark:text-gray-400 text-sm text-center max-w-md">
+              This module is currently under development and will be available in a future update.
+            </p>
+          </div>
+        );
+    }
+  };
+
   return (
     <div className="flex-1 flex flex-col w-full h-full p-4 md:p-8 overflow-y-auto transition-colors duration-300">
       <div className="w-full max-w-[1600px] mx-auto flex-1 flex flex-col">
         <div className="flex justify-between items-start mb-10">
           <div>
             <div className="flex items-center gap-2 text-xs font-mono text-gray-400 uppercase tracking-widest mb-2">
-              <span>Project Dashboard</span>
+              <span>{currentModule.charAt(0).toUpperCase() + currentModule.slice(1)}</span>
               <ChevronRight className="w-3 h-3" />
               <span>{project.projectCode}</span>
             </div>
@@ -114,105 +310,20 @@ export default function ProjectDashboard({ project, enterprise, onSelectSheet }:
               <Download className="w-4 h-4" />
               Export Report
             </button>
-            <button 
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
-            >
-              <Plus className="w-4 h-4" />
-              New Sheet
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden transition-colors flex flex-col">
-          <div className="p-4 border-b border-gray-100 dark:border-white/5 flex justify-between items-center bg-gray-50/50 dark:bg-white/5">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Forecasting Sheets</h2>
-            <div className="flex gap-2">
-              <button className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-white dark:hover:bg-white/5 rounded transition-all">
-                <Filter className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-white/5">
-            {sheets.length === 0 ? (
-            <div className="p-12 text-center">
-              <FileText className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
-              <p className="text-gray-500 dark:text-gray-400 text-sm">No forecasting sheets found for this project.</p>
+            {currentModule === 'cost' && (
               <button 
                 onClick={() => setIsModalOpen(true)}
-                className="mt-4 text-blue-600 dark:text-blue-400 text-sm font-medium hover:underline"
+                className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
               >
-                Create your first sheet
+                <Plus className="w-4 h-4" />
+                New Sheet
               </button>
-            </div>
-          ) : (
-            sheets.map((sheet) => (
-              <div 
-                key={sheet.id}
-                onClick={() => onSelectSheet(sheet)}
-                className="group flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-white/5 transition-all cursor-pointer"
-              >
-                <div className="flex items-center gap-4">
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${sheet.forecastMethod === 'commitment' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400'}`}>
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">{sheet.sheetName}</h3>
-                    <div className="flex items-center gap-3 mt-1">
-                      <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest bg-gray-100 dark:bg-white/5 px-1.5 py-0.5 rounded">
-                        {sheet.forecastMethod}
-                      </span>
-                      <span className="text-[10px] font-mono text-gray-400 uppercase tracking-widest">
-                        Version {sheet.version}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-8">
-                  <div className="text-right hidden md:block">
-                    <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest mb-1">
-                      {sheet.forecastMethod === 'commitment' ? 'Total EAC' : 'Total ETC'}
-                    </p>
-                    <div className="text-xs font-bold dark:text-white">
-                      ${(sheetStats[sheet.id]?.[sheet.forecastMethod === 'commitment' ? 'eac' : 'etc'] || 0).toLocaleString()}
-                    </div>
-                  </div>
-
-                  <div className="text-right hidden sm:block">
-                    <p className="text-[10px] font-mono text-gray-400 uppercase tracking-widest mb-1">Last Updated</p>
-                    <div className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
-                      <Calendar className="w-3 h-3" />
-                      {new Date(sheet.createdAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center gap-4">
-                    {sheet.lockedStatus ? (
-                      <Lock className="w-4 h-4 text-gray-300 dark:text-white/20" />
-                    ) : (
-                      <Unlock className="w-4 h-4 text-emerald-400" />
-                    )}
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSheetToDelete(sheet);
-                      }}
-                      className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-                      title="Delete Sheet"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                    <ChevronRight className="w-4 h-4 text-gray-300 dark:text-white/20 group-hover:text-gray-600 dark:group-hover:text-white transition-all" />
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+            )}
+          </div>
         </div>
+
+        {renderModuleContent()}
       </div>
-    </div>
 
       {/* Delete Confirmation Modal */}
       {sheetToDelete && (

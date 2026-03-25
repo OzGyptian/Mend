@@ -1,4 +1,25 @@
-import { Layout, Briefcase, FileText, Settings, Shield, ChevronRight, LogOut, ChevronLeft, Sun, Moon, Menu, CalendarCheck2 } from 'lucide-react';
+import { 
+  Layout, 
+  Briefcase, 
+  FileText, 
+  Settings, 
+  Shield, 
+  ChevronRight, 
+  LogOut, 
+  ChevronLeft, 
+  Sun, 
+  Moon, 
+  Menu, 
+  CalendarCheck2,
+  DollarSign,
+  RefreshCw,
+  PenTool,
+  HardHat,
+  ShoppingCart,
+  Users as UsersIcon,
+  Receipt,
+  PieChart
+} from 'lucide-react';
 import { Enterprise, Project, Sheet } from '../types';
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
@@ -10,8 +31,10 @@ function cn(...inputs: ClassValue[]) {
 }
 
 interface SidebarProps {
-  currentView: 'enterprise' | 'project' | 'sheet' | 'system-admin' | 'enterprise-admin' | 'project-admin';
+  currentView: string;
+  currentModule?: string;
   setView: (view: any) => void;
+  setModule?: (module: string) => void;
   enterprise: Enterprise | null;
   project: Project | null;
   sheet: Sheet | null;
@@ -21,12 +44,13 @@ interface SidebarProps {
   setTheme: (theme: 'light' | 'dark') => void;
   isCollapsed: boolean;
   setIsCollapsed: (collapsed: boolean) => void;
-  onClearEnterprise?: () => void;
 }
 
 export default function Sidebar({ 
   currentView, 
+  currentModule,
   setView, 
+  setModule,
   enterprise, 
   project, 
   sheet, 
@@ -36,16 +60,24 @@ export default function Sidebar({
   setTheme,
   isCollapsed,
   setIsCollapsed,
-  onClearEnterprise
 }: SidebarProps) {
   const isSystemAdmin = userEmail === 'tarek.guindy@gmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
-  const navItems = [
-    { id: 'enterprise', label: 'Enterprise', icon: Layout, disabled: !enterprise },
-    { id: 'project', label: 'Project', icon: Briefcase, disabled: !project },
-    { id: 'sheet', label: 'Forecast Sheet', icon: FileText, disabled: !sheet },
+  const enterpriseItems = [
+    { id: 'enterprise', label: 'Enterprise Dashboard', icon: Layout, disabled: !enterprise },
+  ];
+
+  const projectModules = [
+    { id: 'dashboard', label: 'Dashboard', icon: PieChart },
+    { id: 'cost', label: 'Cost Management', icon: DollarSign },
+    { id: 'change', label: 'Change Management', icon: RefreshCw },
+    { id: 'design', label: 'Design Management', icon: PenTool },
+    { id: 'field', label: 'Field Management', icon: HardHat },
+    { id: 'procurement', label: 'Procurement', icon: ShoppingCart },
+    { id: 'subcontract', label: 'Sub-Contract Management', icon: UsersIcon },
+    { id: 'invoicing', label: 'Invoicing', icon: Receipt },
   ];
 
   const adminItems = [
@@ -54,11 +86,15 @@ export default function Sidebar({
     { id: 'project-admin', label: 'Project Admin', icon: Settings, visible: !!project && (isProjectAdmin || isSystemAdmin) },
   ];
 
-  const handleNavClick = (id: any) => {
-    if (id === 'system-admin' && isSystemAdmin && onClearEnterprise) {
-      onClearEnterprise();
-    }
+  const handleNavClick = (id: string) => {
     setView(id);
+  };
+
+  const handleModuleClick = (id: string) => {
+    if (setModule) {
+      setModule(id);
+      setView('project');
+    }
   };
 
   return (
@@ -73,59 +109,112 @@ export default function Sidebar({
         {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
       </button>
 
-      <div className="p-6 overflow-hidden">
-        <div className={cn("flex items-center gap-2 mb-8", isCollapsed && "justify-center")}>
+      <div className="p-6 overflow-hidden flex-1 flex flex-col">
+        <div className={cn("flex items-center gap-2 mb-8 shrink-0", isCollapsed && "justify-center")}>
           <div className="shrink-0 w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-white dark:text-black text-sm">
             <CalendarCheck2 className="w-4 h-4" />
           </div>
           {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">Mend</span>}
         </div>
 
-        <nav className="space-y-1">
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              disabled={item.disabled}
-              onClick={() => handleNavClick(item.id as any)}
-              className={cn(
-                "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                currentView === item.id 
-                  ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                  : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
-                item.disabled && "opacity-20 cursor-not-allowed",
-                isCollapsed && "justify-center px-0"
-              )}
-              title={isCollapsed ? item.label : ""}
-            >
-              <item.icon className="w-4 h-4 shrink-0" />
-              {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
-              {!isCollapsed && currentView === item.id && <ChevronRight className="w-3 h-3" />}
-            </button>
-          ))}
-        </nav>
+        <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-6 custom-scrollbar">
+          {/* Enterprise Section */}
+          <div>
+            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest mb-2">Enterprise</p>}
+            <nav className="space-y-1">
+              {enterpriseItems.map((item) => (
+                <button
+                  key={item.id}
+                  disabled={item.disabled}
+                  onClick={() => handleNavClick(item.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
+                    currentView === item.id 
+                      ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
+                      : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                    item.disabled && "opacity-20 cursor-not-allowed",
+                    isCollapsed && "justify-center px-0"
+                  )}
+                  title={isCollapsed ? item.label : ""}
+                >
+                  <item.icon className="w-4 h-4 shrink-0" />
+                  {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
+                </button>
+              ))}
+            </nav>
+          </div>
 
-        <div className="mt-8">
-          {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest mb-4">Administration</p>}
-          <nav className="space-y-1">
-            {adminItems.filter(i => i.visible).map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleNavClick(item.id as any)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                  currentView === item.id 
-                    ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                    : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
-                  isCollapsed && "justify-center px-0"
+          {/* Project Modules Section */}
+          {project && (
+            <div>
+              {!isCollapsed && (
+                <div className="px-3 mb-2">
+                  <p className="text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest">Project Modules</p>
+                  <p className="text-[9px] text-blue-500 font-mono truncate mt-0.5">{project.projectName}</p>
+                </div>
+              )}
+              <nav className="space-y-1">
+                {projectModules.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => handleModuleClick(item.id)}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
+                      currentView === 'project' && currentModule === item.id
+                        ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400" 
+                        : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                      isCollapsed && "justify-center px-0"
+                    )}
+                    title={isCollapsed ? item.label : ""}
+                  >
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
+                  </button>
+                ))}
+                {/* Forecast Sheet Link if active */}
+                {sheet && (
+                  <button
+                    onClick={() => setView('sheet')}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
+                      currentView === 'sheet'
+                        ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
+                        : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                      isCollapsed && "justify-center px-0"
+                    )}
+                    title={isCollapsed ? "Forecast Sheet" : ""}
+                  >
+                    <FileText className="w-4 h-4 shrink-0" />
+                    {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">Forecast Sheet</span>}
+                  </button>
                 )}
-                title={isCollapsed ? item.label : ""}
-              >
-                <item.icon className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
-                {!isCollapsed && currentView === item.id && <ChevronRight className="w-3 h-3" />}
-              </button>
-            ))}
-          </nav>
+              </nav>
+            </div>
+          )}
+
+          {/* Administration Section */}
+          <div>
+            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest mb-2">Administration</p>}
+            <nav className="space-y-1">
+              {adminItems.filter(i => i.visible).map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => handleNavClick(item.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
+                    currentView === item.id 
+                      ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
+                      : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                    isCollapsed && "justify-center px-0"
+                  )}
+                  title={isCollapsed ? item.label : ""}
+                >
+                  <item.icon className="w-4 h-4 shrink-0" />
+                  {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
+                </button>
+              ))}
+            </nav>
+          </div>
         </div>
       </div>
 

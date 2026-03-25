@@ -20,7 +20,7 @@ interface EnterpriseDashboardProps {
 export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner, onSelectProject }: EnterpriseDashboardProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newProject, setNewProject] = useState({ name: '', code: '', budget: 0 });
+  const [newProject, setNewProject] = useState({ name: '', code: '' });
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -42,6 +42,8 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
         : allProjects.filter(p => p.users && p.users[userId]);
         
       setProjects(filtered);
+    }, (error) => {
+      console.error("Projects fetch error:", error);
     });
     return () => unsubscribe();
   }, [enterprise, isEnterpriseAdmin, userId]);
@@ -63,7 +65,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
         enterpriseId: enterprise.id,
         projectName: finalName,
         projectCode: newProject.code,
-        projectBudget: Number(newProject.budget),
+        projectBudget: 0,
         startDate: now.split('T')[0],
         endDate: now.split('T')[0],
         cutoffDate: now.split('T')[0],
@@ -72,7 +74,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
         dateLastModified: now
       });
       setIsModalOpen(false);
-      setNewProject({ name: '', code: '', budget: 0 });
+      setNewProject({ name: '', code: '' });
     } catch (error) {
       console.error('Failed to create project', error);
     } finally {
@@ -309,22 +311,13 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
             </div>
             <form onSubmit={handleCreateProject} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Name</label>
-                <input 
-                  type="text" 
-                  value={newProject.name}
-                  onChange={e => setNewProject({...newProject, name: e.target.value})}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/5 dark:text-white"
-                  placeholder="e.g. Harbor View Mixed-Use"
-                />
-              </div>
-              <div>
                 <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
                   Project Code <span className="text-red-500">*</span>
                 </label>
                 <input 
                   required
                   type="text" 
+                  maxLength={20}
                   value={newProject.code}
                   onChange={e => setNewProject({...newProject, code: e.target.value})}
                   className={cn(
@@ -340,13 +333,14 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
                 )}
               </div>
               <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Budget ($) <span className="text-red-500">*</span></label>
+                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Name</label>
                 <input 
-                  required
-                  type="number" 
-                  value={newProject.budget}
-                  onChange={e => setNewProject({...newProject, budget: Number(e.target.value)})}
+                  type="text" 
+                  maxLength={40}
+                  value={newProject.name}
+                  onChange={e => setNewProject({...newProject, name: e.target.value})}
                   className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/5 dark:text-white"
+                  placeholder="e.g. Harbor View Mixed-Use"
                 />
               </div>
               <div className="flex gap-3 pt-4">

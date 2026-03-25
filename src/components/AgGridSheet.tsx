@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef } from 'react';
+import React, { useMemo, useCallback, useRef, useImperativeHandle, forwardRef } from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import { 
   ColDef, 
@@ -12,6 +12,14 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 import { format, addMonths, startOfMonth, parseISO, isAfter } from 'date-fns';
 import { Project, Enterprise, ForecastRow } from '../types';
 
+export interface AgGridSheetRef {
+  clearFilters: () => void;
+  exportToExcel: (fileName: string) => void;
+  exportToCsv: (fileName: string) => void;
+  saveViewState: () => void;
+  getSelectedRows: () => ForecastRow[];
+}
+
 interface AgGridSheetProps {
   sheetId: string;
   sheetType: 'commitment' | 'time-based';
@@ -22,7 +30,7 @@ interface AgGridSheetProps {
   theme: 'light' | 'dark';
 }
 
-export default function AgGridSheet({ 
+const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({ 
   sheetId,
   sheetType, 
   project, 
@@ -30,8 +38,43 @@ export default function AgGridSheet({
   data, 
   onDataChange,
   theme 
-}: AgGridSheetProps) {
+}, ref) => {
   const gridRef = useRef<AgGridReact>(null);
+
+  const saveViewState = useCallback(() => {
+    if (gridRef.current?.api) {
+      const columnState = gridRef.current.api.getColumnState();
+      const filterModel = gridRef.current.api.getFilterModel();
+      const state = { columnState, filterModel };
+      localStorage.setItem(`grid-state-${sheetId}`, JSON.stringify(state));
+    }
+  }, [sheetId]);
+
+  useImperativeHandle(ref, () => ({
+    clearFilters: () => {
+      if (gridRef.current?.api) {
+        gridRef.current.api.setFilterModel(null);
+        saveViewState();
+      }
+    },
+    exportToExcel: (fileName: string) => {
+      if (gridRef.current?.api) {
+        gridRef.current.api.exportDataAsExcel({ fileName: `${fileName}.xlsx` });
+      }
+    },
+    exportToCsv: (fileName: string) => {
+      if (gridRef.current?.api) {
+        gridRef.current.api.exportDataAsCsv({ fileName: `${fileName}.csv` });
+      }
+    },
+    getSelectedRows: () => {
+      if (gridRef.current?.api) {
+        return gridRef.current.api.getSelectedRows();
+      }
+      return [];
+    },
+    saveViewState
+  }));
 
   // Generate phasing months
   const phasingMonths = useMemo(() => {
@@ -86,14 +129,25 @@ export default function AgGridSheet({
         field: 'costCode', 
         editable: true, 
         pinned: 'left',
-        width: 120 
+        width: 120,
+        filter: 'agTextColumnFilter',
+        checkboxSelection: true,
+        headerCheckboxSelection: true
       },
       { 
         headerName: 'Description', 
         field: 'description', 
         editable: true, 
         pinned: 'left',
-        width: 250 
+        width: 250,
+        filter: 'agTextColumnFilter'
+      },
+      { 
+        headerName: 'Vendor', 
+        field: 'vendor', 
+        editable: true, 
+        width: 150,
+        filter: 'agTextColumnFilter'
       },
       { 
         headerName: 'Qty', 
@@ -101,6 +155,7 @@ export default function AgGridSheet({
         editable: sheetType === 'commitment',
         type: 'numericColumn',
         width: 100,
+        filter: 'agNumberColumnFilter',
         valueGetter: (params: ValueGetterParams) => {
           if (!params.data) return 0;
           if (sheetType === 'time-based') {
@@ -131,7 +186,8 @@ export default function AgGridSheet({
         headerName: 'Unit', 
         field: 'unit', 
         editable: true, 
-        width: 80 
+        width: 80,
+        filter: 'agTextColumnFilter'
       },
       { 
         headerName: 'Rate', 
@@ -139,6 +195,7 @@ export default function AgGridSheet({
         editable: true, 
         type: 'numericColumn',
         width: 100,
+        filter: 'agNumberColumnFilter',
         valueFormatter: currencyFormatter
       },
       { 
@@ -146,11 +203,64 @@ export default function AgGridSheet({
         field: 'total', 
         width: 120,
         type: 'numericColumn',
+        filter: 'agNumberColumnFilter',
         valueGetter: (params: ValueGetterParams) => {
           if (!params.data) return 0;
           const qty = params.getValue('qty') || 0;
           const rate = params.data.rate || 0;
           return qty * rate;
+        },
+        valueFormatter: currencyFormatter,
+        cellStyle: { fontWeight: 'bold', backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f9fafb' }
+      },
+      {
+        headerName: 'Budget',
+        field: 'budget',
+        editable: true,
+        type: 'numericColumn',
+        width: 120,
+        filter: 'agNumberColumnFilter',
+        valueFormatter: currencyFormatter
+      },
+      {
+        headerName: 'Committed',
+        field: 'committedCost',
+        editable: true,
+        type: 'numericColumn',
+        width: 120,
+        filter: 'agNumberColumnFilter',
+        valueFormatter: currencyFormatter
+      },
+      {
+        headerName: 'Actuals',
+        field: 'actualCostToDate',
+        editable: true,
+        type: 'numericColumn',
+        width: 120,
+        filter: 'agNumberColumnFilter',
+        valueFormatter: currencyFormatter
+      },
+      {
+        headerName: 'Cost To Go',
+        field: 'costToGo',
+        editable: true,
+        type: 'numericColumn',
+        width: 120,
+        filter: 'agNumberColumnFilter',
+        valueFormatter: currencyFormatter
+      },
+      {
+        headerName: 'EAC',
+        field: 'eac',
+        width: 120,
+        type: 'numericColumn',
+        filter: 'agNumberColumnFilter',
+        valueGetter: (params: ValueGetterParams) => {
+          if (!params.data) return 0;
+          if (sheetType === 'commitment') {
+            return (params.getValue('qty') || 0) * (params.data.rate || 0);
+          }
+          return (params.data.actualCostToDate || 0) + (params.data.costToGo || 0);
         },
         valueFormatter: currencyFormatter,
         cellStyle: { fontWeight: 'bold', backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f9fafb' }
@@ -161,7 +271,8 @@ export default function AgGridSheet({
         editable: true,
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: { values: categories },
-        width: 150
+        width: 150,
+        filter: 'agSetColumnFilter'
       },
       { 
         headerName: 'Control Account', 
@@ -169,7 +280,8 @@ export default function AgGridSheet({
         editable: true,
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: { values: controlAccounts },
-        width: 180
+        width: 180,
+        filter: 'agSetColumnFilter'
       },
       { 
         headerName: 'Order Number', 
@@ -177,7 +289,8 @@ export default function AgGridSheet({
         editable: true,
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: { values: orderNumbers },
-        width: 150
+        width: 150,
+        filter: 'agSetColumnFilter'
       }
     ];
 
@@ -213,12 +326,52 @@ export default function AgGridSheet({
 
   const onGridReady = (params: GridReadyEvent) => {
     params.api.sizeColumnsToFit();
+    
+    // Load saved state
+    const savedState = localStorage.getItem(`grid-state-${sheetId}`);
+    if (savedState) {
+      try {
+        const { columnState, filterModel } = JSON.parse(savedState);
+        if (columnState) params.api.applyColumnState({ state: columnState, applyOrder: true });
+        if (filterModel) params.api.setFilterModel(filterModel);
+      } catch (e) {
+        console.error('Failed to load grid state', e);
+      }
+    }
   };
+
+  const onColumnMoved = useCallback(() => saveViewState(), [saveViewState]);
+  const onColumnResized = useCallback(() => saveViewState(), [saveViewState]);
+  const onSortChanged = useCallback(() => saveViewState(), [saveViewState]);
+  const onFilterChanged = useCallback(() => saveViewState(), [saveViewState]);
 
   const defaultColDef = useMemo(() => ({
     sortable: true,
     filter: true,
     resizable: true,
+    enableRowGroup: true,
+    enablePivot: true,
+    enableValue: true,
+  }), []);
+
+  const sideBar = useMemo(() => ({
+    toolPanels: [
+      {
+        id: 'columns',
+        labelDefault: 'Columns',
+        labelKey: 'columns',
+        iconKey: 'columns',
+        toolPanel: 'agColumnsToolPanel',
+      },
+      {
+        id: 'filters',
+        labelDefault: 'Filters',
+        labelKey: 'filters',
+        iconKey: 'filter',
+        toolPanel: 'agFiltersToolPanel',
+      },
+    ],
+    defaultToolPanel: '',
   }), []);
 
   return (
@@ -229,13 +382,21 @@ export default function AgGridSheet({
         rowData={data}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
+        sideBar={sideBar}
+        rowSelection="multiple"
         onCellValueChanged={onCellValueChanged}
         onGridReady={onGridReady}
+        onColumnMoved={onColumnMoved}
+        onColumnResized={onColumnResized}
+        onSortChanged={onSortChanged}
+        onFilterChanged={onFilterChanged}
         animateRows={true}
         headerHeight={48}
         rowHeight={40}
         undoRedoCellEditing={true}
         undoRedoCellEditingLimit={20}
+        enableRangeSelection={true}
+        copyHeadersToClipboard={true}
       />
       <style>{`
         .ag-theme-quartz, .ag-theme-quartz-dark {
@@ -251,4 +412,6 @@ export default function AgGridSheet({
       `}</style>
     </div>
   );
-}
+});
+
+export default AgGridSheet;

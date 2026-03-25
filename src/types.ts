@@ -24,6 +24,12 @@ export interface ResourceRate {
   udf3?: string;
 }
 
+export interface CostElement {
+  id: string;
+  description: string;
+  sortCode: string;
+}
+
 export interface Enterprise {
   id: string;
   enterpriseId: string;
@@ -43,6 +49,7 @@ export interface Enterprise {
   projectAttributes?: ProjectAttribute[];
   lineItemAttributes?: ProjectAttribute[];
   resourceRates?: ResourceRate[];
+  costElements?: CostElement[];
   categories?: string[];
   controlAccounts?: string[];
   orderNumbers?: string[];
