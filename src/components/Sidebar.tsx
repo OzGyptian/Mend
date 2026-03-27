@@ -71,6 +71,7 @@ export default function Sidebar({
 
   const projectModules = [
     { id: 'dashboard', label: 'Dashboard', icon: PieChart },
+    { id: 'project-admin', label: 'Project Admin', icon: Settings, visible: !!project && (isProjectAdmin || isSystemAdmin) },
     { id: 'cost', label: 'Cost Management', icon: DollarSign },
     { id: 'change', label: 'Change Management', icon: RefreshCw },
     { id: 'design', label: 'Design Management', icon: PenTool },
@@ -83,7 +84,6 @@ export default function Sidebar({
   const adminItems = [
     { id: 'system-admin', label: 'System Admin', icon: Shield, visible: isSystemAdmin },
     { id: 'enterprise-admin', label: 'Enterprise Admin', icon: Settings, visible: isEnterpriseAdmin || isSystemAdmin },
-    { id: 'project-admin', label: 'Project Admin', icon: Settings, visible: !!project && (isProjectAdmin || isSystemAdmin) },
   ];
 
   const handleNavClick = (id: string) => {
@@ -91,7 +91,9 @@ export default function Sidebar({
   };
 
   const handleModuleClick = (id: string) => {
-    if (setModule) {
+    if (id === 'project-admin') {
+      setView('project-admin');
+    } else if (setModule) {
       setModule(id);
       setView('project');
     }
@@ -111,16 +113,22 @@ export default function Sidebar({
 
       <div className="p-6 overflow-hidden flex-1 flex flex-col">
         <div className={cn("flex items-center gap-2 mb-8 shrink-0", isCollapsed && "justify-center")}>
-          <div className="shrink-0 w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-white dark:text-black text-sm">
-            <CalendarCheck2 className="w-4 h-4" />
-          </div>
-          {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">Mend</span>}
+          {enterprise?.logoURL ? (
+            <div className="shrink-0 w-8 h-8 rounded overflow-hidden border border-gray-200 dark:border-white/10">
+              <img src={enterprise.logoURL} alt={enterprise.name} className="w-full h-full object-contain bg-white" referrerPolicy="no-referrer" />
+            </div>
+          ) : (
+            <div className="shrink-0 w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-white dark:text-black text-sm">
+              <CalendarCheck2 className="w-4 h-4" />
+            </div>
+          )}
+          {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">{enterprise?.name || 'Mend'}</span>}
         </div>
 
         <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-6 custom-scrollbar">
           {/* Enterprise Section */}
           <div>
-            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest mb-2">Enterprise</p>}
+            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Enterprise</p>}
             <nav className="space-y-1">
               {enterpriseItems.map((item) => (
                 <button
@@ -130,8 +138,8 @@ export default function Sidebar({
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
                     currentView === item.id 
-                      ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                      : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                      ? "bg-black text-white dark:bg-white dark:text-black" 
+                      : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
                     item.disabled && "opacity-20 cursor-not-allowed",
                     isCollapsed && "justify-center px-0"
                   )}
@@ -149,20 +157,20 @@ export default function Sidebar({
             <div>
               {!isCollapsed && (
                 <div className="px-3 mb-2">
-                  <p className="text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest">Project Modules</p>
+                  <p className="text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest">Project Modules</p>
                   <p className="text-[9px] text-blue-500 font-mono truncate mt-0.5">{project.projectName}</p>
                 </div>
               )}
               <nav className="space-y-1">
-                {projectModules.map((item) => (
+                {projectModules.filter(i => i.visible !== false).map((item) => (
                   <button
                     key={item.id}
                     onClick={() => handleModuleClick(item.id)}
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                      currentView === 'project' && currentModule === item.id
-                        ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400" 
-                        : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                      (currentView === 'project' && currentModule === item.id) || (currentView === 'project-admin' && item.id === 'project-admin')
+                        ? "bg-black text-white dark:bg-white dark:text-black" 
+                        : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
                       isCollapsed && "justify-center px-0"
                     )}
                     title={isCollapsed ? item.label : ""}
@@ -178,8 +186,8 @@ export default function Sidebar({
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
                       currentView === 'sheet'
-                        ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" 
-                        : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                        ? "bg-black text-white dark:bg-white dark:text-black" 
+                        : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
                       isCollapsed && "justify-center px-0"
                     )}
                     title={isCollapsed ? "Forecast Sheet" : ""}
@@ -194,7 +202,7 @@ export default function Sidebar({
 
           {/* Administration Section */}
           <div>
-            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-400 dark:text-white/20 uppercase tracking-widest mb-2">Administration</p>}
+            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Administration</p>}
             <nav className="space-y-1">
               {adminItems.filter(i => i.visible).map((item) => (
                 <button
@@ -203,8 +211,8 @@ export default function Sidebar({
                   className={cn(
                     "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
                     currentView === item.id 
-                      ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                      : "text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5",
+                      ? "bg-black text-white dark:bg-white dark:text-black" 
+                      : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
                     isCollapsed && "justify-center px-0"
                   )}
                   title={isCollapsed ? item.label : ""}
@@ -215,6 +223,27 @@ export default function Sidebar({
               ))}
             </nav>
           </div>
+
+          {/* User Section */}
+          <div>
+            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">User</p>}
+            <nav className="space-y-1">
+              <button
+                onClick={() => handleNavClick('profile')}
+                className={cn(
+                  "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
+                  currentView === 'profile' 
+                    ? "bg-black text-white dark:bg-white dark:text-black" 
+                    : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
+                  isCollapsed && "justify-center px-0"
+                )}
+                title={isCollapsed ? "My Profile" : ""}
+              >
+                <UsersIcon className="w-4 h-4 shrink-0" />
+                {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">My Profile</span>}
+              </button>
+            </nav>
+          </div>
         </div>
       </div>
 
@@ -223,7 +252,7 @@ export default function Sidebar({
           <button 
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-gray-400 dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-50 dark:hover:bg-white/5 transition-all",
+              "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5 transition-all",
               isCollapsed && "justify-center px-0"
             )}
             title={isCollapsed ? `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode` : ""}
@@ -247,7 +276,7 @@ export default function Sidebar({
         
         {!isCollapsed && (
           <div className="px-3 pt-2">
-            <div className="flex items-center justify-between text-[10px] font-mono text-gray-400 dark:text-white/20 uppercase tracking-widest">
+            <div className="flex items-center justify-between text-[10px] font-mono text-gray-900 dark:text-white/20 uppercase tracking-widest">
               <span>Version</span>
               <span>1.0.0</span>
             </div>

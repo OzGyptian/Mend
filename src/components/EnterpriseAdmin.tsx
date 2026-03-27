@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc } from 'firebase/firestore';
 import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, SavedView } from '../types';
-import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, PenTool, HardHat, ShoppingCart, Receipt, Calendar, Hash } from 'lucide-react';
+import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, PenTool, HardHat, ShoppingCart, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
@@ -33,13 +33,15 @@ interface EnterpriseAdminProps {
 
 export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [activeTab, setActiveTab] = useState<string>('users');
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['General Admin', 'Cost Admin', 'Safety Admin', 'Quality Admin', 'Document Admin']));
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const adminSections = [
     {
       title: 'General Admin',
       icon: <Settings className="w-4 h-4" />,
       items: [
+        { id: 'enterpriseSettings', label: 'Enterprise Settings', icon: <Settings className="w-4 h-4" /> },
         { id: 'users', label: 'Enterprise Users', icon: <Users className="w-4 h-4" /> },
         { id: 'projects', label: 'Enterprise Projects', icon: <Briefcase className="w-4 h-4" /> },
         { id: 'projectAttributes', label: 'Enterprise Project Attributes', icon: <Settings className="w-4 h-4" /> },
@@ -51,6 +53,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       items: [
         { id: 'costElements', label: 'Enterprise Cost Elements', icon: <Hash className="w-4 h-4" /> },
         { id: 'lineItemAttributes', label: 'Enterprise Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
+        { id: 'costCodeAttributes', label: 'Enterprise Cost Code Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'resourceRates', label: 'Enterprise Resources Rates', icon: <DollarSign className="w-4 h-4" /> },
       ]
     },
@@ -139,7 +142,14 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [isInviting, setIsInviting] = useState(false);
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
 
-  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem', attrId: string, valueId: string | null } | null>(null);
+  const [isReplaceIdModalOpen, setIsReplaceIdModalOpen] = useState(false);
+  const [newProjectCode, setNewProjectCode] = useState('');
+  const [isReplacing, setIsReplacing] = useState(false);
+  const [replaceError, setReplaceError] = useState('');
+  const [projectToReplace, setProjectToReplace] = useState<Project | null>(null);
+  const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+
+  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string | null } | null>(null);
   const [isEditingResource, setIsEditingResource] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [isEditingCostElement, setIsEditingCostElement] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [valueFormData, setValueFormData] = useState({ id: '', description: '', sortOrder: '' as any });
@@ -155,12 +165,15 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     udf3: ''
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectPhotoInputRef = useRef<HTMLInputElement>(null);
+  const enterpriseLogoInputRef = useRef<HTMLInputElement>(null);
 
   // Table Control States
   const [visibleColumns, setVisibleColumns] = useState<Record<string, string[]>>({
     users: ['photo', 'name', 'email', 'joined', 'access'],
     projects: ['photo', 'name', 'code', 'created', 'users', 'sheets'],
     lineItemAttributes: ['id', 'description', 'sortOrder'],
+    costCodeAttributes: ['id', 'description', 'sortOrder'],
     projectAttributes: ['id', 'description', 'sortOrder'],
     resourceRates: ['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'],
     costElements: ['id', 'description', 'sortCode']
@@ -170,11 +183,12 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     users: true,
     projects: true,
     lineItemAttributes: true,
+    costCodeAttributes: true,
     projectAttributes: true,
     resourceRates: true,
     costElements: true
   });
-  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', data: any[], attrId?: string } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', data: any[], attrId?: string } | null>(null);
   const [userSort, setUserSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
   const [attrSort, setAttrSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'sortOrder', direction: 'asc' });
   const [resourceSort, setResourceSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
@@ -188,6 +202,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     users: {},
     projects: {},
     lineItemAttributes: {},
+    costCodeAttributes: {},
     projectAttributes: {},
     resourceRates: {},
     costElements: {}
@@ -198,7 +213,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (tableId === 'resourceRates') setResourceSearch('');
     if (tableId === 'projects') setProjectSearch('');
     if (tableId === 'users') setUserSearch('');
-    if (tableId === 'lineItemAttributes' || tableId === 'projectAttributes') setAttrSearch('');
+    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') setAttrSearch('');
     if (tableId === 'costElements') setCostElementSearch('');
   };
 
@@ -222,8 +237,17 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         tableId,
         columns: visibleColumns[tableId],
         userId: auth.currentUser.uid,
-        createdAt: new Date().toISOString()
-      };
+        createdAt: new Date().toISOString(),
+        config: {
+          isFrozen: isFrozen[tableId],
+          sort: tableId === 'users' ? userSort : 
+                tableId === 'projects' ? projectSort : 
+                tableId === 'costElements' ? costElementSort : 
+                tableId === 'resourceRates' ? resourceSort : 
+                (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') ? attrSort : {},
+          columnFilters: columnFilters[tableId]
+        }
+      } as any;
       await addDoc(collection(db, 'savedViews'), newView);
       setNewViewName('');
       setIsSavedViewMenuOpen(null);
@@ -238,6 +262,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       ...prev,
       [view.tableId]: view.columns
     }));
+    
+    if ((view as any).config) {
+      const config = (view as any).config;
+      setIsFrozen(prev => ({ ...prev, [view.tableId]: config.isFrozen }));
+      setColumnFilters(prev => ({ ...prev, [view.tableId]: config.columnFilters }));
+      
+      if (view.tableId === 'users') setUserSort(config.sort);
+      else if (view.tableId === 'projects') setProjectSort(config.sort);
+      else if (view.tableId === 'costElements') setCostElementSort(config.sort);
+      else if (view.tableId === 'resourceRates') setResourceSort(config.sort);
+      else if (view.tableId === 'lineItemAttributes' || view.tableId === 'costCodeAttributes' || view.tableId === 'projectAttributes') setAttrSort(config.sort);
+    }
+    
     setIsSavedViewMenuOpen(null);
   };
 
@@ -249,8 +286,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const getAttributes = (type: 'project' | 'lineItem') => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+  const getAttributes = (type: 'project' | 'lineItem' | 'costCode') => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
     const attrs = (enterprise as any)[field] || [];
     
     // Legacy check: if it's an array of strings, convert to new structure
@@ -443,9 +480,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const filteredCostElements = useMemo(() => {
     let result = (enterprise.costElements || [])
       .filter(e => 
-        e.id.toLowerCase().includes(resourceSearch.toLowerCase()) ||
-        e.description.toLowerCase().includes(resourceSearch.toLowerCase()) ||
-        e.sortCode.toLowerCase().includes(resourceSearch.toLowerCase())
+        e.id.toLowerCase().includes(costElementSearch.toLowerCase()) ||
+        e.description.toLowerCase().includes(costElementSearch.toLowerCase()) ||
+        e.sortCode.toLowerCase().includes(costElementSearch.toLowerCase())
       );
 
     // Apply column filters
@@ -465,7 +502,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       if (costElementSort.direction === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [enterprise.costElements, resourceSearch, costElementSort, columnFilters.costElements]);
+  }, [enterprise.costElements, costElementSearch, costElementSort, columnFilters.costElements]);
 
   const bulkDeleteProjects = async () => {
     const promises = Array.from(selectedProjectIds).map((id: string) => deleteDoc(doc(db, 'projects', id)));
@@ -475,8 +512,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setSelectedProjectId(null);
   };
 
-  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem', attrId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem' | 'costCode', attrId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -574,6 +611,78 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
+  const handleUpdateProjectStatus = async (projectId: string, status: string) => {
+    await updateDoc(doc(db, 'projects', projectId), {
+      status,
+      dateLastModified: new Date().toISOString()
+    });
+  };
+
+  const handleUpdateProjectPhoto = async (projectId: string, photoURL: string) => {
+    await updateDoc(doc(db, 'projects', projectId), {
+      photoURL,
+      dateLastModified: new Date().toISOString()
+    });
+  };
+
+  const handleReplaceProjectId = async () => {
+    if (!projectToReplace || !newProjectCode.trim()) {
+      setReplaceError('Please enter a new Project ID.');
+      return;
+    }
+    if (newProjectCode.trim() === projectToReplace.projectCode) {
+      setReplaceError('New ID must be different from current ID.');
+      return;
+    }
+
+    setIsReplacing(true);
+    setReplaceError('');
+
+    try {
+      // Check for duplicates
+      const q = query(
+        collection(db, 'projects'),
+        where('enterpriseId', '==', enterprise.id),
+        where('projectCode', '==', newProjectCode.trim())
+      );
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        setReplaceError('This Project ID already exists in the enterprise.');
+        setIsReplacing(false);
+        return;
+      }
+
+      await updateDoc(doc(db, 'projects', projectToReplace.id), {
+        projectCode: newProjectCode.trim(),
+        dateLastModified: new Date().toISOString()
+      });
+
+      setIsReplaceIdModalOpen(false);
+      setNewProjectCode('');
+      setProjectToReplace(null);
+    } catch (error) {
+      console.error('Replace ID failed', error);
+      setReplaceError('Failed to replace Project ID.');
+    } finally {
+      setIsReplacing(false);
+    }
+  };
+
+  const isNewProjectCodeDuplicate = useMemo(() => {
+    if (!newProjectCode.trim()) return false;
+    return projects.some(p => p.projectCode === newProjectCode.trim() && p.id !== projectToReplace?.id);
+  }, [newProjectCode, projects, projectToReplace]);
+
+  const handleUpdateEnterprise = async (updates: Partial<Enterprise>) => {
+    try {
+      await updateDoc(doc(db, 'enterprises', enterprise.id), updates);
+    } catch (error) {
+      console.error('Enterprise update failed', error);
+      alert('Failed to update enterprise settings.');
+    }
+  };
+
   const exportUsers = () => {
     const data = filteredUsers.map(user => ({
       Name: user.name || user.displayName || '',
@@ -640,9 +749,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
 
   const projectAttributes = useMemo(() => getAttributes('project'), [enterprise.projectAttributes]);
   const lineItemAttributes = useMemo(() => getAttributes('lineItem'), [enterprise.lineItemAttributes]);
+  const costCodeAttributes = useMemo(() => getAttributes('costCode'), [enterprise.costCodeAttributes]);
 
   const sortedAttrValues = useMemo(() => {
-    const values = (activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
+    const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
     let result = [...values].filter(v => 
       v.description.toLowerCase().includes(attrSearch.toLowerCase()) ||
       v.id.toLowerCase().includes(attrSearch.toLowerCase())
@@ -665,11 +775,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       if (attrSort.direction === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [selectedAttrId, projectAttributes, lineItemAttributes, attrSort, activeTab, attrSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes]);
+  }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, attrSort, activeTab, attrSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes]);
 
 
-  const updateAttributeTitle = async (type: 'project' | 'lineItem', id: string, title: string) => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+  const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode', id: string, title: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => a.id === id ? { ...a, title } : a);
     await updateDoc(doc(db, 'enterprises', enterprise.id), {
@@ -677,10 +787,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
-  const addAttributeValue = async (type: 'project' | 'lineItem', attrId: string, value: ProjectAttributeValue) => {
+  const addAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, value: ProjectAttributeValue) => {
     try {
       setIsSubmitting(true);
-      const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
       const currentAttrs = getAttributes(type);
       const finalValue = {
         ...value,
@@ -709,8 +819,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const removeAttributeValue = async (type: 'project' | 'lineItem', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -723,8 +833,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
-  const updateAttributeValue = async (type: 'project' | 'lineItem', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
-    const field = type === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+  const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -740,7 +850,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
-  const handleExport = (type: 'project' | 'lineItem' | 'resourceRates' | 'costElements', attrId?: string) => {
+  const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'costElements', attrId?: string) => {
     if (type === 'costElements') {
       const elements = enterprise.costElements || [];
       if (elements.length === 0) {
@@ -779,7 +889,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       return;
     }
 
-    const attrs = type === 'project' ? projectAttributes : lineItemAttributes;
+    const attrs = type === 'project' ? projectAttributes : type === 'costCode' ? costCodeAttributes : lineItemAttributes;
     const attr = attrs.find(a => a.id === attrId);
     if (!attr || !attr.values || attr.values.length === 0) {
       alert('No values to export.');
@@ -795,10 +905,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Values');
-    XLSX.writeFile(wb, `${type === 'project' ? 'Project' : 'LineItem'}_Attr_${attrId}_${attr.title || 'Untitled'}.xlsx`);
+    XLSX.writeFile(wb, `${type === 'project' ? 'Project' : type === 'costCode' ? 'CostCode' : 'LineItem'}_Attr_${attrId}_${attr.title || 'Untitled'}.xlsx`);
   };
 
-  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', file: File, attrId?: string) => {
+  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', file: File, attrId?: string) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = new Uint8Array(e.target?.result as ArrayBuffer);
@@ -815,9 +925,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (!importPreview) return;
     const { type, data, attrId } = importPreview;
 
-    if ((type === 'lineItemAttributes' || type === 'projectAttributes') && attrId) {
-      const attrType = type === 'projectAttributes' ? 'project' : 'lineItem';
-      const field = attrType === 'project' ? 'projectAttributes' : 'lineItemAttributes';
+    if ((type === 'lineItemAttributes' || type === 'costCodeAttributes' || type === 'projectAttributes') && attrId) {
+      const attrType = type === 'projectAttributes' ? 'project' : type === 'costCodeAttributes' ? 'costCode' : 'lineItem';
+      const field = attrType === 'project' ? 'projectAttributes' : attrType === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
       const currentAttrs = getAttributes(attrType);
       
       const newAttrs = currentAttrs.map(a => {
@@ -1015,15 +1125,15 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         <div className="flex justify-between items-center mb-6">
           <div>
             <h1 className="text-2xl font-bold dark:text-white">{enterprise.name} Administration</h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">Manage enterprise-wide settings, users, and projects.</p>
+            <p className="text-sm text-gray-900 dark:text-gray-400">Manage enterprise-wide settings, users, and projects.</p>
           </div>
           {activeTab === 'users' && (
             <button 
               onClick={() => setInviteModal(true)}
-              className="bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+              className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
             >
               <UserPlus className="w-4 h-4" />
-              Invite User
+              Invite
             </button>
           )}
         </div>
@@ -1032,42 +1142,50 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       {/* Content Area */}
       <div className="flex-1 flex gap-8 min-h-0">
         {/* Sub-Sidebar */}
-        <div className="w-64 flex flex-col gap-4 overflow-y-auto pr-4 border-r border-gray-200 dark:border-white/10 shrink-0">
+        <div className={`${isSidebarOpen ? 'w-64' : 'w-16'} flex flex-col gap-4 overflow-y-auto pr-4 border-r border-gray-200 dark:border-white/10 shrink-0 transition-all duration-300`}>
           <div className="flex items-center justify-between mb-2 px-1">
-            <button 
-              onClick={() => setExpandedSections(new Set(adminSections.map(s => s.title)))}
-              className="text-[10px] font-bold uppercase tracking-widest text-blue-600 hover:text-blue-700 transition-colors"
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-1.5 text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
+              title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
             >
-              Expand All
-            </button>
-            <button 
-              onClick={() => setExpandedSections(new Set())}
-              className="text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-gray-600 transition-colors"
-            >
-              Collapse All
+              {isSidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
           </div>
           {adminSections.map(section => (
             <div key={section.title} className="flex flex-col">
-              <button 
-                onClick={() => toggleSection(section.title)}
-                className="flex items-center justify-between w-full text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2 hover:text-black dark:hover:text-white transition-colors"
-              >
-                <span>{section.title}</span>
-                {expandedSections.has(section.title) ? (
-                  <ChevronDown className="w-3 h-3" />
-                ) : (
-                  <ChevronRight className="w-3 h-3" />
-                )}
-              </button>
+              {isSidebarOpen ? (
+                <button 
+                  onClick={() => toggleSection(section.title)}
+                  className="flex items-center justify-between w-full text-[10px] font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 mb-2 hover:text-black dark:hover:text-white transition-colors"
+                >
+                  <span>{section.title}</span>
+                  {expandedSections.has(section.title) ? (
+                    <ChevronDown className="w-3 h-3" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3" />
+                  )}
+                </button>
+              ) : (
+                <div className="w-full text-center mb-2">
+                  <div className="w-4 h-px bg-gray-300 dark:bg-white/20 mx-auto"></div>
+                </div>
+              )}
               
-              {expandedSections.has(section.title) && (
-                <div className="space-y-1 animate-in fade-in slide-in-from-top-1 duration-200">
+              <AnimatePresence>
+                {(expandedSections.has(section.title) || !isSidebarOpen) && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="space-y-1 overflow-hidden"
+                  >
                   {section.items.map(item => (
                     <button
                       key={item.id}
                       onClick={() => {
                         setActiveTab(item.id);
+                        if (!isSidebarOpen) setIsSidebarOpen(true);
                         setSelectedUserId(null);
                         setSelectedProjectId(null);
                         setSelectedProjectIds(new Set());
@@ -1077,27 +1195,138 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         setSelectedRateIds(new Set());
                         setSelectedCostElementIds(new Set());
                       }}
+                      title={!isSidebarOpen ? item.label : undefined}
                       className={cn(
-                        "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                        `w-full flex items-center ${isSidebarOpen ? 'gap-3 px-3' : 'justify-center px-0'} py-2 rounded-lg text-sm font-medium transition-colors`,
                         activeTab === item.id 
                           ? "bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/5" 
-                          : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white"
+                          : "text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white"
                       )}
                     >
                       {item.icon}
-                      {item.label}
+                      {isSidebarOpen && item.label}
                     </button>
                   ))}
-                </div>
+                </motion.div>
               )}
-            </div>
-          ))}
+            </AnimatePresence>
+          </div>
+        ))}
         </div>
 
         {/* Main List Column */}
         <div className={`flex-1 flex flex-col min-h-0 min-w-0 ${ (selectedUserId || selectedProjectId) ? 'hidden lg:flex' : 'flex'}`}>
+          <AnimatePresence mode="wait">
+            {activeTab === 'enterpriseSettings' && (
+              <motion.div 
+                key="settings"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="flex-1 flex flex-col min-h-0"
+              >
+              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm max-w-2xl">
+                <h2 className="text-xl font-bold mb-6 dark:text-white flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-blue-600" />
+                  Enterprise General Settings
+                </h2>
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Enterprise Name</label>
+                    <input 
+                      type="text" 
+                      defaultValue={enterprise.name}
+                      onBlur={(e) => {
+                        if (e.target.value !== enterprise.name) {
+                          handleUpdateEnterprise({ name: e.target.value });
+                        }
+                      }}
+                      className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Enterprise ID</label>
+                    <input 
+                      type="text" 
+                      value={enterprise.enterpriseId}
+                      readOnly
+                      className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm text-gray-500 dark:text-gray-400 cursor-not-allowed outline-none"
+                    />
+                    <p className="mt-1 text-[9px] text-gray-400 font-medium italic">
+                      Enterprise ID is a permanent identifier and cannot be changed.
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Company Logo</label>
+                    <div className="flex items-center gap-4">
+                      <div className="w-20 h-20 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden">
+                        {enterprise.logoURL ? (
+                          <img src={enterprise.logoURL} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                        ) : (
+                          <Building2 className="w-8 h-8 text-gray-300" />
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        <input 
+                          type="file"
+                          ref={enterpriseLogoInputRef}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            if (!file.type.startsWith('image/')) {
+                              alert('Please upload a valid image file.');
+                              return;
+                            }
+                            if (file.size > 800 * 1024) {
+                              alert('File is too large. Please upload an image smaller than 800KB.');
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onloadend = async () => {
+                              const base64String = reader.result as string;
+                              await handleUpdateEnterprise({ logoURL: base64String });
+                            };
+                            reader.readAsDataURL(file);
+                          }}
+                          accept="image/*"
+                          className="hidden"
+                        />
+                        <button 
+                          onClick={() => enterpriseLogoInputRef.current?.click()}
+                          className="px-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white flex items-center gap-2"
+                        >
+                          <Upload className="w-3 h-3 text-blue-600" />
+                          Upload Logo
+                        </button>
+                        {enterprise.logoURL && (
+                          <button 
+                            onClick={() => handleUpdateEnterprise({ logoURL: '' })}
+                            className="px-4 py-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[9px] text-gray-400">
+                      Recommended: Square or horizontal logo with transparent background. Max 800KB.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
           {activeTab === 'users' && (
-            <div className="flex-1 flex flex-col min-h-0">
+            <motion.div 
+              key="users"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
               <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
                 <div className="relative flex-1 max-w-md">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1125,65 +1354,79 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     >
                       <Layout className="w-4 h-4" /> Views
                     </button>
-                    {isSavedViewMenuOpen === 'users' && (
-                      <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3">
-                        <div className="mb-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                          <div className="flex gap-2">
-                            <input 
-                              type="text"
-                              placeholder="View name..."
-                              value={newViewName}
-                              onChange={e => setNewViewName(e.target.value)}
-                              className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                            />
-                            <button 
-                              onClick={() => saveView('users', newViewName)}
-                              className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1 max-h-48 overflow-y-auto">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                          {savedViews.filter(v => v.tableId === 'users').map(view => (
-                            <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                              <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                              <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                <Trash2 className="w-3 h-3" />
+                    <AnimatePresence>
+                      {isSavedViewMenuOpen === 'users' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                        >
+                          <div className="mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text"
+                                placeholder="View name..."
+                                value={newViewName}
+                                onChange={e => setNewViewName(e.target.value)}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                              />
+                              <button 
+                                onClick={() => saveView('users', newViewName)}
+                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                              >
+                                Save
                               </button>
                             </div>
-                          ))}
-                          {savedViews.filter(v => v.tableId === 'users').length === 0 && (
-                            <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                          </div>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                            {savedViews.filter(v => v.tableId === 'users').map(view => (
+                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {savedViews.filter(v => v.tableId === 'users').length === 0 && (
+                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div className="relative">
                     <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'users' ? null : 'users')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
                       <Eye className="w-4 h-4" /> Columns
                     </button>
-                    {isColumnMenuOpen === 'users' && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                        {['photo', 'name', 'email', 'joined', 'access'].map(col => (
-                          <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                            <input 
-                              type="checkbox"
-                              checked={visibleColumns.users.includes(col)}
-                              onChange={() => setVisibleColumns(prev => ({
-                                ...prev,
-                                users: prev.users.includes(col) ? prev.users.filter(c => c !== col) : [...prev.users, col]
-                              }))}
-                              className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                            />
-                            <span className="text-xs dark:text-white capitalize">{col}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {isColumnMenuOpen === 'users' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                        >
+                          {['photo', 'name', 'email', 'joined', 'access'].map(col => (
+                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={visibleColumns.users.includes(col)}
+                                onChange={() => setVisibleColumns(prev => ({
+                                  ...prev,
+                                  users: prev.users.includes(col) ? prev.users.filter(c => c !== col) : [...prev.users, col]
+                                }))}
+                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                              />
+                              <span className="text-xs dark:text-white capitalize">{col}</span>
+                            </label>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <button onClick={() => setIsFrozen(prev => ({ ...prev, users: !prev.users }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen.users ? 'text-blue-600' : 'text-gray-400'}`}>
                     {isFrozen.users ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.users ? 'Frozen' : 'Freeze'}
@@ -1271,8 +1514,50 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.users.includes('access') && <td className="p-2 text-[10px] font-medium dark:text-white">{user.role}</td>}
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => { e.stopPropagation(); toggleUserRole(user.uid); }} className="p-1.5 text-gray-400 hover:text-blue-600"><Settings className="w-3.5 h-3.5" /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ type: 'user', id: user.uid, name: user.email || user.name }); }} className="p-1.5 text-gray-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveMenuId(activeMenuId === `user-${user.uid}` ? null : `user-${user.uid}`);
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                              
+                              <AnimatePresence>
+                                {activeMenuId === `user-${user.uid}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveMenuId(null)}
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      className={cn(
+                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
+                                        filteredUsers.indexOf(user) < 3 ? "top-full mt-2" : "bottom-full mb-2"
+                                      )}
+                                    >
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); toggleUserRole(user.uid); setActiveMenuId(null); }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Settings className="w-3.5 h-3.5" /> Change Role
+                                      </button>
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ type: 'user', id: user.uid, name: user.email || user.name }); setActiveMenuId(null); }}
+                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" /> Remove User
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1280,11 +1565,17 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'projects' && (
-            <div className="flex-1 flex flex-col min-h-0">
+            <motion.div 
+              key="projects"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
               <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
                 <div className="relative flex-1 max-w-md">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1312,65 +1603,79 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     >
                       <Layout className="w-4 h-4" /> Views
                     </button>
-                    {isSavedViewMenuOpen === 'projects' && (
-                      <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3">
-                        <div className="mb-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                          <div className="flex gap-2">
-                            <input 
-                              type="text"
-                              placeholder="View name..."
-                              value={newViewName}
-                              onChange={e => setNewViewName(e.target.value)}
-                              className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                            />
-                            <button 
-                              onClick={() => saveView('projects', newViewName)}
-                              className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1 max-h-48 overflow-y-auto">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                          {savedViews.filter(v => v.tableId === 'projects').map(view => (
-                            <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                              <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                              <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                <Trash2 className="w-3 h-3" />
+                    <AnimatePresence>
+                      {isSavedViewMenuOpen === 'projects' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                        >
+                          <div className="mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text"
+                                placeholder="View name..."
+                                value={newViewName}
+                                onChange={e => setNewViewName(e.target.value)}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                              />
+                              <button 
+                                onClick={() => saveView('projects', newViewName)}
+                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                              >
+                                Save
                               </button>
                             </div>
-                          ))}
-                          {savedViews.filter(v => v.tableId === 'projects').length === 0 && (
-                            <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                          </div>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                            {savedViews.filter(v => v.tableId === 'projects').map(view => (
+                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {savedViews.filter(v => v.tableId === 'projects').length === 0 && (
+                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div className="relative">
                     <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'projects' ? null : 'projects')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
                       <Eye className="w-4 h-4" /> Columns
                     </button>
-                    {isColumnMenuOpen === 'projects' && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                        {['photo', 'name', 'code', 'created', 'users', 'sheets'].map(col => (
-                          <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                            <input 
-                              type="checkbox"
-                              checked={visibleColumns.projects.includes(col)}
-                              onChange={() => setVisibleColumns(prev => ({
-                                ...prev,
-                                projects: prev.projects.includes(col) ? prev.projects.filter(c => c !== col) : [...prev.projects, col]
-                              }))}
-                              className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                            />
-                            <span className="text-xs dark:text-white capitalize">{col}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {isColumnMenuOpen === 'projects' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                        >
+                          {['photo', 'name', 'code', 'created', 'users', 'sheets'].map(col => (
+                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={visibleColumns.projects.includes(col)}
+                                onChange={() => setVisibleColumns(prev => ({
+                                  ...prev,
+                                  projects: prev.projects.includes(col) ? prev.projects.filter(c => c !== col) : [...prev.projects, col]
+                                }))}
+                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                              />
+                              <span className="text-xs dark:text-white capitalize">{col}</span>
+                            </label>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <button onClick={() => setIsFrozen(prev => ({ ...prev, projects: !prev.projects }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen.projects ? 'text-blue-600' : 'text-gray-400'}`}>
                     {isFrozen.projects ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.projects ? 'Frozen' : 'Freeze'}
@@ -1405,6 +1710,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       {visibleColumns.projects.includes('photo') && <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Photo</th>}
                       {visibleColumns.projects.includes('name') && <th onClick={() => handleProjectSort('projectName')} className={`p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.projects ? 'sticky left-10 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>Name {projectSort.field === 'projectName' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.projects.includes('code') && <th onClick={() => handleProjectSort('projectCode')} className="p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Code {projectSort.field === 'projectCode' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
+                      <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Status</th>
                       {visibleColumns.projects.includes('created') && <th onClick={() => handleProjectSort('dateCreated')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Created {projectSort.field === 'dateCreated' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.projects.includes('users') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Users</th>}
                       {visibleColumns.projects.includes('sheets') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Sheets</th>}
@@ -1478,13 +1784,85 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           </td>
                         )}
                         {visibleColumns.projects.includes('code') && <td className="p-2 text-[10px] font-mono text-gray-500 dark:text-gray-400">{project.projectCode}</td>}
+                        <td className="p-2">
+                          <select 
+                            value={project.status || 'Active'}
+                            onChange={(e) => handleUpdateProjectStatus(project.id, e.target.value)}
+                            className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-white/5 border-none rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <option value="Active">Active</option>
+                            <option value="On Hold">On Hold</option>
+                            <option value="Closed">Closed</option>
+                            <option value="Archived">Archived</option>
+                          </select>
+                        </td>
                         {visibleColumns.projects.includes('created') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{project.dateCreated ? new Date(project.dateCreated).toLocaleDateString() : 'N/A'}</td>}
                         {visibleColumns.projects.includes('users') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{Object.keys(project.users || {}).length}</td>}
                         {visibleColumns.projects.includes('sheets') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{sheets.filter(s => s.projectId === project.id).length}</td>}
                         <td className="p-2 text-right">
                           <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button className="p-1.5 text-gray-400 hover:text-blue-600"><ExternalLink className="w-3.5 h-3.5" /></button>
-                            <button onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ type: 'project', id: project.id, name: project.projectName }); }} className="p-1.5 text-gray-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveMenuId(activeMenuId === `project-${project.id}` ? null : `project-${project.id}`);
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </button>
+                              
+                              <AnimatePresence>
+                                {activeMenuId === `project-${project.id}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveMenuId(null)}
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      className={cn(
+                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
+                                        filteredProjects.indexOf(project) < 3 ? "top-full mt-2" : "bottom-full mb-2"
+                                      )}
+                                    >
+                                      <button 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setProjectToReplace(project);
+                                          setNewProjectCode('');
+                                          setReplaceError('');
+                                          setIsReplaceIdModalOpen(true);
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <RefreshCw className="w-3.5 h-3.5" /> Replace Project ID
+                                      </button>
+                                      <button 
+                                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <ExternalLink className="w-3.5 h-3.5" /> View Project
+                                      </button>
+                                      <button 
+                                        onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          setDeleteConfirm({ type: 'project', id: project.id, name: project.projectName }); 
+                                          setActiveMenuId(null);
+                                        }} 
+                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           </div>
                         </td>
                       </tr>
@@ -1492,11 +1870,17 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           )}
 
-          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes') && (
-            <div className="flex-1 flex gap-8 min-h-0">
+          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes' || activeTab === 'costCodeAttributes') && (
+            <motion.div 
+              key="attributes"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex gap-8 min-h-0"
+            >
               {/* Left Sidebar: 10 Static Rows */}
               <div className="w-80 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl flex flex-col overflow-hidden">
                 <div className="p-4 border-b border-gray-100 dark:border-white/10">
@@ -1520,7 +1904,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                      {(activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).filter(a => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
+                      {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).filter(a => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
                         <tr 
                           key={attr.id}
                           onClick={() => setSelectedAttrId(attr.id)}
@@ -1531,7 +1915,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             <input 
                               type="text"
                               value={attr.title}
-                              onChange={(e) => updateAttributeTitle(activeTab === 'projectAttributes' ? 'project' : 'lineItem', attr.id, e.target.value)}
+                              onChange={(e) => updateAttributeTitle(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attr.id, e.target.value)}
                               placeholder="Assign Title..."
                               className="w-full bg-transparent border-none p-0 text-sm font-medium focus:ring-0 dark:text-white placeholder:text-gray-300 dark:placeholder:text-gray-600"
                               onClick={(e) => e.stopPropagation()}
@@ -1546,14 +1930,21 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
 
               {/* Right Side: Value List Editor */}
               <div className="flex-1 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl flex flex-col overflow-hidden">
-                {selectedAttrId ? (
-                  <>
+                <AnimatePresence mode="wait">
+                  {selectedAttrId ? (
+                    <motion.div
+                      key={selectedAttrId}
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      className="flex-1 flex flex-col min-h-0"
+                    >
                     <div className="p-4 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
                       <div>
                         <h3 className="text-lg font-bold dark:text-white">
-                          Attribute {selectedAttrId}: {(activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}
+                          Attribute {selectedAttrId}: {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}
                         </h3>
-                        <p className="text-xs text-gray-500">Manage the list of allowed values for this attribute.</p>
+                        <p className="text-xs text-gray-900 dark:text-gray-400">Manage the list of allowed values for this attribute.</p>
                       </div>
                       <div className="flex gap-2">
                         <input 
@@ -1574,7 +1965,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <Upload className="w-4 h-4" />
                         </button>
                         <button 
-                          onClick={() => handleExport(activeTab === 'projectAttributes' ? 'project' : 'lineItem', selectedAttrId)}
+                          onClick={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId)}
                           className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
                           title="Export"
                         >
@@ -1594,65 +1985,81 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           >
                             <Layout className="w-4 h-4" /> Views
                           </button>
-                          {isSavedViewMenuOpen === activeTab && (
-                            <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3">
-                              <div className="mb-3">
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                                <div className="flex gap-2">
-                                  <input 
-                                    type="text"
-                                    placeholder="View name..."
-                                    value={newViewName}
-                                    onChange={e => setNewViewName(e.target.value)}
-                                    className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                                  />
-                                  <button 
-                                    onClick={() => saveView(activeTab, newViewName)}
-                                    className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                                  >
-                                    Save
-                                  </button>
-                                </div>
-                              </div>
-                              <div className="space-y-1 max-h-48 overflow-y-auto">
-                                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                                {savedViews.filter(v => v.tableId === activeTab).map(view => (
-                                  <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                    <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                    <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                      <Trash2 className="w-3 h-3" />
+                          <AnimatePresence>
+                            {isSavedViewMenuOpen === activeTab && (
+                              <motion.div 
+                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                              >
+                                <div className="mb-3">
+                                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                                  <div className="flex gap-2">
+                                    <input 
+                                      type="text"
+                                      placeholder="View name..."
+                                      value={newViewName}
+                                      onChange={e => setNewViewName(e.target.value)}
+                                      className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                                    />
+                                    <button 
+                                      onClick={() => saveView(activeTab, newViewName)}
+                                      className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                                    >
+                                      Save
                                     </button>
                                   </div>
-                                ))}
-                                {savedViews.filter(v => v.tableId === activeTab).length === 0 && (
-                                  <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                                )}
-                              </div>
-                            </div>
-                          )}
+                                </div>
+                                <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
+                                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                                  {savedViews.filter(v => v.tableId === activeTab).map(view => (
+                                    <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                      <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                      <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                        <Trash2 className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                  {savedViews.filter(v => v.tableId === activeTab).length === 0 && (
+                                    <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
+                                  )}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                         <div className="relative">
                           <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === activeTab ? null : activeTab)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
                             <Eye className="w-4 h-4" /> Columns
                           </button>
-                          {isColumnMenuOpen === activeTab && (
-                            <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                              {['id', 'description', 'sortOrder'].map(col => (
-                                <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                  <input 
-                                    type="checkbox"
-                                    checked={visibleColumns[activeTab].includes(col)}
-                                    onChange={() => setVisibleColumns(prev => ({
-                                      ...prev,
-                                      [activeTab]: prev[activeTab].includes(col) ? prev[activeTab].filter(c => c !== col) : [...prev[activeTab], col]
-                                    }))}
-                                    className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                                  />
-                                  <span className="text-xs dark:text-white capitalize">{col}</span>
-                                </label>
-                              ))}
-                            </div>
-                          )}
+                          <AnimatePresence>
+                            {isColumnMenuOpen === activeTab && (
+                              <motion.div 
+                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                              >
+                                {['id', 'description', 'sortOrder'].map(col => (
+                                  <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                    <input 
+                                      type="checkbox"
+                                      checked={visibleColumns[activeTab].includes(col)}
+                                      onChange={() => setVisibleColumns(prev => ({
+                                        ...prev,
+                                        [activeTab]: prev[activeTab].includes(col) ? prev[activeTab].filter(c => c !== col) : [...prev[activeTab], col]
+                                      }))}
+                                      className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                                    />
+                                    <span className="text-xs dark:text-white uppercase tracking-widest font-bold">
+                                      {col === 'id' ? 'ID' : col === 'sortOrder' ? 'Sort Order' : 'Description'}
+                                    </span>
+                                  </label>
+                                ))}
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                         <button onClick={() => setIsFrozen(prev => ({ ...prev, [activeTab]: !prev[activeTab] }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen[activeTab] ? 'text-blue-600' : 'text-gray-400'}`}>
                           {isFrozen[activeTab] ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen[activeTab] ? 'Frozen' : 'Freeze'}
@@ -1668,11 +2075,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         )}
                         <button 
                           onClick={() => {
-                            const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
+                            const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
                             setValueFormData({ id: '', description: '', sortOrder: (currentAttr?.values?.length || 0) + 1 });
-                            setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : 'lineItem', attrId: selectedAttrId, valueId: null });
+                            setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: null });
                           }}
-                          className="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                          className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
                         >
                           <Plus className="w-4 h-4" />
                           Add
@@ -1689,11 +2096,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                                 type="checkbox" 
                                 className="rounded border-gray-300 dark:border-black/20 bg-transparent"
                                 checked={
-                                  ((activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length > 0 &&
-                                  ((activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).every((v: any) => selectedAttrValueIds.has(v.id))
+                                  ((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length > 0 &&
+                                  ((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).every((v: any) => selectedAttrValueIds.has(v.id))
                                 }
                                 onChange={(e) => {
-                                  const values = (activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
+                                  const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
                                   if (e.target.checked) {
                                     setSelectedAttrValueIds(new Set(values.map((v: any) => v.id)));
                                   } else {
@@ -1769,35 +2176,71 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                               {visibleColumns[activeTab].includes('sortOrder') && <td className="p-2 text-xs dark:text-white">{val.sortOrder?.toString().padStart(2, '0')}</td>}
                               <td className="p-2 text-right">
                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button 
-                                    onClick={() => {
-                                      setValueFormData(val);
-                                      setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : 'lineItem', attrId: selectedAttrId, valueId: val.id });
-                                    }}
-                                    className="p-1 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                                  >
-                                    <Edit2 className="w-3 h-3" />
-                                  </button>
-                                  <button 
-                                    onClick={() => removeAttributeValue(activeTab === 'projectAttributes' ? 'project' : 'lineItem', selectedAttrId, val.id)}
-                                    className="p-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
+                                  <div className="relative">
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveMenuId(activeMenuId === `attr-val-${val.id}` ? null : `attr-val-${val.id}`);
+                                      }}
+                                      className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                                    >
+                                      <MoreVertical className="w-4 h-4" />
+                                    </button>
+                                    
+                                    <AnimatePresence>
+                                      {activeMenuId === `attr-val-${val.id}` && (
+                                        <>
+                                          <div 
+                                            className="fixed inset-0 z-40" 
+                                            onClick={() => setActiveMenuId(null)}
+                                          />
+                                          <motion.div 
+                                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                            className={cn(
+                                              "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
+                                              sortedAttrValues.indexOf(val) < 3 ? "top-full mt-2" : "bottom-full mb-2"
+                                            )}
+                                          >
+                                            <button 
+                                              onClick={() => {
+                                                setValueFormData(val);
+                                                setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: val.id });
+                                                setActiveMenuId(null);
+                                              }}
+                                              className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                            >
+                                              <Edit2 className="w-3 h-3" /> Edit
+                                            </button>
+                                            <button 
+                                              onClick={() => {
+                                                removeAttributeValue(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId, val.id);
+                                                setActiveMenuId(null);
+                                              }}
+                                              className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                            >
+                                              <Trash2 className="w-3 h-3" /> Delete
+                                            </button>
+                                          </motion.div>
+                                        </>
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
                                 </div>
                               </td>
                             </tr>
                           ))}
                         </tbody>
-                        {((activeTab === 'projectAttributes' ? projectAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length === 0 && (
+                        {((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length === 0 && (
                             <tr>
                               <td colSpan={5} className="p-12 text-center">
                                 <Tag className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
-                                <p className="text-gray-500 dark:text-gray-400 text-sm">No values defined for this attribute.</p>
+                                <p className="text-gray-900 dark:text-gray-400 text-sm">No values defined for this attribute.</p>
                                 <button 
                                   onClick={() => {
                                     setValueFormData({ id: '', description: '', sortOrder: 1 });
-                                    setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : 'lineItem', attrId: selectedAttrId, valueId: null });
+                                    setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: null });
                                   }}
                                   className="mt-4 text-blue-600 dark:text-blue-400 text-xs font-bold hover:underline"
                                 >
@@ -1808,26 +2251,39 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           )}
                       </table>
                     </div>
-                  </>
-                ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center p-12 text-center">
-                    <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
-                      <ChevronRight className="w-8 h-8 text-gray-300" />
-                    </div>
-                    <h3 className="text-lg font-bold dark:text-white mb-2">Select an Attribute</h3>
-                    <p className="text-sm text-gray-500 max-w-xs">Choose one of the 10 static attributes from the left sidebar to manage its values.</p>
-                  </div>
-                )}
-              </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="empty"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="flex-1 flex flex-col items-center justify-center p-12 text-center"
+                    >
+                      <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
+                        <ChevronRight className="w-8 h-8 text-gray-300" />
+                      </div>
+                      <h3 className="text-lg font-bold dark:text-white mb-2">Select an Attribute</h3>
+                      <p className="text-sm text-gray-900 dark:text-gray-400 max-w-xs">Choose one of the 10 static attributes from the left sidebar to manage its values.</p>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
             </div>
-          )}
+          </motion.div>
+        )}
 
-          {activeTab === 'costElements' && (
-            <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
+        {activeTab === 'costElements' && (
+          <motion.div 
+            key="costElements"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+          >
               <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
                 <div>
                   <h3 className="text-xl font-bold dark:text-white">Enterprise Cost Elements</h3>
-                  <p className="text-sm text-gray-500">Define standard cost elements for enterprise-wide financial tracking.</p>
+                  <p className="text-sm text-gray-900 dark:text-gray-400">Define standard cost elements for enterprise-wide financial tracking.</p>
                 </div>
                 <div className="flex gap-2">
                   <div className="relative">
@@ -1835,11 +2291,35 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     <input 
                       type="text" 
                       placeholder="Search cost elements..."
-                      value={resourceSearch}
-                      onChange={(e) => setResourceSearch(e.target.value)}
+                      value={costElementSearch}
+                      onChange={(e) => setCostElementSearch(e.target.value)}
                       className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64 dark:text-white"
                     />
                   </div>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept=".xlsx,.xls,.csv"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleImport('costElements', file);
+                    }}
+                  />
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
+                    title="Import"
+                  >
+                    <Upload className="w-5 h-5" />
+                  </button>
+                  <button 
+                    onClick={() => handleExport('costElements')}
+                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
+                    title="Export"
+                  >
+                    <Download className="w-5 h-5" />
+                  </button>
                   <button 
                     onClick={() => clearAllFilters('costElements')}
                     className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
@@ -1847,95 +2327,124 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   >
                     <Filter className="w-4 h-4" /> Clear Filters
                   </button>
-                  
-                  <div className="h-10 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
-
-                  <button 
-                    onClick={() => handleExport('costElements')}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl transition-all text-sm font-bold border border-emerald-200 dark:border-emerald-500/20"
-                    title="Export to Excel"
-                  >
-                    <Download className="w-4 h-4" />
-                    EXPORT
-                  </button>
-
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-3 py-2 hover:bg-blue-50 dark:hover:bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl transition-all text-sm font-bold border border-blue-200 dark:border-blue-500/20"
-                    title="Import from Excel"
-                  >
-                    <Upload className="w-4 h-4" />
-                    IMPORT
-                  </button>
-
-                  <input 
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleImport('costElements', file);
-                    }}
-                    className="hidden"
-                    accept=".xlsx,.xls,.csv"
-                  />
-
-                  <div className="h-10 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
-
                   <div className="relative">
                     <button 
-                      onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'costElements' ? null : 'costElements')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                      title="Columns"
+                      onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'costElements' ? null : 'costElements')}
+                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium"
                     >
-                      <Layout className="w-5 h-5" />
+                      <Layout className="w-5 h-5" /> Views
                     </button>
-                    {isColumnMenuOpen === 'costElements' && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 p-2">Visible Columns</p>
-                        {['id', 'description', 'sortCode'].map(col => (
-                          <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                            <input 
-                              type="checkbox"
-                              checked={visibleColumns.costElements.includes(col)}
-                              onChange={() => {
-                                const newCols = visibleColumns.costElements.includes(col)
-                                  ? visibleColumns.costElements.filter(c => c !== col)
-                                  : [...visibleColumns.costElements, col];
-                                setVisibleColumns(prev => ({ ...prev, costElements: newCols }));
-                              }}
-                              className="rounded border-gray-300 dark:border-white/20"
-                            />
-                            <span className="text-xs capitalize dark:text-white">{col}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {isSavedViewMenuOpen === 'costElements' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                        >
+                          <div className="mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text"
+                                placeholder="View name..."
+                                value={newViewName}
+                                onChange={e => setNewViewName(e.target.value)}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                              />
+                              <button 
+                                onClick={() => saveView('costElements', newViewName)}
+                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                            {savedViews.filter(v => v.tableId === 'costElements').map(view => (
+                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {savedViews.filter(v => v.tableId === 'costElements').length === 0 && (
+                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
+                  <div className="relative">
+                    <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'costElements' ? null : 'costElements')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
+                      <Eye className="w-5 h-5" /> Columns
+                    </button>
+                    <AnimatePresence>
+                      {isColumnMenuOpen === 'costElements' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                        >
+                          {['id', 'description', 'sortCode'].map(col => (
+                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={visibleColumns.costElements.includes(col)}
+                                onChange={() => setVisibleColumns(prev => ({
+                                  ...prev,
+                                  costElements: prev.costElements.includes(col) ? prev.costElements.filter(c => c !== col) : [...prev.costElements, col]
+                                }))}
+                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                              />
+                              <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
+                            </label>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                  <button onClick={() => setIsFrozen(prev => ({ ...prev, costElements: !prev.costElements }))} className={`p-2 flex items-center gap-1 text-sm font-medium ${isFrozen.costElements ? 'text-blue-600' : 'text-gray-400'}`}>
+                    {isFrozen.costElements ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />} {isFrozen.costElements ? 'Frozen' : 'Freeze'}
+                  </button>
+                  {selectedCostElementIds.size > 0 && (
+                    <button 
+                      onClick={() => setDeleteConfirm({ type: 'bulk-costElement', count: selectedCostElementIds.size })}
+                      className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete ({selectedCostElementIds.size})
+                    </button>
+                  )}
                   <button 
                     onClick={() => {
                       setCostElementFormData({ id: '', description: '', sortCode: '' });
                       setIsEditingCostElement({ id: null });
                     }}
-                    className="bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2"
+                    className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
                   >
                     <Plus className="w-4 h-4" />
-                    Add Cost Element
+                    Add
                   </button>
                 </div>
               </div>
 
               <div className="flex-1 overflow-auto">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead className="sticky top-0 z-40 bg-black dark:bg-black text-white">
-                    <tr className="border-b border-white/10">
-                      <th className="p-2 w-10">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
+                    <tr className="border-b border-white/10 dark:border-black/10">
+                      <th className={`p-2 w-12 ${isFrozen.costElements ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>
                         <input 
                           type="checkbox" 
-                          className="rounded border-white/20 bg-transparent text-blue-600 focus:ring-blue-500"
-                          checked={selectedCostElementIds.size === filteredCostElements.length && filteredCostElements.length > 0}
+                          className="rounded border-gray-300 dark:border-black/20 bg-transparent"
+                          checked={(enterprise.costElements || []).length > 0 && (enterprise.costElements || []).every(e => selectedCostElementIds.has(e.id))}
                           onChange={(e) => {
                             if (e.target.checked) {
-                              setSelectedCostElementIds(new Set(filteredCostElements.map(e => e.id)));
+                              setSelectedCostElementIds(new Set((enterprise.costElements || []).map(e => e.id)));
                             } else {
                               setSelectedCostElementIds(new Set());
                             }
@@ -1944,49 +2453,40 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       </th>
                       {visibleColumns.costElements.includes('id') && (
                         <th 
-                          className="p-2 w-[10ch] text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-white transition-colors"
                           onClick={() => setCostElementSort(prev => ({ field: 'id', direction: prev.field === 'id' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
+                          className={`p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.costElements ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}
                         >
-                          <div className="flex items-center gap-1">
-                            Element ID
-                            {costElementSort.field === 'id' && (costElementSort.direction === 'asc' ? <ChevronRight className="w-3 h-3 rotate-90" /> : <ChevronRight className="w-3 h-3 -rotate-90" />)}
-                          </div>
+                          ID {costElementSort.field === 'id' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
                         </th>
                       )}
                       {visibleColumns.costElements.includes('description') && (
                         <th 
-                          className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-white transition-colors"
+                          className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600"
                           onClick={() => setCostElementSort(prev => ({ field: 'description', direction: prev.field === 'description' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
                         >
-                          <div className="flex items-center gap-1">
-                            Description
-                            {costElementSort.field === 'description' && (costElementSort.direction === 'asc' ? <ChevronRight className="w-3 h-3 rotate-90" /> : <ChevronRight className="w-3 h-3 -rotate-90" />)}
-                          </div>
+                          Description {costElementSort.field === 'description' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
                         </th>
                       )}
                       {visibleColumns.costElements.includes('sortCode') && (
                         <th 
-                          className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 cursor-pointer hover:text-white transition-colors"
+                          className="p-2 w-20 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600"
                           onClick={() => setCostElementSort(prev => ({ field: 'sortCode', direction: prev.field === 'sortCode' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
                         >
-                          <div className="flex items-center gap-1">
-                            Sort Code
-                            {costElementSort.field === 'sortCode' && (costElementSort.direction === 'asc' ? <ChevronRight className="w-3 h-3 rotate-90" /> : <ChevronRight className="w-3 h-3 -rotate-90" />)}
-                          </div>
+                          Sort {costElementSort.field === 'sortCode' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
                         </th>
                       )}
-                      <th className="p-2 w-10 sticky right-0 z-30 bg-black border-l border-white/10"></th>
+                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">Actions</th>
                     </tr>
-                    <tr className="border-b border-white/5 bg-white/5">
-                      <th className="p-2"></th>
+                    <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
+                      <th className={`p-2 ${isFrozen.costElements ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
                       {visibleColumns.costElements.includes('id') && (
-                        <th className="p-2">
+                        <th className={`p-2 w-32 ${isFrozen.costElements ? 'sticky left-12 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
                           <input 
                             type="text"
                             placeholder="Filter ID..."
                             value={columnFilters.costElements?.id || ''}
                             onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, id: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white/10 border border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none text-white placeholder:text-gray-500"
+                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
                           />
                         </th>
                       )}
@@ -1997,28 +2497,28 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             placeholder="Filter Description..."
                             value={columnFilters.costElements?.description || ''}
                             onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, description: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white/10 border border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none text-white placeholder:text-gray-500"
+                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
                           />
                         </th>
                       )}
                       {visibleColumns.costElements.includes('sortCode') && (
-                        <th className="p-2">
+                        <th className="p-2 w-20">
                           <input 
                             type="text"
                             placeholder="Filter Sort Code..."
                             value={columnFilters.costElements?.sortCode || ''}
                             onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, sortCode: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white/10 border border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none text-white placeholder:text-gray-500"
+                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
                           />
                         </th>
                       )}
-                      <th className="p-2 sticky right-0 z-30 bg-black border-l border-white/10"></th>
+                      <th className="p-2 sticky right-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-l border-gray-200 dark:border-white/10"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                    {filteredCostElements.map(element => (
+                    {filteredCostElements.map((element, index) => (
                       <tr key={element.id} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group ${selectedCostElementIds.has(element.id) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                        <td className="p-2">
+                        <td className={`p-2 ${isFrozen.costElements ? 'sticky left-0 z-10 bg-inherit border-r border-gray-100 dark:border-white/10' : ''}`}>
                           <input 
                             type="checkbox" 
                             className="rounded border-gray-300 dark:border-white/20 bg-transparent"
@@ -2034,60 +2534,88 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             }}
                           />
                         </td>
-                        {visibleColumns.costElements.includes('id') && <td className="p-2 w-[10ch] text-xs font-mono dark:text-white">{element.id}</td>}
-                        {visibleColumns.costElements.includes('description') && <td className="p-2 text-xs font-bold dark:text-white truncate max-w-[200px]" title={element.description}>{element.description}</td>}
-                        {visibleColumns.costElements.includes('sortCode') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{element.sortCode}</td>}
+                        {visibleColumns.costElements.includes('id') && <td className={`p-2 w-32 text-xs font-mono dark:text-white ${isFrozen.costElements ? 'sticky left-12 z-10 bg-inherit border-r border-gray-100 dark:border-white/10' : ''}`}>{element.id}</td>}
+                        {visibleColumns.costElements.includes('description') && <td className="p-2 text-xs font-bold dark:text-white truncate max-w-[400px]" title={element.description}>{element.description}</td>}
+                        {visibleColumns.costElements.includes('sortCode') && <td className="p-2 w-20 text-xs text-gray-500 dark:text-gray-400">{element.sortCode}</td>}
                         <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="relative group/menu">
-                              <button className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5">
+                          <div className="flex justify-end gap-1">
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveMenuId(activeMenuId === `ce-${element.id}` ? null : `ce-${element.id}`);
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                              >
                                 <MoreVertical className="w-4 h-4" />
                               </button>
-                              <div className={clsx(
-                                "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2 hidden group-hover/menu:block",
-                                (enterprise.costElements || []).findIndex(e => e.id === element.id) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                              )}>
-                                <button 
-                                  onClick={() => {
-                                    const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
-                                    setCostElementFormData({ id: '', description: '', sortCode: '' });
-                                    setIsEditingCostElement({ id: null, insertIndex: index });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Plus className="w-3 h-3" /> Insert Above
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
-                                    setCostElementFormData({ id: '', description: '', sortCode: '' });
-                                    setIsEditingCostElement({ id: null, insertIndex: index + 1 });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Plus className="w-3 h-3" /> Insert Below
-                                </button>
-                                <hr className="my-1 border-gray-100 dark:border-white/10" />
-                                <button 
-                                  onClick={() => {
-                                    setCostElementFormData({ 
-                                      id: element.id, 
-                                      description: element.description, 
-                                      sortCode: element.sortCode
-                                    });
-                                    setIsEditingCostElement({ id: element.id });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Edit2 className="w-3 h-3" /> Edit
-                                </button>
-                                <button 
-                                  onClick={() => setDeleteConfirm({ type: 'costElement', id: element.id, name: element.description })}
-                                  className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                >
-                                  <Trash2 className="w-3 h-3" /> Delete
-                                </button>
-                              </div>
+                              
+                              <AnimatePresence>
+                                {activeMenuId === `ce-${element.id}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveMenuId(null)}
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      className={cn(
+                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
+                                        filteredCostElements.indexOf(element) < 3 ? "top-full mt-2" : "bottom-full mb-2"
+                                      )}
+                                    >
+                                      <button 
+                                        onClick={() => {
+                                          const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
+                                          setCostElementFormData({ id: '', description: '', sortCode: '' });
+                                          setIsEditingCostElement({ id: null, insertIndex: index });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Plus className="w-3 h-3" /> Insert Above
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
+                                          setCostElementFormData({ id: '', description: '', sortCode: '' });
+                                          setIsEditingCostElement({ id: null, insertIndex: index + 1 });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Plus className="w-3 h-3" /> Insert Below
+                                      </button>
+                                      <hr className="my-1 border-gray-100 dark:border-white/10" />
+                                      <button 
+                                        onClick={() => {
+                                          setCostElementFormData({ 
+                                            id: element.id, 
+                                            description: element.description, 
+                                            sortCode: element.sortCode
+                                          });
+                                          setIsEditingCostElement({ id: element.id });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Edit2 className="w-3 h-3" /> Edit
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          setDeleteConfirm({ type: 'costElement', id: element.id, name: element.description });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Trash2 className="w-3 h-3" /> Delete
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
                             </div>
                           </div>
                         </td>
@@ -2099,22 +2627,28 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
                             <PieChart className="w-8 h-8 text-gray-300" />
                           </div>
-                          <p className="text-gray-500 dark:text-gray-400 text-sm">No cost elements found matching your search.</p>
+                          <p className="text-gray-900 dark:text-gray-400 text-sm">No cost elements found matching your search.</p>
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'resourceRates' && (
-            <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
+            <motion.div 
+              key="resourceRates"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+            >
               <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
                 <div>
                   <h3 className="text-xl font-bold dark:text-white">Enterprise Resources Rates</h3>
-                  <p className="text-sm text-gray-500">Define standard rates for resources to be used in forecasting sheets.</p>
+                  <p className="text-sm text-gray-900 dark:text-gray-400">Define standard rates for resources to be used in forecasting sheets.</p>
                 </div>
                 <div className="flex gap-2">
                   <div className="relative">
@@ -2165,65 +2699,79 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     >
                       <Layout className="w-5 h-5" /> Views
                     </button>
-                    {isSavedViewMenuOpen === 'resourceRates' && (
-                      <div className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3">
-                        <div className="mb-3">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                          <div className="flex gap-2">
-                            <input 
-                              type="text"
-                              placeholder="View name..."
-                              value={newViewName}
-                              onChange={e => setNewViewName(e.target.value)}
-                              className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                            />
-                            <button 
-                              onClick={() => saveView('resourceRates', newViewName)}
-                              className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1 max-h-48 overflow-y-auto">
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                          {savedViews.filter(v => v.tableId === 'resourceRates').map(view => (
-                            <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                              <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                              <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                <Trash2 className="w-3 h-3" />
+                    <AnimatePresence>
+                      {isSavedViewMenuOpen === 'resourceRates' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                        >
+                          <div className="mb-3">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                            <div className="flex gap-2">
+                              <input 
+                                type="text"
+                                placeholder="View name..."
+                                value={newViewName}
+                                onChange={e => setNewViewName(e.target.value)}
+                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                              />
+                              <button 
+                                onClick={() => saveView('resourceRates', newViewName)}
+                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                              >
+                                Save
                               </button>
                             </div>
-                          ))}
-                          {savedViews.filter(v => v.tableId === 'resourceRates').length === 0 && (
-                            <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                          </div>
+                          <div className="space-y-1 max-h-48 overflow-y-auto">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                            {savedViews.filter(v => v.tableId === 'resourceRates').map(view => (
+                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
+                            {savedViews.filter(v => v.tableId === 'resourceRates').length === 0 && (
+                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
+                            )}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <div className="relative">
                     <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'resourceRates' ? null : 'resourceRates')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
                       <Eye className="w-5 h-5" /> Columns
                     </button>
-                    {isColumnMenuOpen === 'resourceRates' && (
-                      <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2">
-                        {['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'].map(col => (
-                          <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                            <input 
-                              type="checkbox"
-                              checked={visibleColumns.resourceRates.includes(col)}
-                              onChange={() => setVisibleColumns(prev => ({
-                                ...prev,
-                                resourceRates: prev.resourceRates.includes(col) ? prev.resourceRates.filter(c => c !== col) : [...prev.resourceRates, col]
-                              }))}
-                              className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                            />
-                            <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {isColumnMenuOpen === 'resourceRates' && (
+                        <motion.div 
+                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                          animate={{ opacity: 1, scale: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                        >
+                          {['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'].map(col => (
+                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                              <input 
+                                type="checkbox"
+                                checked={visibleColumns.resourceRates.includes(col)}
+                                onChange={() => setVisibleColumns(prev => ({
+                                  ...prev,
+                                  resourceRates: prev.resourceRates.includes(col) ? prev.resourceRates.filter(c => c !== col) : [...prev.resourceRates, col]
+                                }))}
+                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                              />
+                              <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
+                            </label>
+                          ))}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                   <button onClick={() => setIsFrozen(prev => ({ ...prev, resourceRates: !prev.resourceRates }))} className={`p-2 flex items-center gap-1 text-sm font-medium ${isFrozen.resourceRates ? 'text-blue-600' : 'text-gray-400'}`}>
                     {isFrozen.resourceRates ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />} {isFrozen.resourceRates ? 'Frozen' : 'Freeze'}
@@ -2242,10 +2790,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
                       setIsEditingResource({ id: null });
                     }}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
+                    className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
                   >
-                    <Plus className="w-5 h-5" />
-                    Add Resource
+                    <Plus className="w-4 h-4" />
+                    Add
                   </button>
                 </div>
               </div>
@@ -2372,7 +2920,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                    {filteredResources.map(resource => (
+                    {filteredResources.map((resource, index) => (
                       <tr key={resource.id} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group ${selectedRateIds.has(resource.id) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
                         <td className={`p-2 ${isFrozen.resourceRates ? 'sticky left-0 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
                           <input 
@@ -2399,61 +2947,89 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.resourceRates.includes('udf2') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf2 || '-'}</td>}
                         {visibleColumns.resourceRates.includes('udf3') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf3 || '-'}</td>}
                         <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="relative group/menu">
-                              <button className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5">
+                          <div className="flex justify-end gap-1">
+                            <div className="relative">
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveMenuId(activeMenuId === `rr-${resource.id}` ? null : `rr-${resource.id}`);
+                                }}
+                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                              >
                                 <MoreVertical className="w-4 h-4" />
                               </button>
-                              <div className={clsx(
-                                "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2 hidden group-hover/menu:block",
-                                (enterprise.resourceRates || []).findIndex(r => r.id === resource.id) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                              )}>
-                                <button 
-                                  onClick={() => {
-                                    const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
-                                    setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
-                                    setIsEditingResource({ id: null, insertIndex: index });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Plus className="w-3 h-3" /> Insert Above
-                                </button>
-                                <button 
-                                  onClick={() => {
-                                    const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
-                                    setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
-                                    setIsEditingResource({ id: null, insertIndex: index + 1 });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Plus className="w-3 h-3" /> Insert Below
-                                </button>
-                                <hr className="my-1 border-gray-100 dark:border-white/10" />
-                                <button 
-                                  onClick={() => {
-                                    setResourceFormData({ 
-                                      id: resource.id, 
-                                      name: resource.name, 
-                                      unit: resource.unit, 
-                                      rate: resource.rate || 0, 
-                                      category: resource.category || '',
-                                      udf1: resource.udf1 || '',
-                                      udf2: resource.udf2 || '',
-                                      udf3: resource.udf3 || ''
-                                    });
-                                    setIsEditingResource({ id: resource.id });
-                                  }}
-                                  className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                >
-                                  <Edit2 className="w-3 h-3" /> Edit
-                                </button>
-                                <button 
-                                  onClick={() => setDeleteConfirm({ type: 'rate', id: resource.id, name: resource.name })}
-                                  className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                >
-                                  <Trash2 className="w-3 h-3" /> Delete
-                                </button>
-                              </div>
+                              
+                              <AnimatePresence>
+                                {activeMenuId === `rr-${resource.id}` && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-40" 
+                                      onClick={() => setActiveMenuId(null)}
+                                    />
+                                    <motion.div 
+                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                                      className={cn(
+                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
+                                        index < 3 ? "top-full mt-2" : "bottom-full mb-2"
+                                      )}
+                                    >
+                                      <button 
+                                        onClick={() => {
+                                          const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
+                                          setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
+                                          setIsEditingResource({ id: null, insertIndex: index });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Plus className="w-3 h-3" /> Insert Above
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
+                                          setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
+                                          setIsEditingResource({ id: null, insertIndex: index + 1 });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Plus className="w-3 h-3" /> Insert Below
+                                      </button>
+                                      <hr className="my-1 border-gray-100 dark:border-white/10" />
+                                      <button 
+                                        onClick={() => {
+                                          setResourceFormData({ 
+                                            id: resource.id, 
+                                            name: resource.name, 
+                                            unit: resource.unit, 
+                                            rate: resource.rate || 0, 
+                                            category: resource.category || '', 
+                                            udf1: resource.udf1 || '', 
+                                            udf2: resource.udf2 || '', 
+                                            udf3: resource.udf3 || '' 
+                                          });
+                                          setIsEditingResource({ id: resource.id });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Edit2 className="w-3 h-3" /> Edit
+                                      </button>
+                                      <button 
+                                        onClick={() => {
+                                          setDeleteConfirm({ type: 'rate', id: resource.id, name: resource.name });
+                                          setActiveMenuId(null);
+                                        }}
+                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                                      >
+                                        <Trash2 className="w-3 h-3" /> Delete
+                                      </button>
+                                    </motion.div>
+                                  </>
+                                )}
+                              </AnimatePresence>
                             </div>
                           </div>
                         </td>
@@ -2465,30 +3041,42 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
                             <Settings className="w-8 h-8 text-gray-300" />
                           </div>
-                          <p className="text-gray-500 dark:text-gray-400 text-sm">No resources found matching your search.</p>
+                          <p className="text-gray-900 dark:text-gray-400 text-sm">No resources found matching your search.</p>
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {['scheduleMgmt', 'changeMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl">
+            <motion.div 
+              key="under-development"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl"
+            >
               <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
                 <Settings className="w-8 h-8 text-gray-300" />
               </div>
               <h3 className="text-lg font-bold dark:text-white mb-2">Module Under Development</h3>
-              <p className="text-sm text-gray-500 max-w-xs">Enterprise-wide settings for this module are currently being implemented.</p>
-            </div>
+              <p className="text-sm text-gray-900 dark:text-gray-400 max-w-xs">Enterprise-wide settings for this module are currently being implemented.</p>
+            </motion.div>
           )}
         </div>
 
         {/* Side Detail Panel */}
-        {(selectedUserId || selectedProjectId) && (
-          <div className="w-full lg:w-96 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-xl animate-in slide-in-from-right duration-300">
+        <AnimatePresence>
+          {(selectedUserId || selectedProjectId) && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 20 }}
+              className="w-full lg:w-96 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl flex flex-col overflow-hidden shadow-xl"
+            >
             {/* Panel Header */}
             <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-start">
               <div className="flex items-center gap-4">
@@ -2566,6 +3154,93 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               {selectedProjectId && selectedProject && (
                 <div className="space-y-6">
                   <div>
+                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-4">Project Settings</h4>
+                    <div className="space-y-4 bg-gray-50 dark:bg-white/5 p-4 rounded-xl border border-gray-100 dark:border-white/5">
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Project ID</label>
+                          <button 
+                            onClick={() => {
+                              setProjectToReplace(selectedProject);
+                              setNewProjectCode('');
+                              setReplaceError('');
+                              setIsReplaceIdModalOpen(true);
+                            }}
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-700 dark:text-blue-400 flex items-center gap-1"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            Replace
+                          </button>
+                        </div>
+                        <p className="text-xs font-mono dark:text-white">{selectedProject.projectCode}</p>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500 block mb-1">Status</label>
+                        <select 
+                          value={selectedProject.status || 'Active'}
+                          onChange={(e) => handleUpdateProjectStatus(selectedProject.id, e.target.value)}
+                          className="w-full text-xs bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1.5 dark:text-white outline-none focus:ring-1 focus:ring-blue-500"
+                        >
+                          <option value="Active">Active</option>
+                          <option value="On Hold">On Hold</option>
+                          <option value="Closed">Closed</option>
+                          <option value="Archived">Archived</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500 block mb-2">Project Photo</label>
+                        <div className="flex items-center gap-3">
+                          <input 
+                            type="file"
+                            ref={projectPhotoInputRef}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (!file.type.startsWith('image/')) {
+                                alert('Please upload a valid image file.');
+                                return;
+                              }
+                              if (file.size > 800 * 1024) {
+                                alert('File is too large. Please upload an image smaller than 800KB.');
+                                return;
+                              }
+                              const reader = new FileReader();
+                              reader.onloadend = async () => {
+                                const base64String = reader.result as string;
+                                await handleUpdateProjectPhoto(selectedProject.id, base64String);
+                              };
+                              reader.readAsDataURL(file);
+                            }}
+                            accept="image/jpeg,image/png,image/gif,image/webp"
+                            className="hidden"
+                          />
+                          <button 
+                            onClick={() => projectPhotoInputRef.current?.click()}
+                            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                          >
+                            <Upload className="w-3 h-3 text-blue-600" />
+                            Upload
+                          </button>
+                          {selectedProject.photoURL && (
+                            <button 
+                              onClick={() => handleUpdateProjectPhoto(selectedProject.id, '')}
+                              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
+                              title="Remove Photo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        {selectedProject.photoURL && (
+                          <div className="mt-3 w-full aspect-video rounded-lg overflow-hidden border border-gray-200 dark:border-white/10">
+                            <img src={selectedProject.photoURL} alt="Project" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
                     <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-4">Assigned Users</h4>
                     <div className="space-y-2">
                       {Object.entries(enterprise.users || {}).map(([uid, data]) => {
@@ -2612,16 +3287,108 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 </div>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
 
-      {/* Modals */}
-      {importPreview && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-2xl shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[80vh]">
+      <AnimatePresence>
+        {isReplaceIdModalOpen && projectToReplace && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#1a1a1a] w-full max-w-md rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 overflow-hidden"
+            >
+            <div className="p-6 border-b border-gray-200 dark:border-white/10">
+              <h3 className="text-xl font-bold dark:text-white flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-blue-600" />
+                Replace Project ID
+              </h3>
+              <p className="text-sm text-gray-500 mt-1">
+                Updating identifier for <span className="font-bold text-gray-900 dark:text-white">{projectToReplace.projectName}</span>.
+              </p>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Current ID</label>
+                <div className="p-3 bg-gray-100 dark:bg-white/5 rounded-xl text-sm font-mono text-gray-500">
+                  {projectToReplace.projectCode}
+                </div>
+              </div>
+              
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">New Project ID</label>
+                <input 
+                  type="text"
+                  value={newProjectCode}
+                  onChange={(e) => setNewProjectCode(e.target.value.toUpperCase())}
+                  placeholder="E.G. PRJ-2024-001"
+                  className={cn(
+                    "w-full p-3 bg-gray-50 dark:bg-white/5 border rounded-xl text-sm font-mono dark:text-white focus:ring-2 outline-none",
+                    isNewProjectCodeDuplicate 
+                      ? "border-red-500 focus:ring-red-500/20" 
+                      : "border-gray-200 dark:border-white/10 focus:ring-blue-500"
+                  )}
+                  autoFocus
+                />
+                {isNewProjectCodeDuplicate && (
+                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This Project ID already exists!</p>
+                )}
+              </div>
+
+              {replaceError && (
+                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/30 rounded-xl text-xs text-red-600 dark:text-red-400 font-medium">
+                  {replaceError}
+                </div>
+              )}
+            </div>
+
+            <div className="p-6 bg-gray-50 dark:bg-white/5 flex gap-3">
+              <button 
+                onClick={() => {
+                  setIsReplaceIdModalOpen(false);
+                  setNewProjectCode('');
+                  setReplaceError('');
+                  setProjectToReplace(null);
+                }}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-white/10 transition-colors"
+              >
+                CANCEL
+              </button>
+              <button 
+                onClick={handleReplaceProjectId}
+                disabled={isReplacing || !newProjectCode.trim() || isNewProjectCodeDuplicate}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all"
+              >
+                {isReplacing ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    REPLACING...
+                  </>
+                ) : (
+                  'CONFIRM REPLACE'
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {importPreview && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-2xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col max-h-[80vh]"
+            >
             <h2 className="text-2xl font-bold mb-4 dark:text-white">Review Import</h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-6 text-sm">
+            <p className="text-gray-900 dark:text-gray-400 mb-6 text-sm">
               The following records will be imported. Existing IDs will be updated.
             </p>
             <div className="flex-1 overflow-auto border border-gray-200 dark:border-white/10 rounded-xl mb-6">
@@ -2664,13 +3431,20 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 Complete Import
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
+      </AnimatePresence>
 
-      {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+      <AnimatePresence>
+        {deleteConfirm && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10"
+            >
             <div className="w-16 h-16 bg-red-50 dark:bg-red-500/10 rounded-full flex items-center justify-center mb-6 mx-auto">
               <AlertTriangle className="w-8 h-8 text-red-600 dark:text-red-400" />
             </div>
@@ -2683,7 +3457,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                deleteConfirm.type === 'costElement' ? 'Delete Cost Element?' :
                'Delete User?'}
             </h2>
-            <p className="text-gray-500 dark:text-gray-400 text-center mb-8">
+            <p className="text-gray-900 dark:text-gray-400 text-center mb-8">
               {deleteConfirm.type === 'bulk-project' ? (
                 <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> projects. This action cannot be undone.</>
               ) : deleteConfirm.type === 'bulk-attr-value' ? (
@@ -2708,7 +3482,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   if (deleteConfirm.type === 'user') deleteUser(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'project') deleteProject(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-project') bulkDeleteProjects();
-                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : 'lineItem', selectedAttrId);
+                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId);
                   else if (deleteConfirm.type === 'rate') deleteResourceRate(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-rate') bulkDeleteResourceRates();
                   else if (deleteConfirm.type === 'costElement') deleteCostElement(deleteConfirm.id!);
@@ -2720,13 +3494,20 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 Delete
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
+      </AnimatePresence>
 
-      {isEditingCostElement && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+      <AnimatePresence>
+        {isEditingCostElement && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10"
+            >
             <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingCostElement.id ? 'Edit' : 'Add'} Cost Element</h2>
             <form onSubmit={(e) => {
               e.preventDefault();
@@ -2800,17 +3581,24 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   disabled={!costElementFormData.id || costElementIdExists}
                   className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  {isEditingCostElement.id ? 'Save Changes' : 'Add Element'}
+                  {isEditingCostElement.id ? 'Save Changes' : 'Add'}
                 </button>
               </div>
             </form>
-          </div>
+          </motion.div>
         </div>
       )}
+      </AnimatePresence>
 
-      {isEditingResource && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+      <AnimatePresence>
+        {isEditingResource && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10"
+            >
             <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingResource.id ? 'Edit' : 'Add'} Resource</h2>
             <form onSubmit={(e) => {
               e.preventDefault();
@@ -2939,12 +3727,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 </button>
               </div>
             </form>
-          </div>
+          </motion.div>
         </div>
       )}
-      {inviteModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-          <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+      </AnimatePresence>
+      <AnimatePresence>
+        {inviteModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10"
+            >
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-bold dark:text-white">Invite New User</h2>
               <button onClick={() => setInviteModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
@@ -2952,87 +3747,107 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               </button>
             </div>
             <form onSubmit={handleInvite} className="space-y-4">
-              {!generatedLink ? (
-                <>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Email Address</label>
-                    <input 
-                      required
-                      type="email"
-                      value={inviteEmail}
-                      onChange={e => setInviteEmail(e.target.value)}
-                      placeholder="colleague@company.com"
-                      className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                    />
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Enter your colleague's email to generate a secure invitation link.
-                  </p>
-                  <div className="flex gap-4 pt-4">
-                    <button 
-                      type="button"
-                      onClick={() => setInviteModal(false)}
-                      className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
-                    >
-                      Cancel
-                    </button>
-                    <button 
-                      type="submit"
-                      disabled={isInviting}
-                      className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isInviting ? 'Generating...' : 'Generate Link'}
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                  <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 rounded-2xl">
-                    <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Link Generated!</p>
-                    <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">Copy the link below and send it to your colleague.</p>
-                  </div>
-                  
-                  <div className="relative">
-                    <input 
-                      readOnly
-                      value={generatedLink}
-                      className="w-full p-4 pr-12 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-xs font-mono dark:text-white"
-                    />
-                    <button 
-                      type="button"
-                      onClick={copyInviteLink}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 hover:bg-gray-200 dark:hover:bg-white/10 rounded-lg transition-colors"
-                    >
-                      <Tag className="w-4 h-4 text-gray-500" />
-                    </button>
-                  </div>
+              <AnimatePresence mode="wait">
+                {!generatedLink ? (
+                  <motion.div
+                    key="form"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-4"
+                  >
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Email Address</label>
+                      <input 
+                        required
+                        type="email"
+                        value={inviteEmail}
+                        onChange={e => setInviteEmail(e.target.value)}
+                        placeholder="colleague@company.com"
+                        className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
+                      />
+                    </div>
+                    <p className="text-xs text-gray-900 dark:text-gray-400">
+                      Enter your colleague's email to generate a secure invitation link.
+                    </p>
+                    <div className="flex gap-4 pt-4">
+                      <button 
+                        type="button"
+                        onClick={() => setInviteModal(false)}
+                        className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit"
+                        disabled={isInviting}
+                        className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isInviting ? 'Generating...' : 'Generate Link'}
+                      </button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div 
+                    key="success"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-6"
+                  >
+                    <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 rounded-2xl">
+                      <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Link Generated!</p>
+                      <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">Copy the link below and send it to your colleague.</p>
+                    </div>
+                    
+                    <div className="relative">
+                      <input 
+                        readOnly
+                        value={generatedLink}
+                        className="w-full p-4 pr-12 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-xs font-mono dark:text-white"
+                      />
+                      <button 
+                        type="button"
+                        onClick={copyInviteLink}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2 hover:bg-gray-200 dark:hover:bg-white/10 rounded-lg transition-colors"
+                      >
+                        <Tag className="w-4 h-4 text-gray-500" />
+                      </button>
+                    </div>
 
-                  <div className="flex gap-4">
-                    <button 
-                      type="button"
-                      onClick={() => {
-                        setGeneratedLink(null);
-                        setInviteEmail('');
-                        setInviteModal(false);
-                      }}
-                      className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              )}
+                    <div className="flex gap-4">
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setGeneratedLink(null);
+                          setInviteEmail('');
+                          setInviteModal(false);
+                        }}
+                        className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </form>
-          </div>
+          </motion.div>
         </div>
       )}
-      {/* Project Attribute Value Modal */}
-      {isEditingValue && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-[#1C1C1C] rounded-2xl w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 overflow-hidden">
+      </AnimatePresence>
+      <AnimatePresence>
+        {isEditingValue && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#1C1C1C] rounded-2xl w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 overflow-hidden"
+            >
             <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center">
               <h3 className="text-xl font-bold dark:text-white">
-                {isEditingValue.valueId ? 'Edit Value' : 'Add New Value'}
+                {isEditingValue.valueId ? 'Edit Value' : 'Add'}
               </h3>
               <button onClick={() => setIsEditingValue(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-full transition-colors">
                 <X className="w-5 h-5 dark:text-white" />
@@ -3106,27 +3921,30 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   }
                   setIsEditingValue(null);
                 }}
-                className="px-8 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-30 disabled:cursor-not-allowed"
+                className="px-8 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg shadow-black/10 disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                {isEditingValue.valueId ? 'Save Changes' : 'Add Value'}
+                {isEditingValue.valueId ? 'Save Changes' : 'Add'}
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
-      {showImportSuccessModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-          <motion.div 
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 dark:border-white/10"
-          >
+      </AnimatePresence>
+      <AnimatePresence>
+        {showImportSuccessModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 dark:border-white/10"
+            >
             <div className="p-8 text-center">
               <div className="w-16 h-16 bg-green-100 dark:bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
                 <CheckCircle2 className="w-8 h-8 text-green-600 dark:text-green-400" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Import Successful</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">
                 Your data has been imported successfully into the system.
               </p>
               <button
@@ -3139,6 +3957,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           </motion.div>
         </div>
       )}
+      </AnimatePresence>
     </div>
   );
 }

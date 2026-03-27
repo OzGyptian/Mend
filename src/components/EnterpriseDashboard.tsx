@@ -129,15 +129,15 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
         <div className="flex justify-between items-end mb-10">
           <div>
             <h1 className="text-3xl font-bold tracking-tight mb-2 dark:text-white">Overall Project Performance</h1>
-            <p className="text-gray-500 dark:text-gray-400 text-sm">Integrated month-end performance tracking across all project modules.</p>
+            <p className="text-gray-900 dark:text-gray-400 text-sm">Integrated month-end performance tracking across all project modules.</p>
           </div>
           {isEnterpriseAdmin && (
             <button 
               onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 bg-black dark:bg-white dark:text-black text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all"
+              className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
             >
               <Plus className="w-4 h-4" />
-              Create Project
+              Add
             </button>
           )}
         </div>
@@ -174,7 +174,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
                 </div>
                 <span className="text-[10px] font-mono text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">+12%</span>
               </div>
-              <p className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-widest font-semibold mb-1">{stat.label}</p>
+              <p className="text-gray-900 dark:text-gray-400 text-xs uppercase tracking-widest font-semibold mb-1">{stat.label}</p>
               <p className="text-2xl font-bold dark:text-white">{stat.value}</p>
             </div>
           ))}
@@ -256,7 +256,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
             {projects.length === 0 && (
               <div className="p-12 text-center">
                 <Briefcase className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
-                <p className="text-gray-500 dark:text-gray-400 text-sm">No active projects found.</p>
+                <p className="text-gray-900 dark:text-gray-400 text-sm">No active projects found.</p>
               </div>
             )}
           </div>
@@ -271,7 +271,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
               <AlertTriangle className="w-6 h-6" />
               <h2 className="text-xl font-bold">Delete Project?</h2>
             </div>
-            <p className="text-gray-500 dark:text-gray-400 text-sm mb-6">
+            <p className="text-gray-900 dark:text-gray-400 text-sm mb-6">
               Are you sure you want to delete <span className="font-bold text-gray-900 dark:text-white">"{projectToDelete.projectName}"</span>? 
               This action is permanent and will delete all associated sheets and forecast data.
             </p>

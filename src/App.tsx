@@ -11,8 +11,10 @@ import ForecastGrid from './components/ForecastGrid';
 import SystemAdmin from './components/SystemAdmin';
 import EnterpriseAdmin from './components/EnterpriseAdmin';
 import ProjectAdmin from './components/ProjectAdmin';
+import UserProfile from './components/UserProfile';
 import LandingPage from './components/LandingPage';
 import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2 } from 'lucide-react';
+import { Toaster } from 'sonner';
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -21,7 +23,7 @@ export default function App() {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
-  const [view, setView] = useState<'enterprise' | 'project' | 'sheet' | 'system-admin' | 'enterprise-admin' | 'project-admin'>('enterprise');
+  const [view, setView] = useState<'enterprise' | 'project' | 'sheet' | 'system-admin' | 'enterprise-admin' | 'project-admin' | 'profile'>('enterprise');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -280,7 +282,7 @@ export default function App() {
             <ShieldAlert className="w-8 h-8 text-amber-600" />
           </div>
           <h2 className="text-2xl font-bold mb-4">Verify your email</h2>
-          <p className="text-sm text-gray-500 mb-8 leading-relaxed">
+          <p className="text-sm text-gray-900 mb-8 leading-relaxed">
             We've sent a verification email to <span className="font-bold text-black">{user.email}</span>. 
             Please verify your email address to access your enterprise workspace.
           </p>
@@ -293,12 +295,12 @@ export default function App() {
             </button>
             <button 
               onClick={() => auth.signOut()}
-              className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-lg font-medium transition-colors"
+              className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors"
             >
               Sign Out
             </button>
           </div>
-          <p className="mt-8 text-[10px] text-gray-400 uppercase tracking-widest">
+          <p className="mt-8 text-[10px] text-gray-600 uppercase tracking-widest">
             Refresh this page after verifying your email.
           </p>
         </div>
@@ -353,7 +355,7 @@ export default function App() {
                   <ExternalLink className="w-8 h-8 text-amber-600" />
                 </div>
                 <h2 className="text-2xl font-bold mb-4">Launch App</h2>
-                <p className="text-sm text-gray-500 mb-8 leading-relaxed">
+                <p className="text-sm text-gray-900 mb-8 leading-relaxed">
                   To ensure a secure connection and fix login issues on iPhone/Safari, please launch the application in a new window.
                 </p>
                   <button 
@@ -363,14 +365,14 @@ export default function App() {
                     <ExternalLink className="w-5 h-5" />
                     Launch Mend
                   </button>
-                <p className="mt-6 text-[10px] text-gray-400 uppercase tracking-widest font-bold">
+                <p className="mt-6 text-[10px] text-gray-600 uppercase tracking-widest font-bold">
                   Secure Enterprise Access
                 </p>
               </div>
             ) : (
               <>
                 <h2 className="text-2xl font-bold mb-2">{isRegistering ? 'Create Account' : 'Sign In'}</h2>
-                <p className="text-sm text-gray-500 mb-8">
+                <p className="text-sm text-gray-900 mb-8">
                   {isRegistering ? 'Join your enterprise workspace.' : 'Enter your credentials to access your workspace.'}
                 </p>
                 
@@ -383,7 +385,7 @@ export default function App() {
 
                 <form onSubmit={handleEmailAuth} className="space-y-4 mb-6">
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Email Address</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-2">Email Address</label>
                     <input 
                       required
                       type="email"
@@ -394,7 +396,7 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Password</label>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-2">Password</label>
                     <input 
                       required
                       type="password"
@@ -416,14 +418,14 @@ export default function App() {
                   <div className="absolute inset-0 flex items-center">
                     <div className="w-full border-t border-gray-100"></div>
                   </div>
-                  <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold text-gray-400">
+                  <div className="relative flex justify-center text-[10px] uppercase tracking-widest font-bold text-gray-600">
                     <span className="bg-white px-4">Or continue with</span>
                   </div>
                 </div>
 
                 <button 
                   onClick={handleLogin}
-                  className="w-full py-3 px-4 border border-gray-200 hover:bg-gray-50 text-gray-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 mb-8"
+                  className="w-full py-3 px-4 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors flex items-center justify-center gap-2 mb-8"
                 >
                   <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5 bg-white rounded-full p-0.5" alt="Google" />
                   Sign in with Google
@@ -432,7 +434,7 @@ export default function App() {
                 <div className="pt-8 border-t border-gray-100 flex flex-col gap-4">
                   <button 
                     onClick={() => setIsRegistering(!isRegistering)}
-                    className="text-sm text-gray-600 hover:text-black transition-colors"
+                    className="text-sm text-black hover:text-gray-700 transition-colors"
                   >
                     {isRegistering ? 'Already have an account? Sign In' : "Don't have an account? Register"}
                   </button>
@@ -440,7 +442,7 @@ export default function App() {
               </>
             )}
             
-            <div className="mt-12 flex justify-between text-[10px] text-gray-400 uppercase tracking-widest font-medium">
+            <div className="mt-12 flex justify-between text-[10px] text-gray-600 uppercase tracking-widest font-medium">
               <span>Privacy Policy</span>
               <span>Terms of Service</span>
               <span className="flex items-center gap-1">
@@ -462,7 +464,7 @@ export default function App() {
             <Building2 className="w-8 h-8 text-[#FF6321]" />
           </div>
           <h2 className="text-2xl font-bold mb-4">Welcome to Mend</h2>
-          <p className="text-sm text-gray-500 mb-8 leading-relaxed">
+          <p className="text-sm text-gray-900 mb-8 leading-relaxed">
             You are not currently associated with an enterprise. Please contact your administrator or create a new enterprise workspace.
           </p>
           <div className="space-y-4">
@@ -495,7 +497,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => auth.signOut()}
-              className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-gray-600 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+              className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
             >
               <LogOut className="w-4 h-4" />
               Sign Out
@@ -579,8 +581,12 @@ export default function App() {
           {view === 'project-admin' && currentProject && currentEnterprise && (
             <ProjectAdmin project={currentProject} enterprise={currentEnterprise} />
           )}
+          {view === 'profile' && currentEnterprise && user && (
+            <UserProfile userId={user.uid} enterprise={currentEnterprise} />
+          )}
         </main>
       </div>
+      <Toaster position="top-right" richColors />
     </div>
   );
 }

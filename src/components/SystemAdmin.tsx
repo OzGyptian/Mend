@@ -238,7 +238,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
             <Shield className="w-6 h-6 text-red-600" />
             System Administration
           </h1>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">
+          <p className="text-gray-900 dark:text-gray-400 text-sm">
             Manage global enterprises and system-wide settings. 
             <span className="ml-2 font-bold text-black dark:text-white">Total: {enterprises.length}</span>
           </p>
@@ -284,10 +284,10 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
               setFormData({ name: '', enterpriseId: '' });
               setIsModalOpen(true);
             }}
-            className="bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-black/90 dark:hover:bg-white/90 transition-all"
+            className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
           >
             <Plus className="w-4 h-4" />
-            Add Enterprise
+            Add
           </button>
         </div>
       </div>
@@ -457,7 +457,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
             ))}
             {filteredEnterprises.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={3} className="px-6 py-12 text-center text-gray-900 dark:text-gray-400">
                   No enterprises found matching your search.
                 </td>
               </tr>
@@ -470,7 +470,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
         <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4">
           <div className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-2xl shadow-2xl border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200 flex flex-col max-h-[80vh]">
             <h2 className="text-2xl font-bold mb-4 dark:text-white">Review Import</h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-6 text-sm">
+            <p className="text-gray-900 dark:text-gray-400 mb-6 text-sm">
               The following records will be imported. Existing IDs will be updated.
             </p>
             <div className="flex-1 overflow-auto border border-gray-200 dark:border-white/10 rounded-xl mb-6">
@@ -518,7 +518,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
             <h2 className="text-2xl font-bold mb-2 text-center dark:text-white">
               {deleteConfirm.type === 'bulk' ? 'Delete Enterprises?' : 'Delete Enterprise?'}
             </h2>
-            <p className="text-gray-500 dark:text-gray-400 text-center mb-8">
+            <p className="text-gray-900 dark:text-gray-400 text-center mb-8">
               You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.name}</span>.
               <br />This action cannot be undone and will remove all associated data.
             </p>
@@ -606,12 +606,12 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
           <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Application Version</p>
             <p className="text-lg font-bold dark:text-white">v1.0.0</p>
-            <p className="text-[10px] text-gray-500 mt-2">Stable Production Release</p>
+            <p className="text-[10px] text-gray-900 mt-2">Stable Production Release</p>
           </div>
           <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Environment</p>
             <p className="text-lg font-bold dark:text-white">Cloud Production</p>
-            <p className="text-[10px] text-gray-500 mt-2">Region: asia-east1</p>
+            <p className="text-[10px] text-gray-900 mt-2">Region: asia-east1</p>
           </div>
           <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Database Status</p>
@@ -619,7 +619,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
               <p className="text-lg font-bold dark:text-white">Connected</p>
             </div>
-            <p className="text-[10px] text-gray-500 mt-2">Firebase Firestore (Multi-Region)</p>
+            <p className="text-[10px] text-gray-900 mt-2">Firebase Firestore (Multi-Region)</p>
           </div>
         </div>
       </div>
@@ -635,7 +635,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
                 <CheckCircle2 className="w-8 h-8 text-green-600 dark:text-green-400" />
               </div>
               <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Import Successful</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">
                 Your data has been imported successfully into the system.
               </p>
               <button

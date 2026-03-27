@@ -1,6 +1,8 @@
 export type ForecastMethod = 'commitment' | 'time-based';
 export type DistributionMethod = 'manual' | 'even' | 'front' | 'back' | 'bell';
 
+export type ProjectStatus = 'Active' | 'On Hold' | 'Closed' | 'Archived';
+
 export interface ProjectAttributeValue {
   id: string;
   description: string;
@@ -34,6 +36,7 @@ export interface Enterprise {
   id: string;
   enterpriseId: string;
   name: string;
+  logoURL?: string;
   adminUsers: string[];
   createdAt: string;
   theme?: 'light' | 'dark';
@@ -48,6 +51,7 @@ export interface Enterprise {
   }>;
   projectAttributes?: ProjectAttribute[];
   lineItemAttributes?: ProjectAttribute[];
+  costCodeAttributes?: ProjectAttribute[];
   resourceRates?: ResourceRate[];
   costElements?: CostElement[];
   categories?: string[];
@@ -55,11 +59,19 @@ export interface Enterprise {
   orderNumbers?: string[];
 }
 
+export interface ProjectCostElement {
+  id: string;
+  description: string;
+  sortCode: string;
+  enterpriseCostElementId?: string;
+}
+
 export interface Project {
   id: string;
   enterpriseId: string;
   projectName: string;
   projectCode: string;
+  status?: ProjectStatus;
   projectBudget: number;
   startDate: string;
   endDate: string;
@@ -67,11 +79,23 @@ export interface Project {
   users: Record<string, 'Project Admin' | 'Project User'>;
   attributes?: Record<string, string>;
   photoURL?: string;
+  scopeDescription?: string;
+  clientName?: string;
+  projectManagerName?: string;
   dateCreated: string;
   dateLastModified: string;
   categories?: string[];
   controlAccounts?: string[];
   orderNumbers?: string[];
+  costElements?: ProjectCostElement[];
+  costCodeAttributes?: ProjectAttribute[];
+  reportingPeriods?: {
+    baseDate: string;
+    duration: 'week' | 'month';
+    numberOfPeriods: number;
+    periods: { id: string; startDate: string; endDate: string; name: string; status: 'open' | 'closed' }[];
+    currentPeriodId?: string;
+  };
 }
 
 export interface Sheet {
@@ -83,6 +107,7 @@ export interface Sheet {
   lockedStatus: boolean;
   createdBy: string;
   createdAt: string;
+  updatedAt: string;
   users?: string[]; // UIDs
 }
 

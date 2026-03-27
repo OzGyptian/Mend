@@ -17,8 +17,11 @@ export default function Header({ user, enterprise, project, sheet, view, setView
       <div className="flex items-center gap-2 text-sm">
         <button 
           onClick={() => setView('enterprise')}
-          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+          className="flex items-center gap-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
         >
+          {enterprise?.logoURL && (
+            <img src={enterprise.logoURL} className="w-5 h-5 object-contain bg-white rounded-sm" alt="" referrerPolicy="no-referrer" />
+          )}
           {enterprise?.name || 'Enterprise'}
         </button>
         

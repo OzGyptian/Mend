@@ -243,10 +243,10 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
         <div className="flex gap-2">
           <button 
             onClick={handleAddRow}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all text-sm font-bold shadow-lg shadow-blue-600/20"
+            className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
           >
             <Plus className="w-4 h-4" />
-            ADD ROW
+            Add
           </button>
 
           <div className="h-10 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
@@ -330,7 +330,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
           
           <button 
             onClick={() => setShowSettings(true)}
-            className="p-2.5 hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl transition-colors text-gray-500 border border-transparent hover:border-gray-200 dark:hover:border-white/10"
+            className="p-2.5 hover:bg-gray-100 dark:hover:bg-white/5 rounded-xl transition-colors text-gray-900 border border-transparent hover:border-gray-200 dark:hover:border-white/10"
             title="Sheet Settings"
           >
             <Settings className="w-5 h-5" />
