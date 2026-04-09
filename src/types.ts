@@ -89,6 +89,8 @@ export interface Project {
   orderNumbers?: string[];
   costElements?: ProjectCostElement[];
   costCodeAttributes?: ProjectAttribute[];
+  lineItemAttributes?: ProjectAttribute[];
+  resourceRates?: ResourceRate[];
   reportingPeriods?: {
     baseDate: string;
     duration: 'week' | 'month';
@@ -138,11 +140,89 @@ export interface UserProfile {
   photoURL?: string;
 }
 
+export interface CostCode {
+  id: string; // Firestore Document ID
+  code: string; // User-facing Cost Code ID
+  projectId: string;
+  name: string;
+  enterpriseAttributes: Record<string, string>;
+  projectAttributes: Record<string, string>;
+  eacMethod: 'Manual' | 'Change Management' | 'ETC Details' | 'Sub-Contract Management';
+  sortOrder: number;
+
+  // Budget Fields
+  baselineBudget: number;
+  budgetChanges: number;
+  approvedBudget: number;
+  approvedBudgetPrevious: number;
+  approvedBudgetMovement: number;
+
+  // Actual Cost Fields
+  actualCostThisPeriod: number;
+  actualCostToDate: number;
+
+  // EAC & ETC Fields
+  estimateToComplete: number;
+  estimateAtCompletion: number;
+  estimateAtCompletionPrevious: number;
+  estimateAtCompletionMovement: number;
+
+  // Variance Fields
+  costVariance: number;
+  costVariancePrevious: number;
+  costVarianceMovement: number;
+
+  // Access Control
+  assignedUsers?: string[]; // Array of user UIDs
+}
+
 export interface SavedView {
   id: string;
   name: string;
   tableId: string;
   columns: string[];
+  gridState?: any; // For AG-Grid state
   userId: string;
+  createdAt: string;
+}
+
+export interface EtcDetail {
+  id: string;
+  projectId: string;
+  costCode: string;
+  calendarId?: string;
+  category?: string;
+  item: string;
+  description: string;
+  orderNumber: string;
+  udf1: string;
+  udf2: string;
+  udf3: string;
+  udf4: string;
+  qty: number;
+  unit: string;
+  rate: number;
+  phasingMethod: 'Manual' | 'Auto-Phase';
+  phasingStartDate: string;
+  phasingEndDate: string;
+  phasingUnit: 'Daily' | 'Weekly' | 'Monthly' | 'Total';
+  phasingQty: number;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  periodValues: Record<string, number>;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt?: string;
+  isEnterpriseResource?: boolean;
+  resourceId?: string;
+}
+
+export interface Calendar {
+  id: string;
+  projectId?: string;
+  enterpriseId?: string;
+  name: string;
+  weekends: number[];
+  holidays: string[];
   createdAt: string;
 }

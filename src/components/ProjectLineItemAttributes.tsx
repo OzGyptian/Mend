@@ -29,11 +29,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 
-interface ProjectCostCodeAttributesProps {
+interface ProjectLineItemAttributesProps {
   project: Project;
 }
 
-const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ project }) => {
+const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ project }) => {
   const [attributes, setAttributes] = useState<ProjectAttribute[]>([]);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>('01');
   const [attrSearch, setAttrSearch] = useState('');
@@ -61,14 +61,14 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
 
   useEffect(() => {
     // Initialize with 10 default attributes if empty
-    const currentAttrs = project.costCodeAttributes || [];
+    const currentAttrs = project.lineItemAttributes || [];
     const initializedAttrs = Array.from({ length: 10 }, (_, i) => {
       const id = (i + 1).toString().padStart(2, '0');
       const existing = currentAttrs.find(a => a.id === id);
       return existing || { id, title: '', values: [] };
     });
     setAttributes(initializedAttrs);
-  }, [project.costCodeAttributes]);
+  }, [project.lineItemAttributes]);
 
   // Load Saved Views
   useEffect(() => {
@@ -76,7 +76,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
     const q = query(
       collection(db, 'savedViews'), 
       where('userId', '==', auth.currentUser.uid),
-      where('tableId', '==', `projectCostCodeAttr_${selectedAttrId}`)
+      where('tableId', '==', `projectLineItemAttr_${selectedAttrId}`)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setSavedViews(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as SavedView)));
@@ -89,7 +89,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
     try {
       await addDoc(collection(db, 'savedViews'), {
         name,
-        tableId: `projectCostCodeAttr_${selectedAttrId}`,
+        tableId: `projectLineItemAttr_${selectedAttrId}`,
         columns: visibleColumns,
         userId: auth.currentUser.uid,
         createdAt: new Date().toISOString(),
@@ -138,10 +138,10 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
 
   const handleGlobalSave = async (updatedAttrs: ProjectAttribute[]) => {
     try {
-      await updateDoc(doc(db, 'projects', project.id), { costCodeAttributes: updatedAttrs });
+      await updateDoc(doc(db, 'projects', project.id), { lineItemAttributes: updatedAttrs });
       toast.success('Changes saved successfully.');
     } catch (error) {
-      console.error('Error saving cost code attributes:', error);
+      console.error('Error saving line item attributes:', error);
       toast.error('Failed to save changes.');
     }
   };
@@ -217,7 +217,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
     } else {
       updates.description = newValue;
     }
-    updateAttributeValue(selectedAttrId, valueId, updates);
+    updateAttributeValue(selectedAttrId!, valueId, updates);
     setEditingValueId(null);
     setEditingField(null);
   };
@@ -288,7 +288,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
     const ws = XLSX.utils.json_to_sheet(attr.values);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Attribute ${attr.id}`);
-    XLSX.writeFile(wb, `${project.projectCode}_CostCodeAttr_${attr.id}.xlsx`);
+    XLSX.writeFile(wb, `${project.projectCode}_LineItemAttr_${attr.id}.xlsx`);
   };
 
   const selectedAttr = attributes.find(a => a.id === selectedAttrId);
@@ -731,7 +731,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
                                         <button 
                                           onClick={() => {
                                             setValueFormData(val);
-                                            setIsEditingValue({ attrId: selectedAttrId, valueId: val.id });
+                                            setIsEditingValue({ attrId: selectedAttrId!, valueId: val.id });
                                             setActiveMenuId(null);
                                           }}
                                           className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
@@ -740,7 +740,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
                                         </button>
                                         <button 
                                           onClick={() => {
-                                            removeAttributeValue(selectedAttrId, val.id);
+                                            removeAttributeValue(selectedAttrId!, val.id);
                                             setActiveMenuId(null);
                                           }}
                                           className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
@@ -765,7 +765,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
                           <button 
                             onClick={() => {
                               setValueFormData({ id: '', description: '', sortOrder: (selectedAttr?.values?.length || 0) + 1 });
-                              setIsEditingValue({ attrId: selectedAttrId, valueId: null });
+                              setIsEditingValue({ attrId: selectedAttrId!, valueId: null });
                             }}
                             className="mt-4 text-blue-600 dark:text-blue-400 text-xs font-bold hover:underline"
                           >
@@ -799,147 +799,112 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
       {/* Modals */}
       <AnimatePresence>
         {isEditingValue && (
-          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-[#1C1C1C] rounded-2xl w-full max-w-md shadow-2xl border border-gray-200 dark:border-white/10 overflow-hidden"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
             >
               <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center">
-                <h3 className="text-xl font-bold dark:text-white">
-                  {isEditingValue.valueId ? 'Edit Value' : 'Add Value'}
+                <h3 className="text-lg font-bold dark:text-white">
+                  {isEditingValue.valueId ? 'Edit Value' : 'Add New Value'}
                 </h3>
-                <button onClick={() => setIsEditingValue(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-full transition-colors">
-                  <X className="w-5 h-5 dark:text-white" />
+                <button onClick={() => setIsEditingValue(null)} className="text-gray-400 hover:text-gray-600">
+                  <X className="w-5 h-5" />
                 </button>
               </div>
               <div className="p-6 space-y-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                    Value ID <span className="text-red-500">*</span>
-                  </label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Value ID</label>
                   <input 
                     type="text"
-                    maxLength={20}
                     value={valueFormData.id}
-                    onChange={e => setValueFormData({ ...valueFormData, id: e.target.value })}
-                    placeholder="e.g. V01"
-                    className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white transition-all"
-                    disabled={!!isEditingValue.valueId}
+                    onChange={e => setValueFormData(prev => ({ ...prev, id: e.target.value }))}
+                    disabled={isEditingValue.valueId !== null}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white disabled:opacity-50"
+                    placeholder="e.g. 01, CAT-A..."
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Description</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Description</label>
                   <input 
                     type="text"
                     value={valueFormData.description}
-                    onChange={e => setValueFormData({ ...valueFormData, description: e.target.value })}
-                    placeholder="e.g. High Priority"
-                    className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white"
+                    onChange={e => setValueFormData(prev => ({ ...prev, description: e.target.value }))}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
+                    placeholder="Enter description..."
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Sort Order</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-1.5">Sort Order</label>
                   <input 
                     type="number"
                     value={valueFormData.sortOrder}
-                    onChange={e => setValueFormData({ ...valueFormData, sortOrder: Number(e.target.value) })}
-                    placeholder="e.g. 1"
-                    className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white"
+                    onChange={e => setValueFormData(prev => ({ ...prev, sortOrder: Number(e.target.value) }))}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none dark:text-white"
                   />
                 </div>
               </div>
-              <div className="p-6 bg-gray-50 dark:bg-white/2 border-t border-gray-100 dark:border-white/10 flex justify-end gap-3">
-                <button 
-                  onClick={() => setIsEditingValue(null)}
-                  className="px-6 py-2.5 text-sm font-bold text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button 
-                  disabled={!valueFormData.id}
-                  onClick={handleSaveValue}
-                  className="px-8 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg shadow-black/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  {isEditingValue.valueId ? 'Save Changes' : 'Add'}
-                </button>
+              <div className="p-6 bg-gray-50 dark:bg-white/5 flex justify-end gap-3">
+                <button onClick={() => setIsEditingValue(null)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white">Cancel</button>
+                <button onClick={handleSaveValue} className="px-6 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold shadow-lg shadow-black/10">Save Value</button>
               </div>
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
 
-      <AnimatePresence>
         {deleteConfirm && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 dark:border-white/10"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6"
             >
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-red-100 dark:bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Trash2 className="w-8 h-8 text-red-600 dark:text-red-400" />
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Confirm Delete</h3>
-                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">
-                  {deleteConfirm.type === 'bulk-attr-value' 
-                    ? `Are you sure you want to delete ${deleteConfirm.count} selected values? This action cannot be undone.`
-                    : `Are you sure you want to delete this value? This action cannot be undone.`}
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                    className="flex-1 py-3 bg-gray-100 dark:bg-white/5 text-gray-900 dark:text-white rounded-xl text-sm font-bold hover:bg-gray-200 dark:hover:bg-white/10 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (deleteConfirm.type === 'bulk-attr-value') {
-                        bulkDeleteAttributeValues(selectedAttrId!);
-                      } else if (deleteConfirm.id) {
-                        removeAttributeValue(selectedAttrId!, deleteConfirm.id);
-                        setDeleteConfirm(null);
-                      }
-                    }}
-                    className="flex-1 py-3 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
-                  >
-                    Delete
-                  </button>
-                </div>
+              <div className="w-12 h-12 bg-red-100 dark:bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold dark:text-white mb-2">Confirm Delete</h3>
+              <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">
+                Are you sure you want to delete {deleteConfirm.type === 'bulk-attr-value' ? `${deleteConfirm.count} selected values` : `this value`}? This action cannot be undone.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => setDeleteConfirm(null)} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white">Cancel</button>
+                <button 
+                  onClick={() => {
+                    if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(selectedAttrId!);
+                  }}
+                  className="px-6 py-2 bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-600/20"
+                >
+                  Delete
+                </button>
               </div>
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
 
-      <AnimatePresence>
         {showImportSuccessModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden border border-gray-100 dark:border-white/10"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 text-center"
             >
-              <div className="p-8 text-center">
-                <div className="w-16 h-16 bg-green-100 dark:bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <CheckCircle2 className="w-8 h-8 text-green-600 dark:text-green-400" />
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Import Successful</h3>
-                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">
-                  Your data has been imported successfully into the system.
-                </p>
-                <button
-                  onClick={() => setShowImportSuccessModal(false)}
-                  className="w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"
-                >
-                  Got it
-                </button>
+              <div className="w-16 h-16 bg-green-100 dark:bg-green-500/10 rounded-full flex items-center justify-center mb-6 mx-auto">
+                <CheckCircle2 className="w-8 h-8 text-green-600" />
               </div>
+              <h3 className="text-xl font-bold dark:text-white mb-2">Import Successful</h3>
+              <p className="text-sm text-gray-900 dark:text-gray-400 mb-8">
+                The attribute values have been imported and saved successfully.
+              </p>
+              <button 
+                onClick={() => setShowImportSuccessModal(false)}
+                className="w-full py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold shadow-lg shadow-black/10"
+              >
+                Got it
+              </button>
             </motion.div>
           </div>
         )}
@@ -948,4 +913,4 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
   );
 };
 
-export default ProjectCostCodeAttributes;
+export default ProjectLineItemAttributes;

@@ -1,3 +1,4 @@
+import React, { useState, useEffect } from 'react';
 import { 
   Layout, 
   Briefcase, 
@@ -20,24 +21,18 @@ import {
   Receipt,
   PieChart
 } from 'lucide-react';
+import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import { signOut } from 'firebase/auth';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
 
 interface SidebarProps {
-  currentView: string;
-  currentModule?: string;
-  setView: (view: any) => void;
-  setModule?: (module: string) => void;
   enterprise: Enterprise | null;
-  project: Project | null;
-  sheet: Sheet | null;
   userEmail?: string | null;
   userId?: string | null;
   theme: 'light' | 'dark';
@@ -47,13 +42,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ 
-  currentView, 
-  currentModule,
-  setView, 
-  setModule,
   enterprise, 
-  project, 
-  sheet, 
   userEmail,
   userId,
   theme,
@@ -61,6 +50,49 @@ export default function Sidebar({
   isCollapsed,
   setIsCollapsed,
 }: SidebarProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Manually extract parameters since Sidebar is outside Routes
+  const projectMatch = matchPath({ path: '/project/:projectId', end: false }, location.pathname);
+  const projectId = projectMatch?.params.projectId;
+
+  const sheetMatch = matchPath({ path: '/project/:projectId/sheet/:sheetId', end: false }, location.pathname);
+  const sheetId = sheetMatch?.params.sheetId;
+
+  const moduleMatch = matchPath({ path: '/project/:projectId/:moduleId', end: false }, location.pathname);
+  let moduleId = moduleMatch?.params.moduleId;
+  if (moduleId === 'sheet') moduleId = undefined;
+
+  const [project, setProject] = useState<Project | null>(null);
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProject(null);
+      return;
+    }
+    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (snapshot) => {
+      if (snapshot.exists()) {
+        setProject({ ...snapshot.data() as Project, id: snapshot.id });
+      }
+    });
+    return () => unsubscribe();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!sheetId) {
+      setSheet(null);
+      return;
+    }
+    const unsubscribe = onSnapshot(doc(db, 'sheets', sheetId), (snapshot) => {
+      if (snapshot.exists()) {
+        setSheet({ ...snapshot.data() as Sheet, id: snapshot.id });
+      }
+    });
+    return () => unsubscribe();
+  }, [sheetId]);
+
   const isSystemAdmin = userEmail === 'tarek.guindy@gmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
@@ -70,7 +102,7 @@ export default function Sidebar({
   ];
 
   const projectModules = [
-    { id: 'dashboard', label: 'Dashboard', icon: PieChart },
+    { id: 'dashboard', label: 'Project Dashboard', icon: Layout },
     { id: 'project-admin', label: 'Project Admin', icon: Settings, visible: !!project && (isProjectAdmin || isSystemAdmin) },
     { id: 'cost', label: 'Cost Management', icon: DollarSign },
     { id: 'change', label: 'Change Management', icon: RefreshCw },
@@ -87,31 +119,31 @@ export default function Sidebar({
   ];
 
   const handleNavClick = (id: string) => {
-    setView(id);
+    if (id === 'enterprise') navigate('/');
+    else navigate(`/${id}`);
   };
 
   const handleModuleClick = (id: string) => {
-    if (id === 'project-admin') {
-      setView('project-admin');
-    } else if (setModule) {
-      setModule(id);
-      setView('project');
+    if (projectId) {
+      navigate(`/project/${projectId}/${id}`);
     }
   };
 
   return (
     <div className={cn(
-      "bg-white dark:bg-[#141414] text-black dark:text-white flex flex-col border-r border-gray-200 dark:border-white/10 transition-all duration-300 ease-in-out relative",
+      "bg-white dark:bg-[#141414] text-black dark:text-white flex flex-col h-full border-r border-gray-200 dark:border-white/10 transition-all duration-300 ease-in-out relative",
       isCollapsed ? "w-20" : "w-64"
     )}>
-      <button 
+      <Button 
+        variant="ghost"
+        size="icon"
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="absolute -right-3 top-10 w-6 h-6 bg-[#FF6321] rounded-full flex items-center justify-center text-white dark:text-black shadow-lg z-50 hover:scale-110 transition-transform"
+        className="absolute -right-3 top-10 w-6 h-6 bg-[#FF6321] rounded-full flex items-center justify-center text-white dark:text-black shadow-lg z-50 hover:scale-110 transition-transform p-0 hover:bg-[#FF6321]/90"
       >
         {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-      </button>
+      </Button>
 
-      <div className="p-6 overflow-hidden flex-1 flex flex-col">
+      <div className="p-6 overflow-hidden flex-1 flex flex-col min-h-0">
         <div className={cn("flex items-center gap-2 mb-8 shrink-0", isCollapsed && "justify-center")}>
           {enterprise?.logoURL ? (
             <div className="shrink-0 w-8 h-8 rounded overflow-hidden border border-gray-200 dark:border-white/10">
@@ -125,153 +157,154 @@ export default function Sidebar({
           {!isCollapsed && <span className="font-bold tracking-tight text-sm whitespace-nowrap dark:text-white">{enterprise?.name || 'Mend'}</span>}
         </div>
 
-        <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-6 custom-scrollbar">
-          {/* Enterprise Section */}
-          <div>
-            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Enterprise</p>}
-            <nav className="space-y-1">
-              {enterpriseItems.map((item) => (
-                <button
-                  key={item.id}
-                  disabled={item.disabled}
-                  onClick={() => handleNavClick(item.id)}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                    currentView === item.id 
-                      ? "bg-black text-white dark:bg-white dark:text-black" 
-                      : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
-                    item.disabled && "opacity-20 cursor-not-allowed",
-                    isCollapsed && "justify-center px-0"
-                  )}
-                  title={isCollapsed ? item.label : ""}
-                >
-                  <item.icon className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
-                </button>
-              ))}
-            </nav>
-          </div>
-
-          {/* Project Modules Section */}
-          {project && (
+        <ScrollArea className="flex-1 pr-2 -mr-2">
+          <div className="space-y-6">
+            {/* Enterprise Section */}
             <div>
-              {!isCollapsed && (
-                <div className="px-3 mb-2">
-                  <p className="text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest">Project Modules</p>
-                  <p className="text-[9px] text-blue-500 font-mono truncate mt-0.5">{project.projectName}</p>
-                </div>
-              )}
+              {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Enterprise</p>}
               <nav className="space-y-1">
-                {projectModules.filter(i => i.visible !== false).map((item) => (
-                  <button
+                {enterpriseItems.map((item) => (
+                  <Button
                     key={item.id}
-                    onClick={() => handleModuleClick(item.id)}
+                    variant={location.pathname === '/' ? "default" : "ghost"}
+                    disabled={item.disabled}
+                    onClick={() => handleNavClick(item.id)}
                     className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                      (currentView === 'project' && currentModule === item.id) || (currentView === 'project-admin' && item.id === 'project-admin')
-                        ? "bg-black text-white dark:bg-white dark:text-black" 
-                        : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
+                      "w-full justify-start gap-3 px-3 py-2 h-auto font-normal",
+                      location.pathname !== '/' && "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
                       isCollapsed && "justify-center px-0"
                     )}
                     title={isCollapsed ? item.label : ""}
                   >
                     <item.icon className="w-4 h-4 shrink-0" />
                     {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
-                  </button>
+                  </Button>
                 ))}
-                {/* Forecast Sheet Link if active */}
-                {sheet && (
-                  <button
-                    onClick={() => setView('sheet')}
-                    className={cn(
-                      "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                      currentView === 'sheet'
-                        ? "bg-black text-white dark:bg-white dark:text-black" 
-                        : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
-                      isCollapsed && "justify-center px-0"
-                    )}
-                    title={isCollapsed ? "Forecast Sheet" : ""}
-                  >
-                    <FileText className="w-4 h-4 shrink-0" />
-                    {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">Forecast Sheet</span>}
-                  </button>
-                )}
               </nav>
             </div>
-          )}
 
-          {/* Administration Section */}
-          <div>
-            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Administration</p>}
-            <nav className="space-y-1">
-              {adminItems.filter(i => i.visible).map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => handleNavClick(item.id)}
+            {/* Project Modules Section */}
+            {project && (
+              <div>
+                {!isCollapsed && (
+                  <div className="px-3 mb-2">
+                    <p className="text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest">Project Modules</p>
+                    <p className="text-[9px] text-blue-500 font-mono truncate mt-0.5">{project.projectName}</p>
+                  </div>
+                )}
+                <nav className="space-y-1">
+                  {projectModules.filter(i => i.visible !== false).map((item) => {
+                    const isActive = (moduleId || 'dashboard') === item.id;
+                    return (
+                      <Button
+                        key={item.id}
+                        variant={isActive ? "default" : "ghost"}
+                        onClick={() => handleModuleClick(item.id)}
+                        className={cn(
+                          "w-full justify-start gap-3 px-3 py-2 h-auto font-normal",
+                          !isActive && "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
+                          isCollapsed && "justify-center px-0"
+                        )}
+                        title={isCollapsed ? item.label : ""}
+                      >
+                        <item.icon className="w-4 h-4 shrink-0" />
+                        {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
+                      </Button>
+                    );
+                  })}
+                  {/* Forecast Sheet Link if active */}
+                  {sheet && (
+                    <Button
+                      variant={sheetId ? "default" : "ghost"}
+                      onClick={() => navigate(`/project/${projectId}/sheet/${sheetId}`)}
+                      className={cn(
+                        "w-full justify-start gap-3 px-3 py-2 h-auto font-normal",
+                        !sheetId && "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
+                        isCollapsed && "justify-center px-0"
+                      )}
+                      title={isCollapsed ? "Forecast Sheet" : ""}
+                    >
+                      <FileText className="w-4 h-4 shrink-0" />
+                      {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">Forecast Sheet</span>}
+                    </Button>
+                  )}
+                </nav>
+              </div>
+            )}
+
+            {/* Administration Section */}
+            <div>
+              {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">Administration</p>}
+              <nav className="space-y-1">
+                {adminItems.filter(i => i.visible).map((item) => (
+                  <Button
+                    key={item.id}
+                    variant={location.pathname === `/${item.id}` ? "default" : "ghost"}
+                    onClick={() => handleNavClick(item.id)}
+                    className={cn(
+                      "w-full justify-start gap-3 px-3 py-2 h-auto font-normal",
+                      location.pathname !== `/${item.id}` && "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
+                      isCollapsed && "justify-center px-0"
+                    )}
+                    title={isCollapsed ? item.label : ""}
+                  >
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
+                  </Button>
+                ))}
+              </nav>
+            </div>
+
+            {/* User Section */}
+            <div>
+              {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">User</p>}
+              <nav className="space-y-1">
+                <Button
+                  variant={location.pathname === '/profile' ? "default" : "ghost"}
+                  onClick={() => handleNavClick('profile')}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                    currentView === item.id 
-                      ? "bg-black text-white dark:bg-white dark:text-black" 
-                      : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
+                    "w-full justify-start gap-3 px-3 py-2 h-auto font-normal",
+                    location.pathname !== '/profile' && "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
                     isCollapsed && "justify-center px-0"
                   )}
-                  title={isCollapsed ? item.label : ""}
+                  title={isCollapsed ? "My Profile" : ""}
                 >
-                  <item.icon className="w-4 h-4 shrink-0" />
-                  {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">{item.label}</span>}
-                </button>
-              ))}
-            </nav>
+                  <UsersIcon className="w-4 h-4 shrink-0" />
+                  {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">My Profile</span>}
+                </Button>
+              </nav>
+            </div>
           </div>
-
-          {/* User Section */}
-          <div>
-            {!isCollapsed && <p className="px-3 text-[10px] font-bold text-gray-900 dark:text-white/20 uppercase tracking-widest mb-2">User</p>}
-            <nav className="space-y-1">
-              <button
-                onClick={() => handleNavClick('profile')}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-200",
-                  currentView === 'profile' 
-                    ? "bg-black text-white dark:bg-white dark:text-black" 
-                    : "text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5",
-                  isCollapsed && "justify-center px-0"
-                )}
-                title={isCollapsed ? "My Profile" : ""}
-              >
-                <UsersIcon className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="flex-1 text-left whitespace-nowrap">My Profile</span>}
-              </button>
-            </nav>
-          </div>
-        </div>
+        </ScrollArea>
       </div>
 
       <div className="mt-auto p-6 space-y-4">
         <div className="pt-4 border-t border-gray-100 dark:border-white/10 space-y-2">
-          <button 
+          <Button 
+            variant="ghost"
             onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-black dark:text-white/40 hover:text-black dark:hover:text-white/70 hover:bg-gray-100 dark:hover:bg-white/5 transition-all",
+              "w-full justify-start gap-3 px-3 py-2 h-auto font-normal text-black dark:text-white/40 hover:text-black dark:hover:text-white/70",
               isCollapsed && "justify-center px-0"
             )}
             title={isCollapsed ? `Switch to ${theme === 'dark' ? 'light' : 'dark'} mode` : ""}
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 shrink-0" /> : <Moon className="w-4 h-4 shrink-0" />}
             {!isCollapsed && <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>}
-          </button>
+          </Button>
 
-          <button 
+          <Button 
+            variant="ghost"
             onClick={() => signOut(auth)}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-red-400 hover:text-red-300 hover:bg-red-400/10 transition-all",
+              "w-full justify-start gap-3 px-3 py-2 h-auto font-normal text-red-400 hover:text-red-300 hover:bg-red-400/10",
               isCollapsed && "justify-center px-0"
             )}
             title={isCollapsed ? "Sign Out" : ""}
           >
             <LogOut className="w-4 h-4 shrink-0" />
             {!isCollapsed && <span>Sign Out</span>}
-          </button>
+          </Button>
         </div>
         
         {!isCollapsed && (
@@ -286,3 +319,4 @@ export default function Sidebar({
     </div>
   );
 }
+

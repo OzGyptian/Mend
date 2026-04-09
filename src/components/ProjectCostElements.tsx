@@ -150,30 +150,41 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
       return;
     }
 
-    let newElements = [...elements];
-    
-    if (isEditing?.id) {
-      // Editing existing
-      newElements = newElements.map(el => el.id === isEditing.id ? formData : el);
-    } else {
-      // Adding new
-      if (newElements.some(el => el.id === formData.id)) {
-        toast.error('A cost element with this ID already exists.');
-        return;
-      }
+    setIsSaving(true);
+    try {
+      let newElements = [...elements];
       
-      if (typeof isEditing?.insertIndex === 'number') {
-        newElements.splice(isEditing.insertIndex, 0, formData);
+      if (isEditing?.id) {
+        // Editing existing
+        newElements = newElements.map(el => el.id === isEditing.id ? formData : el);
       } else {
-        newElements.push(formData);
+        // Adding new
+        if (newElements.some(el => el.id === formData.id)) {
+          toast.error('A cost element with this ID already exists.');
+          setIsSaving(false);
+          return;
+        }
+        
+        if (typeof isEditing?.insertIndex === 'number') {
+          newElements.splice(isEditing.insertIndex, 0, formData);
+        } else {
+          newElements.push(formData);
+        }
       }
-    }
 
-    setElements(newElements);
-    await handleGlobalSave(newElements);
-    setIsEditing(null);
-    setFormData({ id: '', description: '', sortCode: '', enterpriseCostElementId: '' });
-    toast.success('Changes saved successfully.');
+      setElements(newElements);
+      // Reset editing state immediately to prevent "ID already exists" flicker
+      setIsEditing(null);
+      setFormData({ id: '', description: '', sortCode: '', enterpriseCostElementId: '' });
+      
+      await handleGlobalSave(newElements);
+      toast.success('Changes saved successfully.');
+    } catch (error) {
+      console.error('Error in handleSave:', error);
+      toast.error('An unexpected error occurred.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -507,7 +518,7 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
                   Enterprise Mapping {sort.field === 'enterpriseCostElementId' && (sort.direction === 'asc' ? '↑' : '↓')}
                 </th>
               )}
-              <th className="p-3 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">Actions</th>
+              <th className="p-3 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10 text-center">...</th>
             </tr>
             {/* Filter Row */}
             <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
@@ -627,7 +638,7 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
                     "p-2 sticky right-0 bg-inherit border-l border-gray-100 dark:border-white/10",
                     activeMenuId === element.id ? "z-40" : "z-10"
                   )}>
-                    <div className="flex justify-end gap-1">
+                    <div className="flex justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                       <div className="relative">
                         <button 
                           onClick={(e) => {
@@ -802,10 +813,17 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
                 </button>
                 <button 
                   type="submit"
-                  disabled={costElementIdExists}
-                  className="flex-1 px-6 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10 disabled:opacity-50"
+                  disabled={costElementIdExists || isSaving}
+                  className="flex-1 px-6 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
-                  {isEditing.id ? 'Save Changes' : 'Add Element'}
+                  {isSaving ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    isEditing.id ? 'Save Changes' : 'Add Element'
+                  )}
                 </button>
               </div>
             </form>

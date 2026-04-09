@@ -384,7 +384,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
               {visibleColumns.includes('admins') && (
                 <th className="px-4 py-2 font-semibold text-gray-600 dark:text-gray-400 text-xs">Admins</th>
               )}
-              <th className="px-4 py-2 font-semibold text-gray-600 dark:text-gray-400 text-right text-xs">Actions</th>
+              <th className="px-4 py-2 w-12 font-semibold text-gray-600 dark:text-gray-400 text-center text-xs">...</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-white/5">

@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { Project, Enterprise } from '../types';
 import { 
-  Calendar, 
+  Calendar as CalendarIcon, 
   Users, 
   Settings, 
   Save, 
@@ -32,6 +32,7 @@ import {
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import CalendarManager from './CalendarManager';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -247,13 +248,14 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
   const adminItems = [
     { id: 'general', label: 'General Info', icon: <Layout className="w-4 h-4" /> },
     { id: 'attributes', label: 'Project Attributes', icon: <Tag className="w-4 h-4" /> },
+    { id: 'calendar', label: 'Project Calendars', icon: <CalendarIcon className="w-4 h-4" /> },
     { id: 'access', label: 'Access Control', icon: <Users className="w-4 h-4" /> },
   ];
 
   return (
     <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300">
       {/* Sidebar Navigation */}
-      <div className={`${isSidebarOpen ? 'w-72' : 'w-16'} bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col shrink-0 transition-all duration-300`}>
+      <div className={`${isSidebarOpen ? 'w-72' : 'w-16'} bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col h-full shrink-0 transition-all duration-300`}>
         <div className="p-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
           {isSidebarOpen && (
             <div>
@@ -304,7 +306,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-auto">
         <div className="p-8">
           {activeTab === 'general' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -508,6 +510,17 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'calendar' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <CalendarManager 
+                projectId={project.id} 
+                title="Project Calendars"
+                description="Define working days, weekends, and holidays for phasing calculations."
+                allowImport={true}
+              />
             </div>
           )}
 

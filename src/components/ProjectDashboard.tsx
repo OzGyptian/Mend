@@ -32,10 +32,12 @@ interface ProjectDashboardProps {
   project: Project;
   enterprise: Enterprise;
   currentModule: string;
+  subModuleId?: string;
   onSelectSheet: (sheet: Sheet) => void;
+  setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-export default function ProjectDashboard({ project, enterprise, currentModule, onSelectSheet }: ProjectDashboardProps) {
+export default function ProjectDashboard({ project, enterprise, currentModule, subModuleId, onSelectSheet, setIsSidebarCollapsed }: ProjectDashboardProps) {
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [sheetStats, setSheetStats] = useState<Record<string, { eac: number, etc: number }>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -193,11 +195,13 @@ export default function ProjectDashboard({ project, enterprise, currentModule, o
         return (
           <CostManagement 
             project={project} 
+            enterprise={enterprise}
             sheets={sheets}
             sheetStats={sheetStats}
             onSelectSheet={onSelectSheet}
             onDeleteSheet={setSheetToDelete}
             onCreateSheet={() => setIsModalOpen(true)}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
           />
         );
       default:
@@ -218,7 +222,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, o
   return (
     <div className={cn(
       "flex-1 flex flex-col w-full h-full transition-colors duration-300",
-      currentModule === 'cost' ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-y-auto"
+      currentModule === 'cost' ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
     )}>
       <div className={cn(
         "w-full flex-1 flex flex-col min-h-0",

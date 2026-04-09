@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useParams, Navigate, useLocation } from 'react-router-dom';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
 import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, limit } from 'firebase/firestore';
@@ -263,6 +264,77 @@ export default function App() {
     window.open(window.location.href, '_blank');
   };
 
+  return (
+    <BrowserRouter>
+      <AuthenticatedApp 
+        user={user} 
+        loading={loading} 
+        currentEnterprise={currentEnterprise}
+        setCurrentEnterprise={setCurrentEnterprise}
+        isSystemOwner={isSystemOwner}
+        systemOwnerEnterpriseId={systemOwnerEnterpriseId}
+        setSystemOwnerEnterpriseId={setSystemOwnerEnterpriseId}
+        theme={theme}
+        setTheme={setTheme}
+        isSidebarCollapsed={isSidebarCollapsed}
+        setIsSidebarCollapsed={setIsSidebarCollapsed}
+        authError={authError}
+        setAuthError={setAuthError}
+        email={email}
+        setEmail={setEmail}
+        password={password}
+        setPassword={setPassword}
+        isRegistering={isRegistering}
+        setIsRegistering={setIsRegistering}
+        showLanding={showLanding}
+        setShowLanding={setShowLanding}
+        isInIframe={isInIframe}
+        handleLogin={handleLogin}
+        handleEmailAuth={handleEmailAuth}
+        openInNewTab={openInNewTab}
+      />
+    </BrowserRouter>
+  );
+}
+
+interface AuthenticatedAppProps {
+  user: User | null;
+  loading: boolean;
+  currentEnterprise: Enterprise | null;
+  setCurrentEnterprise: (e: Enterprise | null) => void;
+  isSystemOwner: boolean;
+  systemOwnerEnterpriseId: string | null;
+  setSystemOwnerEnterpriseId: (id: string | null) => void;
+  theme: 'light' | 'dark';
+  setTheme: (t: 'light' | 'dark') => void;
+  isSidebarCollapsed: boolean;
+  setIsSidebarCollapsed: (c: boolean) => void;
+  authError: string | null;
+  setAuthError: (e: string | null) => void;
+  email: string;
+  setEmail: (e: string) => void;
+  password: string;
+  setPassword: (p: string) => void;
+  isRegistering: boolean;
+  setIsRegistering: (r: boolean) => void;
+  showLanding: boolean;
+  setShowLanding: (s: boolean) => void;
+  isInIframe: boolean;
+  handleLogin: () => Promise<void>;
+  handleEmailAuth: (e: React.FormEvent) => Promise<void>;
+  openInNewTab: () => void;
+}
+
+function AuthenticatedApp({
+  user, loading, currentEnterprise, setCurrentEnterprise, isSystemOwner,
+  systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
+  isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
+  email, setEmail, password, setPassword, isRegistering, setIsRegistering,
+  showLanding, setShowLanding, isInIframe, handleLogin, handleEmailAuth, openInNewTab
+}: AuthenticatedAppProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   if (loading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4]">
@@ -330,16 +402,16 @@ export default function App() {
           <div>
             <div className="flex items-center gap-2 mb-12">
               <div className="w-8 h-8 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black">
-                <CalendarCheck2 className="w-5 h-5" />
+                <Building2 className="w-5 h-5" />
               </div>
               <span className="font-bold tracking-tight text-xl text-white">Mend</span>
             </div>
             <h1 className="text-6xl font-light tracking-tight leading-none mb-6">
-              Master your <br />
-              <span className="italic font-serif">month-end cycle.</span>
+              Precision <br />
+              <span className="italic font-serif text-[#FF6321]">project controls.</span>
             </h1>
-            <p className="text-white/60 max-w-md">
-              Mend (Month End) is the integrated platform for construction project performance. Track cost, schedule, risk, and procurement in one unified reporting cycle.
+            <p className="text-white/60 max-w-md leading-relaxed">
+              Mend is the integrated platform for enterprise construction performance. Track cost, schedule, risk, and procurement in one unified reporting environment.
             </p>
           </div>
           <div className="flex gap-8 text-[10px] font-mono uppercase tracking-widest opacity-40">
@@ -511,13 +583,7 @@ export default function App() {
   return (
     <div className={`h-screen flex overflow-hidden ${theme === 'dark' ? 'dark' : ''}`}>
       <Sidebar 
-        currentView={view} 
-        currentModule={currentModule}
-        setView={setView} 
-        setModule={setCurrentModule}
         enterprise={currentEnterprise}
-        project={currentProject}
-        sheet={currentSheet}
         userEmail={user.email}
         userId={user.uid}
         theme={theme}
@@ -529,64 +595,92 @@ export default function App() {
         <Header 
           user={user} 
           enterprise={currentEnterprise} 
-          project={currentProject} 
-          sheet={currentSheet}
-          view={view}
-          setView={setView}
         />
         <main className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F4] dark:bg-[#0A0A0A] transition-colors duration-300">
-          {view === 'enterprise' && (
-            <EnterpriseDashboard 
-              enterprise={currentEnterprise} 
-              userId={user.uid}
-              isSystemOwner={isSystemOwner}
-              onSelectProject={(p) => {
-                setCurrentProject(p);
-                setCurrentModule('dashboard');
-                setView('project');
-              }}
-            />
-          )}
-          {view === 'project' && currentProject && currentEnterprise && (
-            <ProjectDashboard 
-              project={currentProject} 
-              enterprise={currentEnterprise}
-              currentModule={currentModule}
-              onSelectSheet={(s) => {
-                setCurrentSheet(s);
-                setView('sheet');
-              }}
-            />
-          )}
-          {view === 'sheet' && currentSheet && currentProject && currentEnterprise && (
-            <ForecastGrid 
-              sheet={currentSheet} 
-              project={currentProject}
-              enterprise={currentEnterprise}
-              theme={theme}
-            />
-          )}
-          {view === 'system-admin' && (
-            <SystemAdmin 
-              currentEnterpriseId={currentEnterprise?.id}
-              onSwitchEnterprise={(id) => {
-                setSystemOwnerEnterpriseId(id);
-                setView('enterprise');
-              }} 
-            />
-          )}
-          {view === 'enterprise-admin' && currentEnterprise && (
-            <EnterpriseAdmin enterprise={currentEnterprise} />
-          )}
-          {view === 'project-admin' && currentProject && currentEnterprise && (
-            <ProjectAdmin project={currentProject} enterprise={currentEnterprise} />
-          )}
-          {view === 'profile' && currentEnterprise && user && (
-            <UserProfile userId={user.uid} enterprise={currentEnterprise} />
-          )}
+          <Routes>
+            <Route path="/" element={
+              <EnterpriseDashboard 
+                enterprise={currentEnterprise} 
+                userId={user.uid}
+                isSystemOwner={isSystemOwner}
+              />
+            } />
+            <Route path="/project/:projectId" element={<ProjectView enterprise={currentEnterprise} user={user} setIsSidebarCollapsed={setIsSidebarCollapsed} />} />
+            <Route path="/project/:projectId/:moduleId" element={<ProjectView enterprise={currentEnterprise} user={user} setIsSidebarCollapsed={setIsSidebarCollapsed} />} />
+            <Route path="/project/:projectId/:moduleId/:subModuleId" element={<ProjectView enterprise={currentEnterprise} user={user} setIsSidebarCollapsed={setIsSidebarCollapsed} />} />
+            <Route path="/project/:projectId/sheet/:sheetId" element={<ProjectView enterprise={currentEnterprise} user={user} theme={theme} setIsSidebarCollapsed={setIsSidebarCollapsed} />} />
+            
+            <Route path="/system-admin" element={
+              <SystemAdmin 
+                currentEnterpriseId={currentEnterprise?.id}
+                onSwitchEnterprise={(id) => {
+                  setSystemOwnerEnterpriseId(id);
+                  navigate('/');
+                }} 
+              />
+            } />
+            <Route path="/enterprise-admin" element={
+              currentEnterprise ? <EnterpriseAdmin enterprise={currentEnterprise} /> : <Navigate to="/" />
+            } />
+            <Route path="/profile" element={
+              currentEnterprise ? <UserProfile userId={user.uid} enterprise={currentEnterprise} /> : <Navigate to="/" />
+            } />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
         </main>
       </div>
       <Toaster position="top-right" richColors />
     </div>
+  );
+}
+
+function ProjectView({ enterprise, user, theme, setIsSidebarCollapsed }: { enterprise: Enterprise | null, user: User, theme?: 'light' | 'dark', setIsSidebarCollapsed?: (c: boolean) => void }) {
+  const { projectId, moduleId, subModuleId, sheetId } = useParams();
+  const navigate = useNavigate();
+  const [project, setProject] = useState<Project | null>(null);
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (snapshot) => {
+      if (snapshot.exists()) {
+        setProject({ ...snapshot.data() as Project, id: snapshot.id });
+      }
+    });
+    return () => unsubscribe();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!sheetId) {
+      setSheet(null);
+      return;
+    }
+    const unsubscribe = onSnapshot(doc(db, 'sheets', sheetId), (snapshot) => {
+      if (snapshot.exists()) {
+        setSheet({ ...snapshot.data() as Sheet, id: snapshot.id });
+      }
+    });
+    return () => unsubscribe();
+  }, [sheetId]);
+
+  if (!project || !enterprise) return null;
+
+  if (sheetId && sheet) {
+    return <ForecastGrid sheet={sheet} project={project} enterprise={enterprise} theme={theme || 'light'} />;
+  }
+
+  if (moduleId === 'project-admin') {
+    return <ProjectAdmin project={project} enterprise={enterprise} />;
+  }
+
+  return (
+    <ProjectDashboard 
+      project={project} 
+      enterprise={enterprise}
+      currentModule={moduleId || 'dashboard'}
+      subModuleId={subModuleId}
+      onSelectSheet={(sheet) => navigate(`/project/${project.id}/sheet/${sheet.id}`)}
+      setIsSidebarCollapsed={setIsSidebarCollapsed}
+    />
   );
 }

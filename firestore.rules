@@ -1,18 +1,23 @@
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
     function isAuthenticated() {
       return request.auth != null;
+    }
+
+    // Regex check for ISO 8601 strings (YYYY-MM-DDTHH:MM:SS.SSSZ)
+    function isValidTimestamp(ts) {
+      return ts is string && ts.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*");
     }
 
     function isSystemAdmin() {
       return isAuthenticated() && 
              request.auth.token.email == "tarek.guindy@gmail.com" && 
              request.auth.token.email_verified == true;
-    }
-
-    function isEmailVerified() {
-      return isAuthenticated() && request.auth.token.email_verified == true;
     }
 
     function isAdminOfEnterprise(enterpriseId) {
@@ -23,9 +28,19 @@ service cloud.firestore {
     }
 
     function canAccessProject(projectId) {
-      return isEmailVerified() && (
+      return isAuthenticated() && (
+        isSystemAdmin() ||
         request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.users || 
         isAdminOfEnterprise(get(/databases/$(database)/documents/projects/$(projectId)).data.enterpriseId)
+      );
+    }
+
+    function isProjectAdmin(projectId) {
+      return isAuthenticated() && (
+        isSystemAdmin() ||
+        isAdminOfEnterprise(get(/databases/$(database)/documents/projects/$(projectId)).data.enterpriseId) ||
+        (request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.users && 
+         get(/databases/$(database)/documents/projects/$(projectId)).data.users[request.auth.uid] == 'Project Admin')
       );
     }
 
@@ -33,25 +48,77 @@ service cloud.firestore {
       return canAccessProject(get(/databases/$(database)/documents/sheets/$(sheetId)).data.projectId);
     }
 
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidCostCode(data) {
+      return data.code is string && data.code.size() > 0 && data.code.size() <= 50 &&
+             data.projectId is string &&
+             data.name is string && data.name.size() <= 200 &&
+             data.eacMethod in ['Manual', 'Change Management', 'ETC Details', 'Sub-Contract Management'] &&
+             data.sortOrder is number;
+    }
+
+    function isValidEtcDetail(data) {
+      return data.projectId is string &&
+             data.costCode is string &&
+             data.item is string && data.item.size() <= 200 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.qty is number &&
+             data.rate is number &&
+             data.periodValues is map &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidActualCost(data) {
+      return data.projectId is string &&
+             data.costCodeId is string &&
+             data.cost is number &&
+             data.reportingPeriodId is string &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidCalendar(data) {
+      return (data.projectId is string || data.enterpriseId is string) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.weekends is list &&
+             data.holidays is list &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidSavedView(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.tableId is string &&
+             data.userId == request.auth.uid &&
+             isValidTimestamp(data.createdAt) &&
+             data.columns is list &&
+             (!('gridState' in data) || data.gridState is list);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
     match /enterprises/{enterpriseId} {
-      allow read: if isEmailVerified() && (request.auth.uid in resource.data.adminUsers || isSystemAdmin());
-      allow create: if isAuthenticated(); // Allow self-registration of enterprises
-      allow update: if isEmailVerified() && isAdminOfEnterprise(enterpriseId);
+      allow read: if isAuthenticated() && (request.auth.uid in resource.data.adminUsers || isSystemAdmin());
+      allow create: if isAuthenticated(); 
+      allow update: if isAuthenticated() && isAdminOfEnterprise(enterpriseId);
       allow delete: if isSystemAdmin();
     }
 
     match /projects/{projectId} {
       allow read: if canAccessProject(projectId);
-      allow create: if isEmailVerified() && isAdminOfEnterprise(request.resource.data.enterpriseId);
+      allow create: if isAuthenticated() && isAdminOfEnterprise(request.resource.data.enterpriseId);
       allow update: if canAccessProject(projectId);
-      allow delete: if isEmailVerified() && isAdminOfEnterprise(resource.data.enterpriseId);
+      allow delete: if isAuthenticated() && isAdminOfEnterprise(resource.data.enterpriseId);
     }
 
     match /sheets/{sheetId} {
       allow read: if canAccessSheet(sheetId);
-      allow create: if isEmailVerified() && canAccessProject(request.resource.data.projectId);
+      allow create: if isAuthenticated() && canAccessProject(request.resource.data.projectId);
       allow update: if canAccessSheet(sheetId);
-      allow delete: if isEmailVerified() && canAccessProject(resource.data.projectId);
+      allow delete: if isAuthenticated() && canAccessProject(resource.data.projectId);
 
       match /rows/{rowId} {
         allow read: if canAccessSheet(sheetId);
@@ -59,9 +126,37 @@ service cloud.firestore {
       }
     }
 
+    match /costCodes/{costCodeId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidCostCode(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidCostCode(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /etcDetails/{etcId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidEtcDetail(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidEtcDetail(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /actualCosts/{actualCostId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if isProjectAdmin(request.resource.data.projectId) && isValidActualCost(request.resource.data);
+      allow update: if isProjectAdmin(resource.data.projectId) && isValidActualCost(request.resource.data);
+      allow delete: if isProjectAdmin(resource.data.projectId);
+    }
+
+    match /costPhasing/{phasingId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId);
+      allow update: if canAccessProject(resource.data.projectId);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
     match /invitations/{invitationId} {
       allow read: if isAuthenticated();
-      allow create: if isEmailVerified() && isAdminOfEnterprise(request.resource.data.enterpriseId);
+      allow create: if isAuthenticated() && isAdminOfEnterprise(request.resource.data.enterpriseId);
       allow update: if isAuthenticated() && 
                       request.auth.token.email.lower() == resource.data.email.lower() &&
                       request.resource.data.status == 'accepted' &&
@@ -75,10 +170,30 @@ service cloud.firestore {
 
     match /savedViews/{viewId} {
       allow read, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidSavedView(request.resource.data);
       allow update: if isAuthenticated() && 
                       resource.data.userId == request.auth.uid && 
-                      request.resource.data.userId == request.auth.uid;
+                      isValidSavedView(request.resource.data);
+    }
+
+    match /calendars/{calendarId} {
+      allow read: if isAuthenticated() && (
+        (resource.data.projectId is string && canAccessProject(resource.data.projectId)) ||
+        (resource.data.enterpriseId is string && isAdminOfEnterprise(resource.data.enterpriseId)) ||
+        isSystemAdmin()
+      );
+      allow create: if isAuthenticated() && (
+        (request.resource.data.projectId is string && canAccessProject(request.resource.data.projectId)) ||
+        (request.resource.data.enterpriseId is string && isAdminOfEnterprise(request.resource.data.enterpriseId))
+      ) && isValidCalendar(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (resource.data.projectId is string && canAccessProject(resource.data.projectId)) ||
+        (resource.data.enterpriseId is string && isAdminOfEnterprise(resource.data.enterpriseId))
+      ) && isValidCalendar(request.resource.data);
+      allow delete: if isAuthenticated() && (
+        (resource.data.projectId is string && canAccessProject(resource.data.projectId)) ||
+        (resource.data.enterpriseId is string && isAdminOfEnterprise(resource.data.enterpriseId))
+      );
     }
   }
 }

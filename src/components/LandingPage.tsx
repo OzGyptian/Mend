@@ -45,15 +45,15 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
         <div className="max-w-7xl mx-auto">
           <div className="max-w-3xl">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-50 border border-amber-100 text-amber-700 text-[10px] font-bold uppercase tracking-widest mb-8">
-              <Activity className="w-3 h-3" />
-              Month-End Performance Tracking
+              <Building2 className="w-3 h-3" />
+              Enterprise Project Controls
             </div>
             <h1 className="text-7xl md:text-8xl font-light tracking-tighter leading-[0.9] mb-8">
-              Master your <br />
-              <span className="italic font-serif text-[#FF6321]">month-end cycle.</span>
+              Precision <br />
+              <span className="italic font-serif text-[#FF6321]">project controls.</span>
             </h1>
             <p className="text-xl text-gray-500 mb-12 leading-relaxed max-w-xl">
-              Mend (Month End) is the integrated platform for construction project performance. Track cost, schedule, risk, and procurement in one unified reporting cycle.
+              Mend is the integrated platform for enterprise construction performance. Track cost, schedule, risk, and procurement in one unified reporting environment.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
               <button 
@@ -89,34 +89,35 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
       </section>
 
       {/* Features Grid */}
-      <section id="features" className="py-24 px-6">
+      <section id="features" className="py-24 px-6 relative overflow-hidden">
+        <div className="absolute inset-0 bg-grid-slate-100 [mask-image:linear-gradient(0deg,#fff,rgba(255,255,255,0.6))] -z-10" />
         <div className="max-w-7xl mx-auto">
           <div className="grid md:grid-cols-3 gap-12">
-            <div className="space-y-6">
-              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
+            <div className="group p-8 bg-white border border-gray-100 rounded-3xl hover:shadow-2xl hover:shadow-black/5 transition-all duration-500">
+              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white mb-6 group-hover:scale-110 transition-transform">
                 <TrendingUp className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Performance Trends</h3>
+              <h3 className="text-2xl font-bold mb-4">Performance Analytics</h3>
               <p className="text-gray-500 leading-relaxed">
-                Visualize monthly movement and trends for all your KPIs. See exactly how your projects are performing over time.
+                Visualize monthly movement and trends for all your KPIs. See exactly how your projects are performing over time with high-fidelity analytics.
               </p>
             </div>
-            <div className="space-y-6">
-              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
+            <div className="group p-8 bg-white border border-gray-100 rounded-3xl hover:shadow-2xl hover:shadow-black/5 transition-all duration-500">
+              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white mb-6 group-hover:scale-110 transition-transform">
                 <PieChart className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Integrated Modules</h3>
+              <h3 className="text-2xl font-bold mb-4">Integrated Modules</h3>
               <p className="text-gray-500 leading-relaxed">
-                Cost, Schedule, Risk, and Safety—all interlinked and integrated for a complete project health overview.
+                Cost, Schedule, Risk, and Safety—all interlinked and integrated for a complete project health overview across your entire portfolio.
               </p>
             </div>
-            <div className="space-y-6">
-              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white">
+            <div className="group p-8 bg-white border border-gray-100 rounded-3xl hover:shadow-2xl hover:shadow-black/5 transition-all duration-500">
+              <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center text-white mb-6 group-hover:scale-110 transition-transform">
                 <CalendarCheck2 className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold">Reporting Cycles</h3>
+              <h3 className="text-2xl font-bold mb-4">Enterprise Reporting</h3>
               <p className="text-gray-500 leading-relaxed">
-                Streamline your month-end reporting. Standardize data collection and automate performance summaries.
+                Streamline your reporting cycles. Standardize data collection and automate performance summaries for executive-level visibility.
               </p>
             </div>
           </div>
@@ -149,7 +150,7 @@ export default function LandingPage({ onGetStarted, onLogin }: LandingPageProps)
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-6 border-t border-gray-100">
+      <footer className="py-12 px-6 border-t border-gray-100 bg-gray-50/30">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-[#FF6321] rounded flex items-center justify-center font-bold text-black text-xs">

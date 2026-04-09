@@ -3,27 +3,46 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch } from 'firebase/firestore';
 import { Enterprise, Project } from '../types';
 import { Plus, Briefcase, TrendingUp, Users, DollarSign, ArrowUpRight, Trash2, AlertTriangle, X, CalendarCheck2, ShieldAlert, Activity, PieChart } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface EnterpriseDashboardProps {
   enterprise: Enterprise | null;
   userId: string;
   isSystemOwner: boolean;
-  onSelectProject: (project: Project) => void;
 }
 
-export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner, onSelectProject }: EnterpriseDashboardProps) {
+export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner }: EnterpriseDashboardProps) {
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newProject, setNewProject] = useState({ name: '', code: '' });
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const onSelectProject = (project: Project) => {
+    navigate(`/project/${project.id}`);
+  };
 
   const codeExists = !isSubmitting && projects.some(p => p.projectCode === newProject.code);
 
@@ -132,13 +151,13 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
             <p className="text-gray-900 dark:text-gray-400 text-sm">Integrated month-end performance tracking across all project modules.</p>
           </div>
           {isEnterpriseAdmin && (
-            <button 
+            <Button 
               onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
+              className="shadow-lg"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-4 h-4 mr-2" />
               Add
-            </button>
+            </Button>
           )}
         </div>
 
@@ -152,217 +171,219 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner,
             { label: 'Procurement', icon: Briefcase, status: 'Coming Soon', color: 'bg-purple-500' },
             { label: 'Field Progress', icon: TrendingUp, status: 'Coming Soon', color: 'bg-indigo-500' },
           ].map((module, i) => (
-            <div key={i} className="bg-white dark:bg-[#141414] p-4 rounded-xl border border-gray-200 dark:border-white/10 shadow-sm opacity-80 hover:opacity-100 transition-opacity cursor-default">
-              <div className="flex items-center justify-between mb-3">
-                <div className="p-2 rounded-lg bg-gray-50 dark:bg-white/5">
-                  <module.icon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+            <Card key={i} className="opacity-80 hover:opacity-100 transition-opacity cursor-default">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="p-2 rounded-lg bg-gray-50 dark:bg-white/5">
+                    <module.icon className="w-4 h-4 text-gray-600 dark:text-gray-400" />
+                  </div>
+                  <div className={`w-2 h-2 rounded-full ${module.color}`} />
                 </div>
-                <div className={`w-2 h-2 rounded-full ${module.color}`} />
-              </div>
-              <p className="text-sm font-bold dark:text-white mb-1">{module.label}</p>
-              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">{module.status}</p>
-            </div>
+                <p className="text-sm font-bold dark:text-white mb-1">{module.label}</p>
+                <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">{module.status}</p>
+              </CardContent>
+            </Card>
           ))}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
           {stats.map((stat, i) => (
-            <div key={i} className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm transition-colors">
-              <div className="flex justify-between items-start mb-4">
-                <div className={`p-2 rounded-lg bg-gray-50 dark:bg-white/5 ${stat.color}`}>
-                  <stat.icon className="w-5 h-5" />
+            <Card key={i} className="transition-colors">
+              <CardContent className="p-6">
+                <div className="flex justify-between items-start mb-4">
+                  <div className={`p-2 rounded-lg bg-gray-50 dark:bg-white/5 ${stat.color}`}>
+                    <stat.icon className="w-5 h-5" />
+                  </div>
+                  <span className="text-[10px] font-mono text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">+12%</span>
                 </div>
-                <span className="text-[10px] font-mono text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 px-1.5 py-0.5 rounded">+12%</span>
-              </div>
-              <p className="text-gray-900 dark:text-gray-400 text-xs uppercase tracking-widest font-semibold mb-1">{stat.label}</p>
-              <p className="text-2xl font-bold dark:text-white">{stat.value}</p>
-            </div>
+                <p className="text-gray-900 dark:text-gray-400 text-xs uppercase tracking-widest font-semibold mb-1">{stat.label}</p>
+                <p className="text-2xl font-bold dark:text-white">{stat.value}</p>
+              </CardContent>
+            </Card>
           ))}
         </div>
 
-        <div className="flex-1 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-4 border-b border-gray-100 dark:border-white/5 flex justify-between items-center bg-gray-50/50 dark:bg-white/5">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-gray-400">Active Projects</h2>
-          </div>
+        <Card className="flex-1 overflow-hidden flex flex-col">
+          <CardHeader className="p-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5">
+            <CardTitle className="text-xs font-bold uppercase tracking-widest text-gray-400">Active Projects</CardTitle>
+          </CardHeader>
           
-          <div className="flex-1 overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-gray-100 dark:border-white/5">
-                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Project</th>
-                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Code</th>
-                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Budget</th>
-                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Status</th>
-                  <th className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50 dark:divide-white/5">
+          <CardContent className="p-0 flex-1 overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Project</TableHead>
+                  <TableHead className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Code</TableHead>
+                  <TableHead className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Budget</TableHead>
+                  <TableHead className="p-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">Status</TableHead>
+                  <TableHead className="p-4 w-12 text-[10px] font-bold uppercase tracking-widest text-gray-400 text-center">...</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {projects.map((project) => (
-                  <tr 
+                  <TableRow 
                     key={project.id}
-                    className="group hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                    className="group cursor-pointer"
                     onClick={() => onSelectProject(project)}
                   >
-                    <td className="p-4">
+                    <TableCell className="p-4">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 bg-gray-100 dark:bg-white/5 rounded-lg flex items-center justify-center font-bold text-gray-400 text-xs shrink-0">
                           {project.projectCode.slice(0, 2)}
                         </div>
                         <span className="font-bold text-sm dark:text-white group-hover:text-blue-600 transition-colors">{project.projectName}</span>
                       </div>
-                    </td>
-                    <td className="p-4">
+                    </TableCell>
+                    <TableCell className="p-4">
                       <span className="text-xs font-mono text-gray-400 uppercase tracking-widest">{project.projectCode}</span>
-                    </td>
-                    <td className="p-4">
+                    </TableCell>
+                    <TableCell className="p-4">
                       <span className="text-xs font-mono font-medium dark:text-white">${project.projectBudget.toLocaleString()}</span>
-                    </td>
-                    <td className="p-4">
+                    </TableCell>
+                    <TableCell className="p-4">
                       <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
                         <span className="text-xs text-emerald-600 font-medium">On Track</span>
                       </div>
-                    </td>
-                    <td className="p-4 text-right">
+                    </TableCell>
+                    <TableCell className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button 
+                        <Button 
+                          variant="ghost"
+                          size="icon"
                           onClick={(e) => {
                             e.stopPropagation();
                             onSelectProject(project);
                           }}
-                          className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                          className="text-gray-400 hover:text-blue-600"
                           title="Open Project"
                         >
                           <ArrowUpRight className="w-4 h-4" />
-                        </button>
+                        </Button>
                         {isEnterpriseAdmin && (
-                          <button 
+                          <Button 
+                            variant="ghost"
+                            size="icon"
                             onClick={(e) => {
                               e.stopPropagation();
                               setProjectToDelete(project);
                             }}
-                            className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                            className="text-gray-400 hover:text-red-600"
                             title="Delete Project"
                           >
                             <Trash2 className="w-4 h-4" />
-                          </button>
+                          </Button>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
             {projects.length === 0 && (
               <div className="p-12 text-center">
                 <Briefcase className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
                 <p className="text-gray-900 dark:text-gray-400 text-sm">No active projects found.</p>
               </div>
             )}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Delete Confirmation Modal */}
-      {projectToDelete && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
-          <div className="bg-white dark:bg-[#141414] rounded-2xl p-8 w-full max-w-md shadow-2xl border dark:border-white/10">
-            <div className="flex items-center gap-3 text-red-600 mb-4">
+      <Dialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <div className="flex items-center gap-3 text-red-600 mb-2">
               <AlertTriangle className="w-6 h-6" />
-              <h2 className="text-xl font-bold">Delete Project?</h2>
+              <DialogTitle className="text-xl font-bold">Delete Project?</DialogTitle>
             </div>
-            <p className="text-gray-900 dark:text-gray-400 text-sm mb-6">
-              Are you sure you want to delete <span className="font-bold text-gray-900 dark:text-white">"{projectToDelete.projectName}"</span>? 
+            <DialogDescription>
+              Are you sure you want to delete <span className="font-bold text-gray-900 dark:text-white">"{projectToDelete?.projectName}"</span>? 
               This action is permanent and will delete all associated sheets and forecast data.
-            </p>
-            <div className="flex gap-3">
-              <button 
-                disabled={isDeleting}
-                onClick={() => setProjectToDelete(null)}
-                className="flex-1 py-3 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white disabled:opacity-50"
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button 
+              disabled={isDeleting}
+              variant="outline"
+              onClick={() => setProjectToDelete(null)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button 
+              disabled={isDeleting}
+              variant="destructive"
+              onClick={handleDeleteProject}
+              className="flex-1"
+            >
+              {isDeleting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2"></div>
+                  Deleting...
+                </>
+              ) : 'Delete Project'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Project Modal */}
+      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">Create New Project</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreateProject} className="space-y-4">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
+                Project Code <span className="text-red-500">*</span>
+              </label>
+              <Input 
+                required
+                maxLength={20}
+                value={newProject.code}
+                onChange={e => setNewProject({...newProject, code: e.target.value})}
+                className={cn(
+                  codeExists && "border-red-500 focus-visible:ring-red-500/20"
+                )}
+                placeholder="e.g. BR-2024-001"
+              />
+              {codeExists && (
+                <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This Project Code already exists!</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Name</label>
+              <Input 
+                maxLength={40}
+                value={newProject.name}
+                onChange={e => setNewProject({...newProject, name: e.target.value})}
+                placeholder="e.g. Harbor View Mixed-Use"
+              />
+            </div>
+            <DialogFooter className="pt-4">
+              <Button 
+                type="button"
+                variant="outline"
+                onClick={() => setIsModalOpen(false)}
+                className="flex-1"
               >
                 Cancel
-              </button>
-              <button 
-                disabled={isDeleting}
-                onClick={handleDeleteProject}
-                className="flex-1 py-3 bg-red-600 text-white rounded-xl text-sm font-bold hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20 disabled:opacity-50 flex items-center justify-center gap-2"
+              </Button>
+              <Button 
+                type="submit"
+                disabled={!newProject.code || codeExists || isSubmitting}
+                className="flex-1"
               >
-                {isDeleting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    Deleting...
-                  </>
-                ) : 'Delete Project'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-[#141414] rounded-2xl p-8 w-full max-w-md shadow-2xl border dark:border-white/10">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold dark:text-white">Create New Project</h2>
-              <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCreateProject} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">
-                  Project Code <span className="text-red-500">*</span>
-                </label>
-                <input 
-                  required
-                  type="text" 
-                  maxLength={20}
-                  value={newProject.code}
-                  onChange={e => setNewProject({...newProject, code: e.target.value})}
-                  className={cn(
-                    "w-full p-3 bg-gray-50 dark:bg-white/5 border rounded-xl focus:outline-none focus:ring-2 dark:text-white transition-all",
-                    codeExists 
-                      ? "border-red-500 focus:ring-red-500/20" 
-                      : "border-gray-200 dark:border-white/10 focus:ring-black/5"
-                  )}
-                  placeholder="e.g. BR-2024-001"
-                />
-                {codeExists && (
-                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This Project Code already exists!</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-1">Project Name</label>
-                <input 
-                  type="text" 
-                  maxLength={40}
-                  value={newProject.name}
-                  onChange={e => setNewProject({...newProject, name: e.target.value})}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/5 dark:text-white"
-                  placeholder="e.g. Harbor View Mixed-Use"
-                />
-              </div>
-              <div className="flex gap-3 pt-4">
-                <button 
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="flex-1 py-3 border border-gray-200 dark:border-white/10 rounded-xl text-sm font-medium hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!newProject.code || codeExists}
-                  className="flex-1 py-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  Create Project
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+                {isSubmitting ? 'Creating...' : 'Create Project'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+

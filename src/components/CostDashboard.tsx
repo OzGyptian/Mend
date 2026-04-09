@@ -85,7 +85,7 @@ const CostDashboard: React.FC<CostDashboardProps> = ({ project, sheets, sheetSta
               </div>
             </div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">{stat.label}</p>
-            <p className="text-2xl font-bold dark:text-white">${stat.value.toLocaleString()}</p>
+            <p className="text-2xl font-bold dark:text-white">${stat.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
         ))}
       </div>

@@ -25,6 +25,7 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
   const [periods, setPeriods] = useState<Period[]>(project.reportingPeriods?.periods || []);
   const [currentPeriodId, setCurrentPeriodId] = useState<string | undefined>(project.reportingPeriods?.currentPeriodId);
   const [saving, setSaving] = useState(false);
+  const hasClosedPeriods = periods.some(p => p.status === 'closed');
 
   useEffect(() => {
     if (project.reportingPeriods) {
@@ -49,27 +50,18 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
     let currentStartDate = parseISO(baseDate);
 
     for (let i = 1; i <= numberOfPeriods; i++) {
-      let currentEndDate;
-      if (duration === 'month') {
-        currentEndDate = subDays(addMonths(currentStartDate, 1), 1);
-      } else {
-        currentEndDate = subDays(addWeeks(currentStartDate, 1), 1);
-      }
+      let currentEndDate = subDays(addMonths(currentStartDate, 1), 1);
 
       newPeriods.push({
         id: i.toString(),
-        name: `Period ${i}`,
+        name: format(currentEndDate, "MMM''yy"),
         startDate: format(currentStartDate, 'yyyy-MM-dd'),
         endDate: format(currentEndDate, 'yyyy-MM-dd'),
         status: 'open'
       });
 
       // Next period starts the day after current period ends
-      if (duration === 'month') {
-        currentStartDate = addMonths(currentStartDate, 1);
-      } else {
-        currentStartDate = addWeeks(currentStartDate, 1);
-      }
+      currentStartDate = addMonths(currentStartDate, 1);
     }
 
     const newCurrentId = newPeriods.length > 0 ? newPeriods[0].id : undefined;
@@ -86,24 +78,13 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
     }
 
     const lastPeriod = periods[periods.length - 1];
-    let currentStartDate = parseISO(lastPeriod.startDate);
-    if (duration === 'month') {
-      currentStartDate = addMonths(currentStartDate, 1);
-    } else {
-      currentStartDate = addWeeks(currentStartDate, 1);
-    }
-
-    let currentEndDate;
-    if (duration === 'month') {
-      currentEndDate = subDays(addMonths(currentStartDate, 1), 1);
-    } else {
-      currentEndDate = subDays(addWeeks(currentStartDate, 1), 1);
-    }
+    let currentStartDate = addMonths(parseISO(lastPeriod.startDate), 1);
+    let currentEndDate = subDays(addMonths(currentStartDate, 1), 1);
 
     const nextId = (periods.length + 1).toString();
     const newPeriod: Period = {
       id: nextId,
-      name: `Period ${nextId}`,
+      name: format(currentEndDate, "MMM''yy"),
       startDate: format(currentStartDate, 'yyyy-MM-dd'),
       endDate: format(currentEndDate, 'yyyy-MM-dd'),
       status: 'open'
@@ -230,33 +211,37 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
           <div className="bg-white dark:bg-[#1a1a1a] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
             <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-6">Period Configuration</h4>
             
+            {hasClosedPeriods && (
+              <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded-xl flex gap-3">
+                <Lock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold text-amber-700 dark:text-amber-400">Configuration Locked</p>
+                  <p className="text-[10px] text-amber-600/80 dark:text-amber-400/60 leading-relaxed">
+                    Reporting periods have been locked (closed). You can no longer change the base date, duration, or recalculate all periods. You can still extend the schedule or delete the last open period.
+                  </p>
+                </div>
+              </div>
+            )}
+            
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 mb-2">Base Date</label>
                 <input 
                   type="date" 
                   value={baseDate}
+                  disabled={hasClosedPeriods}
                   onChange={e => {
                     setBaseDate(e.target.value);
                     handleSave(periods, e.target.value, duration, numberOfPeriods, currentPeriodId);
                   }}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 mb-2">Duration</label>
-                <select 
-                  value={duration}
-                  onChange={e => {
-                    const val = e.target.value as 'week' | 'month';
-                    setDuration(val);
-                    handleSave(periods, baseDate, val, numberOfPeriods, currentPeriodId);
-                  }}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                >
-                  <option value="month">Monthly</option>
-                  <option value="week">Weekly</option>
-                </select>
+                <div className="w-full p-3 bg-gray-100 dark:bg-white/10 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white opacity-70">
+                  Monthly Only
+                </div>
               </div>
               <div>
                 <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 mb-2">Number of Periods</label>
@@ -265,12 +250,13 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                   min="1"
                   max="120"
                   value={numberOfPeriods}
+                  disabled={hasClosedPeriods}
                   onChange={e => {
                     const val = Number(e.target.value);
                     setNumberOfPeriods(val);
                     handleSave(periods, baseDate, duration, val, currentPeriodId);
                   }}
-                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
@@ -295,7 +281,8 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
               </div>
               <button 
                 onClick={handleCalculate}
-                className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
+                disabled={hasClosedPeriods}
+                className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Calculator className="w-4 h-4" />
                 Calculate & Populate Periods
@@ -310,7 +297,8 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                 <h4 className="font-bold dark:text-white">Generated Periods ({periods.length})</h4>
                 <button 
                   onClick={handleClear}
-                  className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
+                  disabled={hasClosedPeriods}
+                  className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Trash2 className="w-4 h-4" />
                   Clear All

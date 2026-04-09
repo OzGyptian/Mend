@@ -5,12 +5,17 @@ import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, Sa
 import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, PenTool, HardHat, ShoppingCart, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/utils';
+import CalendarManager from './CalendarManager';
 
 const RESOURCE_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor'];
 const RESOURCE_UNITS = [
@@ -45,6 +50,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         { id: 'users', label: 'Enterprise Users', icon: <Users className="w-4 h-4" /> },
         { id: 'projects', label: 'Enterprise Projects', icon: <Briefcase className="w-4 h-4" /> },
         { id: 'projectAttributes', label: 'Enterprise Project Attributes', icon: <Settings className="w-4 h-4" /> },
+        { id: 'enterpriseCalendars', label: 'Enterprise Calendars', icon: <Calendar className="w-4 h-4" /> },
       ]
     },
     {
@@ -124,11 +130,14 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [userSearch, setUserSearch] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
   const [attrSearch, setAttrSearch] = useState('');
+  const [valueSearch, setValueSearch] = useState('');
   const [resourceSearch, setResourceSearch] = useState('');
   const [costElementSearch, setCostElementSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'user' | 'project' | 'attr-value' | 'rate' | 'costElement', id: string } | null>(null);
   const [selectedAttrId, setSelectedAttrId] = useState<string>('01');
   const [selectedAttrValueIds, setSelectedAttrValueIds] = useState<Set<string>>(new Set());
   const [selectedRateIds, setSelectedRateIds] = useState<Set<string>>(new Set());
@@ -143,11 +152,15 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
 
   const [isReplaceIdModalOpen, setIsReplaceIdModalOpen] = useState(false);
+  const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
+  const [newProjectData, setNewProjectData] = useState({ name: '', code: '' });
   const [newProjectCode, setNewProjectCode] = useState('');
   const [isReplacing, setIsReplacing] = useState(false);
   const [replaceError, setReplaceError] = useState('');
   const [projectToReplace, setProjectToReplace] = useState<Project | null>(null);
   const [activeMenuId, setActiveMenuId] = useState<string | null>(null);
+  const [editingValueId, setEditingValueId] = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<'description' | 'sortOrder' | null>(null);
 
   const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string | null } | null>(null);
   const [isEditingResource, setIsEditingResource] = useState<{ id: string | null, insertIndex?: number } | null>(null);
@@ -213,7 +226,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (tableId === 'resourceRates') setResourceSearch('');
     if (tableId === 'projects') setProjectSearch('');
     if (tableId === 'users') setUserSearch('');
-    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') setAttrSearch('');
+    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') {
+      setAttrSearch('');
+      setValueSearch('');
+    }
     if (tableId === 'costElements') setCostElementSearch('');
   };
 
@@ -754,8 +770,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const sortedAttrValues = useMemo(() => {
     const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
     let result = [...values].filter(v => 
-      v.description.toLowerCase().includes(attrSearch.toLowerCase()) ||
-      v.id.toLowerCase().includes(attrSearch.toLowerCase())
+      v.description.toLowerCase().includes(valueSearch.toLowerCase()) ||
+      v.id.toLowerCase().includes(valueSearch.toLowerCase())
     );
 
     // Apply column filters
@@ -775,7 +791,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       if (attrSort.direction === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, attrSort, activeTab, attrSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes]);
+  }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, attrSort, activeTab, valueSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes]);
 
 
   const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode', id: string, title: string) => {
@@ -848,6 +864,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     await updateDoc(doc(db, 'enterprises', enterprise.id), {
       [field]: newAttrs
     });
+  };
+
+  const handleInlineUpdate = (valueId: string, field: 'description' | 'sortOrder', newValue: string) => {
+    const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem';
+    const updates: Partial<ProjectAttributeValue> = {};
+    if (field === 'sortOrder') {
+      updates.sortOrder = Number(newValue);
+    } else {
+      updates.description = newValue;
+    }
+    updateAttributeValue(type, selectedAttrId, valueId, updates);
+    setEditingValueId(null);
+    setEditingField(null);
   };
 
   const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'costElements', attrId?: string) => {
@@ -1030,6 +1059,43 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setShowImportSuccessModal(true);
   };
 
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!enterprise || !newProjectData.code.trim()) return;
+
+    const codeExists = projects.some(p => p.projectCode === newProjectData.code);
+    if (codeExists) {
+      alert('This Project Code already exists!');
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const now = new Date().toISOString();
+      const finalName = newProjectData.name.trim() || 'Project Name';
+      await addDoc(collection(db, 'projects'), {
+        enterpriseId: enterprise.id,
+        projectName: finalName,
+        projectCode: newProjectData.code,
+        projectBudget: 0,
+        startDate: now.split('T')[0],
+        endDate: now.split('T')[0],
+        cutoffDate: now.split('T')[0],
+        users: { [auth.currentUser?.uid || '']: 'Project Admin' },
+        dateCreated: now,
+        dateLastModified: now,
+        sheets: [],
+        status: 'Active'
+      });
+      setIsCreateProjectModalOpen(false);
+      setNewProjectData({ name: '', code: '' });
+    } catch (error) {
+      console.error('Failed to create project', error);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const addResourceRate = async (resource: any, index?: number) => {
     try {
       setIsSubmitting(true);
@@ -1119,453 +1185,543 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 p-8 w-full transition-colors duration-300">
-      {/* Header */}
-      <div className="mb-8 shrink-0">
-        <div className="flex justify-between items-center mb-6">
-          <div>
-            <h1 className="text-2xl font-bold dark:text-white">{enterprise.name} Administration</h1>
-            <p className="text-sm text-gray-900 dark:text-gray-400">Manage enterprise-wide settings, users, and projects.</p>
-          </div>
-          {activeTab === 'users' && (
-            <button 
-              onClick={() => setInviteModal(true)}
-              className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
-            >
-              <UserPlus className="w-4 h-4" />
-              Invite
-            </button>
+    <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] overflow-hidden transition-colors duration-300">
+      {/* Admin Sidebar */}
+      <motion.aside 
+        initial={false}
+        animate={{ width: isSidebarOpen ? 280 : 0, opacity: isSidebarOpen ? 1 : 0 }}
+        className="bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col h-full overflow-hidden transition-all duration-300"
+      >
+        <div className="p-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
+          {isSidebarOpen && (
+            <div>
+              <h1 className="text-xl font-bold dark:text-white">Enterprise Admin</h1>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Console</p>
+            </div>
           )}
+          <button 
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500 dark:text-gray-400"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
         </div>
-      </div>
 
-      {/* Content Area */}
-      <div className="flex-1 flex gap-8 min-h-0">
-        {/* Sub-Sidebar */}
-        <div className={`${isSidebarOpen ? 'w-64' : 'w-16'} flex flex-col gap-4 overflow-y-auto pr-4 border-r border-gray-200 dark:border-white/10 shrink-0 transition-all duration-300`}>
-          <div className="flex items-center justify-between mb-2 px-1">
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-1.5 text-gray-500 hover:text-black dark:text-gray-400 dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
-              title={isSidebarOpen ? "Collapse Sidebar" : "Expand Sidebar"}
-            >
-              {isSidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
-          </div>
-          {adminSections.map(section => (
-            <div key={section.title} className="flex flex-col">
-              {isSidebarOpen ? (
+        <ScrollArea className="flex-1 py-4">
+          <div className="px-4 space-y-6">
+            {adminSections.map((section) => (
+              <div key={section.title} className="space-y-1">
                 <button 
                   onClick={() => toggleSection(section.title)}
-                  className="flex items-center justify-between w-full text-[10px] font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 mb-2 hover:text-black dark:hover:text-white transition-colors"
+                  className="w-full flex items-center justify-between p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
                 >
-                  <span>{section.title}</span>
-                  {expandedSections.has(section.title) ? (
-                    <ChevronDown className="w-3 h-3" />
-                  ) : (
-                    <ChevronRight className="w-3 h-3" />
-                  )}
+                  <span className="flex items-center gap-2">
+                    {section.icon}
+                    {section.title}
+                  </span>
+                  <ChevronDown className={cn("w-3 h-3 transition-transform", !expandedSections.has(section.title) && "-rotate-90")} />
                 </button>
-              ) : (
-                <div className="w-full text-center mb-2">
-                  <div className="w-4 h-px bg-gray-300 dark:bg-white/20 mx-auto"></div>
-                </div>
-              )}
-              
-              <AnimatePresence>
-                {(expandedSections.has(section.title) || !isSidebarOpen) && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="space-y-1 overflow-hidden"
-                  >
-                  {section.items.map(item => (
-                    <button
-                      key={item.id}
-                      onClick={() => {
-                        setActiveTab(item.id);
-                        if (!isSidebarOpen) setIsSidebarOpen(true);
-                        setSelectedUserId(null);
-                        setSelectedProjectId(null);
-                        setSelectedProjectIds(new Set());
-                        setSelectedAttrValueIds(new Set());
-                        setSelectedAttrId('01');
-                        setAttrSearch('');
-                        setSelectedRateIds(new Set());
-                        setSelectedCostElementIds(new Set());
-                      }}
-                      title={!isSidebarOpen ? item.label : undefined}
-                      className={cn(
-                        `w-full flex items-center ${isSidebarOpen ? 'gap-3 px-3' : 'justify-center px-0'} py-2 rounded-lg text-sm font-medium transition-colors`,
-                        activeTab === item.id 
-                          ? "bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/5" 
-                          : "text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white"
-                      )}
+                
+                <AnimatePresence initial={false}>
+                  {expandedSections.has(section.title) && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden space-y-1"
                     >
-                      {item.icon}
-                      {isSidebarOpen && item.label}
-                    </button>
-                  ))}
-                </motion.div>
-              )}
-            </AnimatePresence>
+                      {section.items.map((item) => (
+                        <button
+                          key={item.id}
+                          onClick={() => setActiveTab(item.id)}
+                          className={cn(
+                            "w-full flex items-center gap-3 py-2.5 px-4 rounded-xl text-sm font-medium transition-all",
+                            activeTab === item.id 
+                              ? "bg-black text-white dark:bg-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10" 
+                              : "text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white"
+                          )}
+                        >
+                          {item.icon}
+                          {item.label}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ))}
           </div>
-        ))}
-        </div>
+        </ScrollArea>
+      </motion.aside>
 
-        {/* Main List Column */}
-        <div className={`flex-1 flex flex-col min-h-0 min-w-0 ${ (selectedUserId || selectedProjectId) ? 'hidden lg:flex' : 'flex'}`}>
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {!isSidebarOpen && (
+          <div className="p-4 border-b border-gray-200 dark:border-white/10 bg-white dark:bg-[#141414] flex items-center gap-4 shrink-0">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500 dark:text-gray-400"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            <h2 className="text-lg font-bold dark:text-white">
+              {adminSections.flatMap(s => s.items).find(i => i.id === activeTab)?.label || 'Administration'}
+            </h2>
+          </div>
+        )}
+        
+        <div className="flex-1 overflow-auto p-8">
           <AnimatePresence mode="wait">
             {activeTab === 'enterpriseSettings' && (
               <motion.div 
-                key="settings"
+                key="enterpriseSettings"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-8"
+              >
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <Card className="lg:col-span-2">
+                    <CardHeader>
+                      <CardTitle>Enterprise Profile</CardTitle>
+                      <CardDescription>Manage your organization's core identity and branding.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Enterprise Name</label>
+                          <Input 
+                            defaultValue={enterprise.name}
+                            onBlur={(e) => handleUpdateEnterprise({ name: e.target.value })}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Primary Domain</label>
+                          <Input 
+                            placeholder="company.com"
+                            defaultValue={(enterprise as any).domain}
+                            onBlur={(e) => handleUpdateEnterprise({ domain: e.target.value } as any)}
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Enterprise Logo</label>
+                        <div className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-white/5 border border-dashed border-gray-200 dark:border-white/10 rounded-xl">
+                          {enterprise.logoURL ? (
+                            <img src={enterprise.logoURL} className="w-16 h-16 object-contain bg-white rounded-lg border border-gray-100" alt="Logo" referrerPolicy="no-referrer" />
+                          ) : (
+                            <div className="w-16 h-16 bg-white dark:bg-white/5 rounded-lg border border-gray-100 dark:border-white/10 flex items-center justify-center text-gray-300">
+                              <Building2 className="w-8 h-8" />
+                            </div>
+                          )}
+                          <div className="flex-1">
+                            <p className="text-xs text-gray-500 mb-2">Recommended size: 512x512px. PNG or SVG preferred.</p>
+                            <Button variant="outline" size="sm" onClick={() => enterpriseLogoInputRef.current?.click()}>
+                              Change Logo
+                            </Button>
+                            <input 
+                              type="file" 
+                              ref={enterpriseLogoInputRef}
+                              className="hidden" 
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    handleUpdateEnterprise({ logoURL: reader.result as string });
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>System Status</CardTitle>
+                      <CardDescription>Current enterprise health and usage metrics.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between p-3 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg">
+                        <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">System Status</span>
+                        <Badge variant="outline" className="bg-emerald-500 text-white border-none">Operational</Badge>
+                      </div>
+                      <div className="space-y-3">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-500">Total Projects</span>
+                          <span className="font-bold">{projects.length}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-500">Active Users</span>
+                          <span className="font-bold">{Object.keys(enterprise.users || {}).length}</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-500">Storage Used</span>
+                          <span className="font-bold">12.4 GB</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </motion.div>
+            )}
+
+            {activeTab === 'users' && (
+              <motion.div 
+                key="users"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
                 className="flex-1 flex flex-col min-h-0"
               >
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm max-w-2xl">
-                <h2 className="text-xl font-bold mb-6 dark:text-white flex items-center gap-2">
-                  <Settings className="w-5 h-5 text-blue-600" />
-                  Enterprise General Settings
-                </h2>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Enterprise Name</label>
+                <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input 
-                      type="text" 
-                      defaultValue={enterprise.name}
-                      onBlur={(e) => {
-                        if (e.target.value !== enterprise.name) {
-                          handleUpdateEnterprise({ name: e.target.value });
-                        }
-                      }}
-                      className="w-full p-3 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                      type="text"
+                      placeholder="Search users by name or email..."
+                      value={userSearch}
+                      onChange={e => setUserSearch(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
                     />
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Enterprise ID</label>
-                    <input 
-                      type="text" 
-                      value={enterprise.enterpriseId}
-                      readOnly
-                      className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm text-gray-500 dark:text-gray-400 cursor-not-allowed outline-none"
-                    />
-                    <p className="mt-1 text-[9px] text-gray-400 font-medium italic">
-                      Enterprise ID is a permanent identifier and cannot be changed.
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">Company Logo</label>
-                    <div className="flex items-center gap-4">
-                      <div className="w-20 h-20 rounded-xl bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden">
-                        {enterprise.logoURL ? (
-                          <img src={enterprise.logoURL} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
-                        ) : (
-                          <Building2 className="w-8 h-8 text-gray-300" />
-                        )}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        <input 
-                          type="file"
-                          ref={enterpriseLogoInputRef}
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            if (!file.type.startsWith('image/')) {
-                              alert('Please upload a valid image file.');
-                              return;
-                            }
-                            if (file.size > 800 * 1024) {
-                              alert('File is too large. Please upload an image smaller than 800KB.');
-                              return;
-                            }
-                            const reader = new FileReader();
-                            reader.onloadend = async () => {
-                              const base64String = reader.result as string;
-                              await handleUpdateEnterprise({ logoURL: base64String });
-                            };
-                            reader.readAsDataURL(file);
-                          }}
-                          accept="image/*"
-                          className="hidden"
-                        />
-                        <button 
-                          onClick={() => enterpriseLogoInputRef.current?.click()}
-                          className="px-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white flex items-center gap-2"
-                        >
-                          <Upload className="w-3 h-3 text-blue-600" />
-                          Upload Logo
-                        </button>
-                        {enterprise.logoURL && (
-                          <button 
-                            onClick={() => handleUpdateEnterprise({ logoURL: '' })}
-                            className="px-4 py-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors text-[10px] font-bold uppercase tracking-widest flex items-center gap-2"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            Remove
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <p className="mt-2 text-[9px] text-gray-400">
-                      Recommended: Square or horizontal logo with transparent background. Max 800KB.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-          {activeTab === 'users' && (
-            <motion.div 
-              key="users"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col min-h-0"
-            >
-              <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
-                <div className="relative flex-1 max-w-md">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input 
-                    type="text"
-                    placeholder="Search users by name or email..."
-                    value={userSearch}
-                    onChange={e => setUserSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <button onClick={exportUsers} className="p-2 text-gray-400 hover:text-black dark:hover:text-white" title="Export"><Download className="w-4 h-4" /></button>
-                  <button 
-                    onClick={() => clearAllFilters('users')}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                    title="Clear All Filters"
-                  >
-                    <Filter className="w-4 h-4" /> Clear Filters
-                  </button>
-                  <div className="relative">
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => setInviteModal(true)}>
+                      <UserPlus className="w-4 h-4" />
+                      Invite User
+                    </Button>
                     <button 
-                      onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'users' ? null : 'users')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                      onClick={() => clearAllFilters('users')}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
+                      title="Clear All Filters"
                     >
-                      <Layout className="w-4 h-4" /> Views
+                      <Filter className="w-4 h-4" /> Clear Filters
                     </button>
-                    <AnimatePresence>
-                      {isSavedViewMenuOpen === 'users' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                        >
-                          <div className="mb-3">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                            <div className="flex gap-2">
-                              <input 
-                                type="text"
-                                placeholder="View name..."
-                                value={newViewName}
-                                onChange={e => setNewViewName(e.target.value)}
-                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                              />
-                              <button 
-                                onClick={() => saveView('users', newViewName)}
-                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-1 max-h-48 overflow-y-auto">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                            {savedViews.filter(v => v.tableId === 'users').map(view => (
-                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                  <Trash2 className="w-3 h-3" />
+                    <div className="relative">
+                      <button 
+                        onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'users' ? null : 'users')}
+                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                      >
+                        <Layout className="w-4 h-4" /> Views
+                      </button>
+                      <AnimatePresence>
+                        {isSavedViewMenuOpen === 'users' && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                          >
+                            <div className="mb-3">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                              <div className="flex gap-2">
+                                <input 
+                                  type="text"
+                                  placeholder="View name..."
+                                  value={newViewName}
+                                  onChange={e => setNewViewName(e.target.value)}
+                                  className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                                />
+                                <button 
+                                  onClick={() => saveView('users', newViewName)}
+                                  className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                                >
+                                  Save
                                 </button>
                               </div>
+                            </div>
+                            <Separator className="my-2 dark:bg-white/10" />
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                              {savedViews.filter(v => v.tableId === 'users').map(view => (
+                                <div key={view.id} className="flex items-center justify-between group">
+                                  <button 
+                                    onClick={() => applyView(view)}
+                                    className="flex-1 text-left px-2 py-1.5 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded transition-colors"
+                                  >
+                                    {view.name}
+                                  </button>
+                                  <button 
+                                    onClick={() => deleteView(view.id)}
+                                    className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              {savedViews.filter(v => v.tableId === 'users').length === 0 && (
+                                <p className="text-[10px] text-gray-500 italic p-2">No saved views</p>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <div className="relative">
+                      <button 
+                        onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'users' ? null : 'users')}
+                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                      >
+                        <Layout className="w-4 h-4" /> Columns
+                      </button>
+                      <AnimatePresence>
+                        {isColumnMenuOpen === 'users' && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                          >
+                            <div className="p-2 flex items-center justify-between border-b border-gray-100 dark:border-white/10 mb-2">
+                              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Table Controls</span>
+                              <button 
+                                onClick={() => setIsFrozen(prev => ({ ...prev, users: !prev.users }))}
+                                className={cn(
+                                  "p-1 rounded transition-colors",
+                                  isFrozen.users ? "text-blue-600 bg-blue-50 dark:bg-blue-500/10" : "text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5"
+                                )}
+                                title={isFrozen.users ? "Unfreeze First Column" : "Freeze First Column"}
+                              >
+                                <Lock className="w-3 h-3" />
+                              </button>
+                            </div>
+                            {['photo', 'name', 'email', 'joined', 'access'].map(col => (
+                              <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded cursor-pointer transition-colors">
+                                <input 
+                                  type="checkbox"
+                                  checked={visibleColumns.users.includes(col)}
+                                  onChange={() => {
+                                    const newCols = visibleColumns.users.includes(col)
+                                      ? visibleColumns.users.filter(c => c !== col)
+                                      : [...visibleColumns.users, col];
+                                    setVisibleColumns(prev => ({ ...prev, users: newCols }));
+                                  }}
+                                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-xs capitalize dark:text-white">{col}</span>
+                              </label>
                             ))}
-                            {savedViews.filter(v => v.tableId === 'users').length === 0 && (
-                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
                   </div>
-                  <div className="relative">
-                    <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'users' ? null : 'users')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
-                      <Eye className="w-4 h-4" /> Columns
-                    </button>
-                    <AnimatePresence>
-                      {isColumnMenuOpen === 'users' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                        >
-                          {['photo', 'name', 'email', 'joined', 'access'].map(col => (
-                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                </div>
+
+                <div className="flex-1 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-xl overflow-hidden flex flex-col">
+                  <div className="flex-1 overflow-auto">
+                    <table className="w-full text-left border-collapse min-w-[800px]">
+                      <thead>
+                        <tr className="border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/2">
+                          <th className="p-2 w-10">
+                            <input 
+                              type="checkbox"
+                              checked={filteredUsers.length > 0 && filteredUsers.every(u => selectedUserIds.has(u.uid))}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedUserIds(new Set(filteredUsers.map(u => u.uid)));
+                                } else {
+                                  setSelectedUserIds(new Set());
+                                }
+                              }}
+                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          </th>
+                          {visibleColumns.users.includes('photo') && (
+                            <th className={`p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 ${isFrozen.users ? 'sticky left-0 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>Photo</th>
+                          )}
+                          {visibleColumns.users.includes('name') && (
+                            <th className={`p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 ${isFrozen.users ? 'sticky left-12 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
+                              <button onClick={() => setUserSort({ field: 'name', direction: userSort.field === 'name' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
+                                Name {userSort.field === 'name' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
+                              </button>
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('email') && (
+                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                              <button onClick={() => setUserSort({ field: 'email', direction: userSort.field === 'email' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
+                                Email {userSort.field === 'email' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
+                              </button>
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('joined') && (
+                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                              <button onClick={() => setUserSort({ field: 'joinedAt', direction: userSort.field === 'joinedAt' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
+                                Joined {userSort.field === 'joinedAt' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
+                              </button>
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('access') && (
+                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                              <button onClick={() => setUserSort({ field: 'role', direction: userSort.field === 'role' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
+                                Access {userSort.field === 'role' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
+                              </button>
+                            </th>
+                          )}
+                          <th className="p-2"></th>
+                        </tr>
+                        <tr className="border-b border-gray-100 dark:border-white/5 bg-gray-50/20 dark:bg-white/1">
+                          <th className="p-2"></th>
+                          {visibleColumns.users.includes('photo') && (
+                            <th className={`p-2 ${isFrozen.users ? 'sticky left-0 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}></th>
+                          )}
+                          {visibleColumns.users.includes('name') && (
+                            <th className={`p-2 ${isFrozen.users ? 'sticky left-12 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
+                              <input 
+                                type="text"
+                                placeholder="Filter Name..."
+                                value={columnFilters.users.name || ''}
+                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, name: e.target.value } }))}
+                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
+                              />
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('email') && (
+                            <th className="p-2">
+                              <input 
+                                type="text"
+                                placeholder="Filter Email..."
+                                value={columnFilters.users.email || ''}
+                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, email: e.target.value } }))}
+                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
+                              />
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('joined') && (
+                            <th className="p-2">
+                              <input 
+                                type="text"
+                                placeholder="Filter Joined..."
+                                value={columnFilters.users.joinedAt || ''}
+                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, joinedAt: e.target.value } }))}
+                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
+                              />
+                            </th>
+                          )}
+                          {visibleColumns.users.includes('access') && (
+                            <th className="p-2">
+                              <input 
+                                type="text"
+                                placeholder="Filter Access..."
+                                value={columnFilters.users.role || ''}
+                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, role: e.target.value } }))}
+                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
+                              />
+                            </th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                        {filteredUsers.map((user) => (
+                          <tr 
+                            key={user.uid} 
+                            className={cn(
+                              "group hover:bg-gray-50/50 dark:hover:bg-white/2 transition-colors cursor-pointer",
+                              selectedUserIds.has(user.uid) && "bg-blue-50/50 dark:bg-blue-500/5"
+                            )}
+                            onClick={(e) => {
+                              if (e.shiftKey) {
+                                const lastSelected = Array.from(selectedUserIds).pop();
+                                const lastIdx = filteredUsers.findIndex(u => u.uid === lastSelected);
+                                const currIdx = filteredUsers.findIndex(u => u.uid === user.uid);
+                                const start = Math.min(lastIdx, currIdx);
+                                const end = Math.max(lastIdx, currIdx);
+                                const toSelect = filteredUsers.slice(start, end + 1).map(u => u.uid);
+                                setSelectedUserIds(prev => new Set([...Array.from(prev), ...toSelect]));
+                              } else if (e.metaKey || e.ctrlKey) {
+                                const newSelected = new Set(selectedUserIds);
+                                if (newSelected.has(user.uid)) newSelected.delete(user.uid);
+                                else newSelected.add(user.uid);
+                                setSelectedUserIds(newSelected);
+                              } else {
+                                setSelectedUserIds(new Set([user.uid]));
+                              }
+                            }}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setContextMenu({ x: e.clientX, y: e.clientY, type: 'user', id: user.uid });
+                            }}
+                          >
+                            <td className="p-2">
                               <input 
                                 type="checkbox"
-                                checked={visibleColumns.users.includes(col)}
-                                onChange={() => setVisibleColumns(prev => ({
-                                  ...prev,
-                                  users: prev.users.includes(col) ? prev.users.filter(c => c !== col) : [...prev.users, col]
-                                }))}
-                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                                checked={selectedUserIds.has(user.uid)}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  const newSelected = new Set(selectedUserIds);
+                                  if (e.target.checked) newSelected.add(user.uid);
+                                  else newSelected.delete(user.uid);
+                                  setSelectedUserIds(newSelected);
+                                }}
+                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                               />
-                              <span className="text-xs dark:text-white capitalize">{col}</span>
-                            </label>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <button onClick={() => setIsFrozen(prev => ({ ...prev, users: !prev.users }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen.users ? 'text-blue-600' : 'text-gray-400'}`}>
-                    {isFrozen.users ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.users ? 'Frozen' : 'Freeze'}
-                  </button>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-auto border border-gray-200 dark:border-white/10 rounded-xl">
-                <table className="w-full text-left border-collapse min-w-[800px]">
-                  <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
-                    <tr>
-                      {visibleColumns.users.includes('photo') && <th className={`p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black ${isFrozen.users ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>Photo</th>}
-                      {visibleColumns.users.includes('name') && <th onClick={() => handleUserSort('name')} className={`p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.users ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>Name {userSort.field === 'name' && (userSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.users.includes('email') && <th onClick={() => handleUserSort('email')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Email {userSort.field === 'email' && (userSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.users.includes('joined') && <th onClick={() => handleUserSort('joinedAt')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Joined {userSort.field === 'joinedAt' && (userSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.users.includes('access') && <th onClick={() => handleUserSort('role')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Access {userSort.field === 'role' && (userSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-right">Actions</th>
-                    </tr>
-                    <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
-                      {visibleColumns.users.includes('photo') && <th className={`p-2 ${isFrozen.users ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>}
-                      {visibleColumns.users.includes('name') && (
-                        <th className={`p-2 ${isFrozen.users ? 'sticky left-12 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="text"
-                            placeholder="Filter Name..."
-                            value={columnFilters.users.name || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, name: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.users.includes('email') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Email..."
-                            value={columnFilters.users.email || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, email: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.users.includes('joined') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Joined..."
-                            value={columnFilters.users.joinedAt || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, joinedAt: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.users.includes('access') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Access..."
-                            value={columnFilters.users.role || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, role: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      <th className="p-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                    {filteredUsers.map((user) => (
-                      <tr key={user.uid} onClick={() => setSelectedUserId(user.uid)} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer group ${selectedUserId === user.uid ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                        {visibleColumns.users.includes('photo') && (
-                          <td className={`p-2 ${isFrozen.users ? 'sticky left-0 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                            <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-100 dark:bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10">
-                              {user.photoURL ? <img src={user.photoURL} alt="" className="w-full h-full object-cover" /> : <Users className="w-4 h-4 text-gray-400" />}
-                            </div>
-                          </td>
-                        )}
-                        {visibleColumns.users.includes('name') && (
-                          <td className={`p-2 text-xs font-bold ${selectedUserId === user.uid ? 'text-blue-600 dark:text-blue-400' : 'dark:text-white'} ${isFrozen.users ? 'sticky left-12 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                            {user.name || user.displayName || user.email?.split('@')[0] || 'Unknown User'}
-                          </td>
-                        )}
-                        {visibleColumns.users.includes('email') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{user.email || 'No email'}</td>}
-                        {visibleColumns.users.includes('joined') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{user.joinedAt ? new Date(user.joinedAt).toLocaleDateString() : 'N/A'}</td>}
-                        {visibleColumns.users.includes('access') && <td className="p-2 text-[10px] font-medium dark:text-white">{user.role}</td>}
-                        <td className="p-2 text-right">
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <div className="relative">
+                            </td>
+                            {visibleColumns.users.includes('photo') && (
+                              <td className={cn(
+                                "p-2",
+                                isFrozen.users && "sticky left-0 z-10 bg-inherit border-r border-gray-100 dark:border-white/5"
+                              )}>
+                                <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+                                  {user.photoURL ? (
+                                    <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                  ) : (
+                                    <Users className="w-4 h-4 text-gray-400" />
+                                  )}
+                                </div>
+                              </td>
+                            )}
+                            {visibleColumns.users.includes('name') && (
+                              <td className={cn(
+                                "p-2",
+                                isFrozen.users && "sticky left-12 z-10 bg-inherit border-r border-gray-100 dark:border-white/5"
+                              )}>
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-medium dark:text-white">{user.displayName || user.name || 'Anonymous'}</span>
+                                  <span className="text-[10px] text-gray-400">ID: {user.uid.slice(0, 8)}...</span>
+                                </div>
+                              </td>
+                            )}
+                            {visibleColumns.users.includes('email') && (
+                              <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{user.email}</td>
+                            )}
+                            {visibleColumns.users.includes('joined') && (
+                              <td className="p-2 text-xs text-gray-500 dark:text-gray-400">
+                                {user.joinedAt ? new Date(user.joinedAt).toLocaleDateString() : 'N/A'}
+                              </td>
+                            )}
+                            {visibleColumns.users.includes('access') && (
+                              <td className="p-2">
+                                <Badge variant="outline" className={cn(
+                                  "text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5",
+                                  user.role === 'Enterprise System Admin' ? "border-blue-200 text-blue-600 bg-blue-50 dark:bg-blue-500/10 dark:border-blue-500/20" : "border-gray-200 text-gray-500 dark:border-white/10 dark:text-gray-400"
+                                )}>
+                                  {user.role}
+                                </Badge>
+                              </td>
+                            )}
+                            <td className="p-2 text-right">
                               <button 
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setActiveMenuId(activeMenuId === `user-${user.uid}` ? null : `user-${user.uid}`);
+                                  setContextMenu({ x: e.clientX, y: e.clientY, type: 'user', id: user.uid });
                                 }}
-                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
+                                className="p-1 text-gray-400 hover:text-black dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
                               >
                                 <MoreVertical className="w-4 h-4" />
                               </button>
-                              
-                              <AnimatePresence>
-                                {activeMenuId === `user-${user.uid}` && (
-                                  <>
-                                    <div 
-                                      className="fixed inset-0 z-40" 
-                                      onClick={() => setActiveMenuId(null)}
-                                    />
-                                    <motion.div 
-                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      className={cn(
-                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
-                                        filteredUsers.indexOf(user) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                                      )}
-                                    >
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); toggleUserRole(user.uid); setActiveMenuId(null); }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Settings className="w-3.5 h-3.5" /> Change Role
-                                      </button>
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ type: 'user', id: user.uid, name: user.email || user.name }); setActiveMenuId(null); }}
-                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" /> Remove User
-                                      </button>
-                                    </motion.div>
-                                  </>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </motion.div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </motion.div>
           )}
 
           {activeTab === 'projects' && (
@@ -1588,6 +1744,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   />
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" className="gap-2" onClick={() => setIsCreateProjectModalOpen(true)}>
+                    <Plus className="w-4 h-4" />
+                    Create Project
+                  </Button>
                   <button onClick={exportProjects} className="p-2 text-gray-400 hover:text-black dark:hover:text-white" title="Export"><Download className="w-4 h-4" /></button>
                   <button 
                     onClick={() => clearAllFilters('projects')}
@@ -1710,11 +1870,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       {visibleColumns.projects.includes('photo') && <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Photo</th>}
                       {visibleColumns.projects.includes('name') && <th onClick={() => handleProjectSort('projectName')} className={`p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.projects ? 'sticky left-10 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>Name {projectSort.field === 'projectName' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.projects.includes('code') && <th onClick={() => handleProjectSort('projectCode')} className="p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Code {projectSort.field === 'projectCode' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Status</th>
+                      <th onClick={() => handleProjectSort('status' as any)} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Status {projectSort.field === 'status' as any && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>
                       {visibleColumns.projects.includes('created') && <th onClick={() => handleProjectSort('dateCreated')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Created {projectSort.field === 'dateCreated' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
                       {visibleColumns.projects.includes('users') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Users</th>}
                       {visibleColumns.projects.includes('sheets') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Sheets</th>}
-                      <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-right">Actions</th>
+                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-center">...</th>
                     </tr>
                     <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
                       <th className={`p-2 ${isFrozen.projects ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
@@ -1741,6 +1901,15 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           />
                         </th>
                       )}
+                      <th className="p-2">
+                        <input 
+                          type="text"
+                          placeholder="Filter Status..."
+                          value={columnFilters.projects.status || ''}
+                          onChange={(e) => setColumnFilters(prev => ({ ...prev, projects: { ...prev.projects, status: e.target.value } }))}
+                          className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
+                        />
+                      </th>
                       {visibleColumns.projects.includes('created') && (
                         <th className="p-2">
                           <input 
@@ -1801,7 +1970,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.projects.includes('users') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{Object.keys(project.users || {}).length}</td>}
                         {visibleColumns.projects.includes('sheets') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{sheets.filter(s => s.projectId === project.id).length}</td>}
                         <td className="p-2 text-right">
-                          <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                             <div className="relative">
                               <button 
                                 onClick={(e) => {
@@ -1946,95 +2115,108 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         </h3>
                         <p className="text-xs text-gray-900 dark:text-gray-400">Manage the list of allowed values for this attribute.</p>
                       </div>
-                      <div className="flex gap-2">
-                        <input 
-                          type="file" 
-                          ref={fileInputRef} 
-                          className="hidden" 
-                          accept=".xlsx,.xls,.csv"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) handleImport(activeTab as any, file, selectedAttrId);
-                          }}
-                        />
-                        <button 
-                          onClick={() => fileInputRef.current?.click()}
-                          className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                          title="Import"
-                        >
-                          <Upload className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId)}
-                          className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                          title="Export"
-                        >
-                          <Download className="w-4 h-4" />
-                        </button>
-                        <button 
-                          onClick={() => clearAllFilters(activeTab)}
-                          className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                          title="Clear All Filters"
-                        >
-                          <Filter className="w-4 h-4" /> Clear Filters
-                        </button>
+                      <div className="flex items-center gap-4">
                         <div className="relative">
+                          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Search values..."
+                            value={valueSearch}
+                            onChange={e => setValueSearch(e.target.value)}
+                            className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-xs focus:outline-none dark:text-white w-48"
+                          />
+                        </div>
+                        <div className="flex gap-1">
+                          <input 
+                            type="file" 
+                            ref={fileInputRef} 
+                            className="hidden" 
+                            accept=".xlsx,.xls,.csv"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleImport(activeTab as any, file, selectedAttrId);
+                            }}
+                          />
                           <button 
-                            onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === activeTab ? null : activeTab)}
-                            className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                            title="Import"
                           >
-                            <Layout className="w-4 h-4" /> Views
+                            <Upload className="w-4 h-4" />
                           </button>
-                          <AnimatePresence>
-                            {isSavedViewMenuOpen === activeTab && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                              >
-                                <div className="mb-3">
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                                  <div className="flex gap-2">
-                                    <input 
-                                      type="text"
-                                      placeholder="View name..."
-                                      value={newViewName}
-                                      onChange={e => setNewViewName(e.target.value)}
-                                      className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                                    />
-                                    <button 
-                                      onClick={() => saveView(activeTab, newViewName)}
-                                      className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                                    >
-                                      Save
-                                    </button>
-                                  </div>
-                                </div>
-                                <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                                  {savedViews.filter(v => v.tableId === activeTab).map(view => (
-                                    <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                      <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                      <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                        <Trash2 className="w-3 h-3" />
+                          <button 
+                            onClick={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId)}
+                            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                            title="Export"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={() => clearAllFilters(activeTab)}
+                            className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
+                            title="Clear All Filters"
+                          >
+                            <Filter className="w-4 h-4" /> Clear Filters
+                          </button>
+                        </div>
+                        <div className="flex gap-1 border-l border-gray-200 dark:border-white/10 pl-4">
+                          <div className="relative">
+                            <button 
+                              onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === activeTab ? null : activeTab)}
+                              className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                            >
+                              <Layout className="w-4 h-4" /> Views
+                            </button>
+                            <AnimatePresence>
+                              {isSavedViewMenuOpen === activeTab && (
+                                <motion.div 
+                                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                                  className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                                >
+                                  <div className="mb-3">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                                    <div className="flex gap-2">
+                                      <input 
+                                        type="text"
+                                        placeholder="View name..."
+                                        value={newViewName}
+                                        onChange={e => setNewViewName(e.target.value)}
+                                        className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                                      />
+                                      <button 
+                                        onClick={() => saveView(activeTab, newViewName)}
+                                        className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                                      >
+                                        Save
                                       </button>
                                     </div>
-                                  ))}
-                                  {savedViews.filter(v => v.tableId === activeTab).length === 0 && (
-                                    <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
-                                  )}
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                        <div className="relative">
-                          <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === activeTab ? null : activeTab)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
-                            <Eye className="w-4 h-4" /> Columns
-                          </button>
-                          <AnimatePresence>
-                            {isColumnMenuOpen === activeTab && (
+                                  </div>
+                                  <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                                    {savedViews.filter(v => v.tableId === activeTab).map(view => (
+                                      <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                        <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                        <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-40 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                          <Trash2 className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    ))}
+                                    {savedViews.filter(v => v.tableId === activeTab).length === 0 && (
+                                      <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
+                                    )}
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                          <div className="relative">
+                            <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === activeTab ? null : activeTab)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
+                              <Eye className="w-4 h-4" /> Columns
+                            </button>
+                            <AnimatePresence>
+                              {isColumnMenuOpen === activeTab && (
                               <motion.div 
                                 initial={{ opacity: 0, y: 10, scale: 0.95 }}
                                 animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -2061,6 +2243,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             )}
                           </AnimatePresence>
                         </div>
+                      </div>
                         <button onClick={() => setIsFrozen(prev => ({ ...prev, [activeTab]: !prev[activeTab] }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen[activeTab] ? 'text-blue-600' : 'text-gray-400'}`}>
                           {isFrozen[activeTab] ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen[activeTab] ? 'Frozen' : 'Freeze'}
                         </button>
@@ -2086,8 +2269,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         </button>
                       </div>
                     </div>
-                    
-                    <div className="flex-1 overflow-auto">
+                      
+                      <div className="flex-1 overflow-auto">
                       <table className="w-full text-left border-collapse">
                         <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
                           <tr className="border-b border-white/10 dark:border-black/10">
@@ -2112,7 +2295,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             {visibleColumns[activeTab].includes('id') && <th onClick={() => handleAttrSort('id')} className={`p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen[activeTab] ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>ID {attrSort.field === 'id' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
                             {visibleColumns[activeTab].includes('description') && <th onClick={() => handleAttrSort('description')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Description {attrSort.field === 'description' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
                             {visibleColumns[activeTab].includes('sortOrder') && <th onClick={() => handleAttrSort('sortOrder')} className="p-2 w-24 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Sort Order {attrSort.field === 'sortOrder' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-right sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">Actions</th>
+                            <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-center sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">...</th>
                           </tr>
                           <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
                             <th className={`p-2 ${isFrozen[activeTab] ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
@@ -2172,10 +2355,58 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                                 />
                               </td>
                               {visibleColumns[activeTab].includes('id') && <td className={`p-2 text-xs font-mono dark:text-white ${isFrozen[activeTab] ? 'sticky left-12 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>{val.id}</td>}
-                              {visibleColumns[activeTab].includes('description') && <td className="p-2 text-xs dark:text-white">{val.description}</td>}
-                              {visibleColumns[activeTab].includes('sortOrder') && <td className="p-2 text-xs dark:text-white">{val.sortOrder?.toString().padStart(2, '0')}</td>}
+                              {visibleColumns[activeTab].includes('description') && (
+                                <td 
+                                  className="p-2 text-xs dark:text-white cursor-pointer hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors"
+                                  onClick={() => {
+                                    setEditingValueId(val.id);
+                                    setEditingField('description');
+                                  }}
+                                >
+                                  {editingValueId === val.id && editingField === 'description' ? (
+                                    <input 
+                                      autoFocus
+                                      type="text"
+                                      defaultValue={val.description}
+                                      onBlur={(e) => handleInlineUpdate(val.id, 'description', e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleInlineUpdate(val.id, 'description', e.currentTarget.value);
+                                        if (e.key === 'Escape') { setEditingValueId(null); setEditingField(null); }
+                                      }}
+                                      className="w-full px-2 py-1 text-xs bg-white dark:bg-[#1a1a1a] border border-blue-500 rounded outline-none dark:text-white"
+                                    />
+                                  ) : (
+                                    val.description
+                                  )}
+                                </td>
+                              )}
+                              {visibleColumns[activeTab].includes('sortOrder') && (
+                                <td 
+                                  className="p-2 text-xs dark:text-white cursor-pointer hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors"
+                                  onClick={() => {
+                                    setEditingValueId(val.id);
+                                    setEditingField('sortOrder');
+                                  }}
+                                >
+                                  {editingValueId === val.id && editingField === 'sortOrder' ? (
+                                    <input 
+                                      autoFocus
+                                      type="number"
+                                      defaultValue={val.sortOrder}
+                                      onBlur={(e) => handleInlineUpdate(val.id, 'sortOrder', e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleInlineUpdate(val.id, 'sortOrder', e.currentTarget.value);
+                                        if (e.key === 'Escape') { setEditingValueId(null); setEditingField(null); }
+                                      }}
+                                      className="w-20 px-2 py-1 text-xs bg-white dark:bg-[#1a1a1a] border border-blue-500 rounded outline-none dark:text-white"
+                                    />
+                                  ) : (
+                                    val.sortOrder?.toString().padStart(2, '0')
+                                  )}
+                                </td>
+                              )}
                               <td className="p-2 text-right">
-                                <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                                   <div className="relative">
                                     <button 
                                       onClick={(e) => {
@@ -2285,7 +2516,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   <h3 className="text-xl font-bold dark:text-white">Enterprise Cost Elements</h3>
                   <p className="text-sm text-gray-900 dark:text-gray-400">Define standard cost elements for enterprise-wide financial tracking.</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-4">
                   <div className="relative">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input 
@@ -2293,124 +2524,128 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       placeholder="Search cost elements..."
                       value={costElementSearch}
                       onChange={(e) => setCostElementSearch(e.target.value)}
-                      className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64 dark:text-white"
+                      className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-xs focus:outline-none w-64 dark:text-white"
                     />
                   </div>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    accept=".xlsx,.xls,.csv"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleImport('costElements', file);
-                    }}
-                  />
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                    title="Import"
-                  >
-                    <Upload className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => handleExport('costElements')}
-                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                    title="Export"
-                  >
-                    <Download className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => clearAllFilters('costElements')}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                    title="Clear All Filters"
-                  >
-                    <Filter className="w-4 h-4" /> Clear Filters
-                  </button>
-                  <div className="relative">
+                  <div className="flex gap-1">
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImport('costElements', file);
+                      }}
+                    />
                     <button 
-                      onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'costElements' ? null : 'costElements')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                      title="Import"
                     >
-                      <Layout className="w-5 h-5" /> Views
+                      <Upload className="w-4 h-4" />
                     </button>
-                    <AnimatePresence>
-                      {isSavedViewMenuOpen === 'costElements' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                        >
-                          <div className="mb-3">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                            <div className="flex gap-2">
-                              <input 
-                                type="text"
-                                placeholder="View name..."
-                                value={newViewName}
-                                onChange={e => setNewViewName(e.target.value)}
-                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                              />
-                              <button 
-                                onClick={() => saveView('costElements', newViewName)}
-                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-1 max-h-48 overflow-y-auto">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                            {savedViews.filter(v => v.tableId === 'costElements').map(view => (
-                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                  <Trash2 className="w-3 h-3" />
+                    <button 
+                      onClick={() => handleExport('costElements')}
+                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                      title="Export"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => clearAllFilters('costElements')}
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
+                      title="Clear All Filters"
+                    >
+                      <Filter className="w-4 h-4" /> Clear Filters
+                    </button>
+                  </div>
+                  <div className="flex gap-1 border-l border-gray-200 dark:border-white/10 pl-4">
+                    <div className="relative">
+                      <button 
+                        onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'costElements' ? null : 'costElements')}
+                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
+                      >
+                        <Layout className="w-4 h-4" /> Views
+                      </button>
+                      <AnimatePresence>
+                        {isSavedViewMenuOpen === 'costElements' && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
+                          >
+                            <div className="mb-3">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
+                              <div className="flex gap-2">
+                                <input 
+                                  type="text"
+                                  placeholder="View name..."
+                                  value={newViewName}
+                                  onChange={e => setNewViewName(e.target.value)}
+                                  className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                                />
+                                <button 
+                                  onClick={() => saveView('costElements', newViewName)}
+                                  className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                                >
+                                  Save
                                 </button>
                               </div>
+                            </div>
+                            <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
+                              {savedViews.filter(v => v.tableId === 'costElements').map(view => (
+                                <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                  <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
+                                  <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-40 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              ))}
+                              {savedViews.filter(v => v.tableId === 'costElements').length === 0 && (
+                                <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
+                              )}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <div className="relative">
+                      <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'costElements' ? null : 'costElements')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
+                        <Eye className="w-4 h-4" /> Columns
+                      </button>
+                      <AnimatePresence>
+                        {isColumnMenuOpen === 'costElements' && (
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                            className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
+                          >
+                            {['id', 'description', 'sortCode'].map(col => (
+                              <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                                <input 
+                                  type="checkbox"
+                                  checked={visibleColumns.costElements.includes(col)}
+                                  onChange={() => setVisibleColumns(prev => ({
+                                    ...prev,
+                                    costElements: prev.costElements.includes(col) ? prev.costElements.filter(c => c !== col) : [...prev.costElements, col]
+                                  }))}
+                                  className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
+                                />
+                                <span className="text-[10px] font-bold uppercase tracking-widest dark:text-white">{col}</span>
+                              </label>
                             ))}
-                            {savedViews.filter(v => v.tableId === 'costElements').length === 0 && (
-                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <div className="relative">
-                    <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'costElements' ? null : 'costElements')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
-                      <Eye className="w-5 h-5" /> Columns
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                    <button onClick={() => setIsFrozen(prev => ({ ...prev, costElements: !prev.costElements }))} className={cn("p-2 flex items-center gap-1 text-xs font-medium transition-colors", isFrozen.costElements ? "text-blue-600" : "text-gray-400 hover:text-black dark:hover:text-white")}>
+                      {isFrozen.costElements ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.costElements ? 'Frozen' : 'Freeze'}
                     </button>
-                    <AnimatePresence>
-                      {isColumnMenuOpen === 'costElements' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                        >
-                          {['id', 'description', 'sortCode'].map(col => (
-                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                              <input 
-                                type="checkbox"
-                                checked={visibleColumns.costElements.includes(col)}
-                                onChange={() => setVisibleColumns(prev => ({
-                                  ...prev,
-                                  costElements: prev.costElements.includes(col) ? prev.costElements.filter(c => c !== col) : [...prev.costElements, col]
-                                }))}
-                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                              />
-                              <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
-                            </label>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
                   </div>
-                  <button onClick={() => setIsFrozen(prev => ({ ...prev, costElements: !prev.costElements }))} className={`p-2 flex items-center gap-1 text-sm font-medium ${isFrozen.costElements ? 'text-blue-600' : 'text-gray-400'}`}>
-                    {isFrozen.costElements ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />} {isFrozen.costElements ? 'Frozen' : 'Freeze'}
-                  </button>
                   {selectedCostElementIds.size > 0 && (
                     <button 
                       onClick={() => setDeleteConfirm({ type: 'bulk-costElement', count: selectedCostElementIds.size })}
@@ -2475,7 +2710,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           Sort {costElementSort.field === 'sortCode' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
                         </th>
                       )}
-                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">Actions</th>
+                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10 text-center">...</th>
                     </tr>
                     <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
                       <th className={`p-2 ${isFrozen.costElements ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
@@ -2538,7 +2773,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.costElements.includes('description') && <td className="p-2 text-xs font-bold dark:text-white truncate max-w-[400px]" title={element.description}>{element.description}</td>}
                         {visibleColumns.costElements.includes('sortCode') && <td className="p-2 w-20 text-xs text-gray-500 dark:text-gray-400">{element.sortCode}</td>}
                         <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                             <div className="relative">
                               <button 
                                 onClick={(e) => {
@@ -2645,59 +2880,67 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               exit={{ opacity: 0, y: -20 }}
               className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
             >
-              <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
-                <div>
-                  <h3 className="text-xl font-bold dark:text-white">Enterprise Resources Rates</h3>
-                  <p className="text-sm text-gray-900 dark:text-gray-400">Define standard rates for resources to be used in forecasting sheets.</p>
-                </div>
-                <div className="flex gap-2">
-                  <div className="relative">
+              <div className="p-4 border-b border-gray-100 dark:border-white/10 flex flex-wrap gap-4 items-center justify-between bg-white dark:bg-[#141414] shrink-0">
+                <div className="flex items-center gap-4 flex-1 min-w-[300px]">
+                  <div className="relative flex-1 max-w-md">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input 
                       type="text" 
                       placeholder="Search resources..."
                       value={resourceSearch}
                       onChange={(e) => setResourceSearch(e.target.value)}
-                      className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64 dark:text-white"
+                      className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white"
                     />
                   </div>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                    accept=".xlsx,.xls,.csv"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleImport('resourceRates', file);
-                    }}
-                  />
-                  <button 
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                    title="Import"
-                  >
-                    <Upload className="w-5 h-5" />
-                  </button>
-                  <button 
-                    onClick={() => handleExport('resourceRates')}
-                    className="p-2 text-gray-400 hover:text-black dark:hover:text-white"
-                    title="Export"
-                  >
-                    <Download className="w-5 h-5" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      className="hidden" 
+                      accept=".xlsx,.xls,.csv"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImport('resourceRates', file);
+                      }}
+                    />
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"
+                      title="Import"
+                    >
+                      <Upload className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => handleExport('resourceRates')}
+                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"
+                      title="Export"
+                    >
+                      <Download className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <button 
                     onClick={() => clearAllFilters('resourceRates')}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                    title="Clear All Filters"
+                    className="h-9 px-3 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-2 text-xs font-medium hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"
                   >
-                    <Filter className="w-4 h-4" /> Clear Filters
+                    <Filter className="w-3.5 h-3.5" /> Clear Filters
                   </button>
+
+                  <div className="h-4 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
+
                   <div className="relative">
                     <button 
                       onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'resourceRates' ? null : 'resourceRates')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium"
+                      className={cn(
+                        "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
+                        isSavedViewMenuOpen === 'resourceRates' 
+                          ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
+                          : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
+                      )}
                     >
-                      <Layout className="w-5 h-5" /> Views
+                      <Layout className="w-3.5 h-3.5" /> Views
                     </button>
                     <AnimatePresence>
                       {isSavedViewMenuOpen === 'resourceRates' && (
@@ -2715,11 +2958,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                                 placeholder="View name..."
                                 value={newViewName}
                                 onChange={e => setNewViewName(e.target.value)}
-                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
+                                className="flex-1 px-2 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg outline-none dark:text-white focus:ring-1 focus:ring-blue-500"
                               />
                               <button 
                                 onClick={() => saveView('resourceRates', newViewName)}
-                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
+                                className="px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded-lg hover:opacity-90 transition-opacity"
                               >
                                 Save
                               </button>
@@ -2728,24 +2971,33 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <div className="space-y-1 max-h-48 overflow-y-auto">
                             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
                             {savedViews.filter(v => v.tableId === 'resourceRates').map(view => (
-                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                              <div key={view.id} className="flex items-center justify-between group p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                                 <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
+                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-all">
                                   <Trash2 className="w-3 h-3" />
                                 </button>
                               </div>
                             ))}
                             {savedViews.filter(v => v.tableId === 'resourceRates').length === 0 && (
-                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
+                              <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
                             )}
                           </div>
                         </motion.div>
                       )}
                     </AnimatePresence>
                   </div>
+
                   <div className="relative">
-                    <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'resourceRates' ? null : 'resourceRates')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-sm font-medium">
-                      <Eye className="w-5 h-5" /> Columns
+                    <button 
+                      onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'resourceRates' ? null : 'resourceRates')}
+                      className={cn(
+                        "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
+                        isColumnMenuOpen === 'resourceRates' 
+                          ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
+                          : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
+                      )}
+                    >
+                      <Eye className="w-3.5 h-3.5" /> Columns
                     </button>
                     <AnimatePresence>
                       {isColumnMenuOpen === 'resourceRates' && (
@@ -2756,7 +3008,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
                         >
                           {['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'].map(col => (
-                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
+                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
                               <input 
                                 type="checkbox"
                                 checked={visibleColumns.resourceRates.includes(col)}
@@ -2773,15 +3025,28 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       )}
                     </AnimatePresence>
                   </div>
-                  <button onClick={() => setIsFrozen(prev => ({ ...prev, resourceRates: !prev.resourceRates }))} className={`p-2 flex items-center gap-1 text-sm font-medium ${isFrozen.resourceRates ? 'text-blue-600' : 'text-gray-400'}`}>
-                    {isFrozen.resourceRates ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />} {isFrozen.resourceRates ? 'Frozen' : 'Freeze'}
+
+                  <button 
+                    onClick={() => setIsFrozen(prev => ({ ...prev, resourceRates: !prev.resourceRates }))} 
+                    className={cn(
+                      "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
+                      isFrozen.resourceRates 
+                        ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600" 
+                        : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
+                    )}
+                  >
+                    {isFrozen.resourceRates ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />} 
+                    {isFrozen.resourceRates ? 'Frozen' : 'Freeze'}
                   </button>
+
+                  <div className="h-4 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
+
                   {selectedRateIds.size > 0 && (
                     <button 
                       onClick={() => setDeleteConfirm({ type: 'bulk-rate', count: selectedRateIds.size })}
-                      className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
+                      className="h-9 px-4 bg-red-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-red-700 transition-all shadow-sm"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                       Delete ({selectedRateIds.size})
                     </button>
                   )}
@@ -2790,10 +3055,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
                       setIsEditingResource({ id: null });
                     }}
-                    className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
+                    className="h-9 px-4 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold flex items-center gap-2 hover:opacity-90 transition-all shadow-sm"
                   >
-                    <Plus className="w-4 h-4" />
-                    Add
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Resource
                   </button>
                 </div>
               </div>
@@ -2824,7 +3089,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       {visibleColumns.resourceRates.includes('udf1') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 1</th>}
                       {visibleColumns.resourceRates.includes('udf2') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 2</th>}
                       {visibleColumns.resourceRates.includes('udf3') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 3</th>}
-                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">Actions</th>
+                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10 text-center">...</th>
                     </tr>
                     <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
                       <th className={`p-2 ${isFrozen.resourceRates ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
@@ -2947,7 +3212,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         {visibleColumns.resourceRates.includes('udf2') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf2 || '-'}</td>}
                         {visibleColumns.resourceRates.includes('udf3') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf3 || '-'}</td>}
                         <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
                             <div className="relative">
                               <button 
                                 onClick={(e) => {
@@ -3051,6 +3316,22 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
+          {activeTab === 'enterpriseCalendars' && (
+            <motion.div 
+              key="enterpriseCalendars"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+            >
+              <CalendarManager 
+                enterpriseId={enterprise.id} 
+                title="Enterprise Calendars"
+                description="Manage standard calendars that can be inherited by projects."
+              />
+            </motion.div>
+          )}
+
           {['scheduleMgmt', 'changeMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
             <motion.div 
               key="under-development"
@@ -3066,9 +3347,11 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               <p className="text-sm text-gray-900 dark:text-gray-400 max-w-xs">Enterprise-wide settings for this module are currently being implemented.</p>
             </motion.div>
           )}
+          </AnimatePresence>
         </div>
+      </div>
 
-        {/* Side Detail Panel */}
+      {/* Side Detail Panel */}
         <AnimatePresence>
           {(selectedUserId || selectedProjectId) && (
             <motion.div 
@@ -3289,8 +3572,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </div>
           </motion.div>
         )}
-        </AnimatePresence>
-      </div>
+      </AnimatePresence>
 
       <AnimatePresence>
         {isReplaceIdModalOpen && projectToReplace && (
@@ -3659,17 +3941,14 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Unit <span className="text-red-500">*</span></label>
-                  <select 
+                  <input 
                     required
+                    type="text"
                     value={resourceFormData.unit}
                     onChange={e => setResourceFormData({ ...resourceFormData, unit: e.target.value })}
+                    placeholder="e.g. HR, DAY, M2"
                     className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                  >
-                    <option value="">Select Unit</option>
-                    {getAvailableUnits(resourceFormData.category).map(unit => (
-                      <option key={unit} value={unit}>{unit}</option>
-                    ))}
-                  </select>
+                  />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Rate ($)</label>
@@ -3930,6 +4209,121 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         </div>
       )}
       </AnimatePresence>
+
+      {/* Context Menu */}
+      <AnimatePresence>
+        {contextMenu && (
+          <>
+            <div 
+              className="fixed inset-0 z-50" 
+              onClick={() => setContextMenu(null)}
+              onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }}
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              className="fixed z-[60] w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-2"
+            >
+              {contextMenu.type === 'user' && (
+                <>
+                  <button 
+                    onClick={() => {
+                      toggleUserRole(contextMenu.id);
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                  >
+                    <Lock className="w-3 h-3" /> Toggle Admin Role
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setDeleteConfirm({ type: 'user', id: contextMenu.id, name: enterprise.users?.[contextMenu.id]?.email });
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                  >
+                    <Trash2 className="w-3 h-3" /> Delete User
+                  </button>
+                </>
+              )}
+              {contextMenu.type === 'project' && (
+                <>
+                  <button 
+                    onClick={() => {
+                      const project = projects.find(p => p.id === contextMenu.id);
+                      if (project) {
+                        setProjectToReplace(project);
+                        setNewProjectCode(project.projectCode);
+                        setIsReplaceIdModalOpen(true);
+                      }
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                  >
+                    <Edit2 className="w-3 h-3" /> Replace Project ID
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const project = projects.find(p => p.id === contextMenu.id);
+                      setDeleteConfirm({ type: 'project', id: contextMenu.id, name: project?.projectName });
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
+                  >
+                    <Trash2 className="w-3 h-3" /> Delete Project
+                  </button>
+                </>
+              )}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      <Dialog open={isCreateProjectModalOpen} onOpenChange={setIsCreateProjectModalOpen}>
+        <DialogContent className="sm:max-w-[425px] dark:bg-[#141414] dark:border-white/10">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Create New Project</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              Enter the details for the new enterprise project.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCreateProject}>
+            <div className="grid gap-4 py-4">
+              <div className="grid gap-2">
+                <label htmlFor="name" className="text-sm font-medium dark:text-gray-300">Project Name</label>
+                <Input
+                  id="name"
+                  value={newProjectData.name}
+                  onChange={(e) => setNewProjectData({ ...newProjectData, name: e.target.value })}
+                  placeholder="e.g. Hospital Expansion"
+                  className="dark:bg-[#1a1a1a] dark:border-white/10 dark:text-white"
+                  required
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="code" className="text-sm font-medium dark:text-gray-300">Project Code</label>
+                <Input
+                  id="code"
+                  value={newProjectData.code}
+                  onChange={(e) => setNewProjectData({ ...newProjectData, code: e.target.value })}
+                  placeholder="e.g. PRJ-001"
+                  className="dark:bg-[#1a1a1a] dark:border-white/10 dark:text-white"
+                  required
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsCreateProjectModalOpen(false)} className="dark:border-white/10 dark:text-white">Cancel</Button>
+              <Button type="submit" disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white">
+                {isSubmitting ? 'Creating...' : 'Create Project'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <AnimatePresence>
         {showImportSuccessModal && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">

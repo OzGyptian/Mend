@@ -89,6 +89,113 @@
         "expiresAt": { "type": "string", "format": "date-time" }
       },
       "required": ["enterpriseId", "email", "token", "status", "invitedBy", "createdAt", "expiresAt"]
+    },
+    "CostCode": {
+      "title": "Cost Code",
+      "description": "A project-specific cost code with attributes.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "User-defined cost code ID" },
+        "projectId": { "type": "string" },
+        "name": { "type": "string" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "eacMethod": { "type": "string", "enum": ["Manual", "Change Management", "ETC Details", "Sub-Contract Management"] },
+        "sortOrder": { "type": "number" }
+      },
+      "required": ["code", "projectId", "sortOrder"]
+    },
+    "EtcDetail": {
+      "title": "ETC Detail",
+      "description": "A single line item in an ETC details breakdown.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "costCode": { "type": "string" },
+        "calendarId": { "type": "string", "description": "Reference to a project calendar" },
+        "item": { "type": "string" },
+        "description": { "type": "string" },
+        "orderNumber": { "type": "string" },
+        "udf1": { "type": "string" },
+        "udf2": { "type": "string" },
+        "udf3": { "type": "string" },
+        "udf4": { "type": "string" },
+        "qty": { "type": "number" },
+        "unit": { "type": "string" },
+        "rate": { "type": "number" },
+        "phasingMethod": { "type": "string", "enum": ["Manual", "Auto-Phase"] },
+        "phasingStartDate": { "type": "string", "format": "date" },
+        "phasingEndDate": { "type": "string", "format": "date" },
+        "phasingUnit": { "type": "string", "enum": ["Daily", "Weekly", "Monthly", "Total"] },
+        "phasingQty": { "type": "number" },
+        "periodValues": { "type": "object" },
+        "sortOrder": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "costCode", "sortOrder", "createdAt"]
+    },
+    "Calendar": {
+      "title": "Calendar",
+      "description": "Enterprise or Project-specific working day calendar.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "name": { "type": "string" },
+        "weekends": { "type": "array", "items": { "type": "number" }, "description": "0-6 (Sun-Sat)" },
+        "holidays": { "type": "array", "items": { "type": "string", "format": "date" } }
+      },
+      "required": ["name"]
+    },
+    "SavedView": {
+      "title": "Saved View",
+      "description": "A personalized grid view configuration for a user.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "tableId": { "type": "string" },
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "gridState": { "type": "array", "description": "Serialized AG-Grid column state" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "tableId", "columns", "userId", "createdAt"]
+    },
+    "ActualCost": {
+      "title": "Actual Cost",
+      "description": "A single transaction or record of actual expenditure.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "costCodeId": { "type": "string", "description": "Reference to a CostCode document ID" },
+        "item": { "type": "string" },
+        "description": { "type": "string" },
+        "source": { "type": "string", "enum": ["MAN", "ACC", "FIN"] },
+        "cost": { "type": "number" },
+        "reportingPeriodId": { "type": "string", "description": "Reference to a reporting period ID" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "costCodeId", "cost", "reportingPeriodId", "createdAt"]
+    },
+    "CostPhasing": {
+      "title": "Cost Phasing",
+      "description": "Time-phased budget or cost data for a cost code.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "costCodeId": { "type": "string" },
+        "type": { "type": "string", "enum": ["baseline", "approved", "eac"] },
+        "phasingSource": { "type": "string", "enum": ["Manual", "Auto", "ETC Details", "SubContract"] },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "distribution": { "type": "string", "enum": ["Even", "Bell Curve", "Front load", "Back load", "S-Curve"] },
+        "periodValues": { "type": "object", "description": "Map of periodId to cost value" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "costCodeId", "type", "periodValues"]
     }
   },
   "firestore": {
@@ -115,6 +222,30 @@
     "/invitations/{invitationId}": {
       "schema": "Invitation",
       "description": "Secure invitations to join enterprises"
+    },
+    "/costCodes/{costCodeId}": {
+      "schema": "CostCode",
+      "description": "Project-specific cost codes"
+    },
+    "/etcDetails/{etcId}": {
+      "schema": "EtcDetail",
+      "description": "Detailed ETC breakdown items"
+    },
+    "/calendars/{calendarId}": {
+      "schema": "Calendar",
+      "description": "Project-specific calendars"
+    },
+    "/savedViews/{viewId}": {
+      "schema": "SavedView",
+      "description": "User-specific saved grid views"
+    },
+    "/actualCosts/{actualCostId}": {
+      "schema": "ActualCost",
+      "description": "Project-specific actual cost records"
+    },
+    "/costPhasing/{phasingId}": {
+      "schema": "CostPhasing",
+      "description": "Time-phased budget or cost data"
     }
   }
 }
