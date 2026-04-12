@@ -52,6 +52,7 @@ export interface Enterprise {
   projectAttributes?: ProjectAttribute[];
   lineItemAttributes?: ProjectAttribute[];
   costCodeAttributes?: ProjectAttribute[];
+  changeTypes?: string[];
   resourceRates?: ResourceRate[];
   costElements?: CostElement[];
   categories?: string[];
@@ -89,6 +90,7 @@ export interface Project {
   orderNumbers?: string[];
   costElements?: ProjectCostElement[];
   costCodeAttributes?: ProjectAttribute[];
+  changeTypes?: string[];
   lineItemAttributes?: ProjectAttribute[];
   resourceRates?: ResourceRate[];
   reportingPeriods?: {
@@ -225,4 +227,34 @@ export interface Calendar {
   weekends: number[];
   holidays: string[];
   createdAt: string;
+}
+
+export interface Change {
+  id: string; // Firestore Doc ID
+  projectId: string;
+  changeId: string; // User-facing UNIQUE ID (max 20 chars)
+  description: string;
+  type: string; // From Enterprise Admin
+  status: 'Approved' | 'Pending' | 'Rejected' | 'Withdrawn';
+  initiator: string; // max 50 char
+  reference: string; // max 50 char
+  budget: number; // Formula sum of children
+  eac: number; // Formula sum of children
+  periodId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChangeRecord {
+  id: string;
+  changeId: string; // Parent Change Doc ID
+  projectId: string;
+  costCodeId: string; // From Project Cost Codes
+  scope: string; // max 100 char
+  enterpriseAttributes: Record<string, string>;
+  projectAttributes: Record<string, string>;
+  budgetAmount: number;
+  eacAmount: number;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -79,6 +79,14 @@ service cloud.firestore {
              isValidTimestamp(data.createdAt);
     }
 
+    function isValidBaselineBudget(data) {
+      return data.projectId is string &&
+             data.costCodeId is string &&
+             data.amount is number &&
+             data.reportingPeriodId is string &&
+             isValidTimestamp(data.createdAt);
+    }
+
     function isValidCalendar(data) {
       return (data.projectId is string || data.enterpriseId is string) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
@@ -94,6 +102,33 @@ service cloud.firestore {
              isValidTimestamp(data.createdAt) &&
              data.columns is list &&
              (!('gridState' in data) || data.gridState is list);
+    }
+
+    function isValidChange(data) {
+      return data.projectId is string &&
+             data.changeId is string && data.changeId.size() > 0 && data.changeId.size() <= 20 &&
+             data.description is string &&
+             data.type is string &&
+             data.status in ['Approved', 'Pending', 'Rejected', 'Withdrawn'] &&
+             data.initiator is string && data.initiator.size() <= 50 &&
+             data.reference is string && data.reference.size() <= 50 &&
+             data.budget is number &&
+             data.eac is number &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidChangeRecord(data) {
+      return data.projectId is string &&
+             data.changeId is string &&
+             data.costCodeId is string &&
+             data.scope is string && data.scope.size() <= 100 &&
+             data.enterpriseAttributes is map &&
+             data.projectAttributes is map &&
+             data.budgetAmount is number &&
+             data.eacAmount is number &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
     }
 
     // ===============================================================
@@ -147,6 +182,13 @@ service cloud.firestore {
       allow delete: if isProjectAdmin(resource.data.projectId);
     }
 
+    match /baselineBudgets/{baselineBudgetId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if isProjectAdmin(request.resource.data.projectId) && isValidBaselineBudget(request.resource.data);
+      allow update: if isProjectAdmin(resource.data.projectId) && isValidBaselineBudget(request.resource.data);
+      allow delete: if isProjectAdmin(resource.data.projectId);
+    }
+
     match /costPhasing/{phasingId} {
       allow read: if canAccessProject(resource.data.projectId);
       allow create: if canAccessProject(request.resource.data.projectId);
@@ -194,6 +236,20 @@ service cloud.firestore {
         (resource.data.projectId is string && canAccessProject(resource.data.projectId)) ||
         (resource.data.enterpriseId is string && isAdminOfEnterprise(resource.data.enterpriseId))
       );
+    }
+
+    match /changes/{changeId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidChange(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidChange(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /changeRecords/{recordId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidChangeRecord(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidChangeRecord(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
     }
   }
 }

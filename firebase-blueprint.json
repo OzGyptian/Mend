@@ -180,6 +180,25 @@
       },
       "required": ["projectId", "costCodeId", "cost", "reportingPeriodId", "createdAt"]
     },
+    "BaselineBudget": {
+      "title": "Baseline Budget",
+      "description": "A single record of baseline budget breakdown.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "costCodeId": { "type": "string", "description": "Reference to a CostCode document ID" },
+        "item": { "type": "string" },
+        "description": { "type": "string" },
+        "source": { "type": "string", "enum": ["EST", "CON", "BID"] },
+        "amount": { "type": "number" },
+        "reportingPeriodId": { "type": "string", "description": "Reference to a reporting period ID" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "costCodeId", "amount", "reportingPeriodId", "createdAt"]
+    },
     "CostPhasing": {
       "title": "Cost Phasing",
       "description": "Time-phased budget or cost data for a cost code.",
@@ -242,6 +261,10 @@
     "/actualCosts/{actualCostId}": {
       "schema": "ActualCost",
       "description": "Project-specific actual cost records"
+    },
+    "/baselineBudgets/{baselineBudgetId}": {
+      "schema": "BaselineBudget",
+      "description": "Project-specific baseline budget records"
     },
     "/costPhasing/{phasingId}": {
       "schema": "CostPhasing",

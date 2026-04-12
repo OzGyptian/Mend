@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Project, Sheet, Enterprise } from '../types';
-import { DollarSign, Tag, List, ChevronLeft, Menu, Settings, Hash, Database, Calendar } from 'lucide-react';
+import { DollarSign, Tag, List, ChevronLeft, Menu, Settings, Hash, Database, Calendar, Target } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { auth } from '../firebase';
@@ -14,6 +14,8 @@ import CostTasks from './CostTasks';
 import CostForecasting from './CostForecasting';
 import CostCodes from './CostCodes';
 import ActualCost from './ActualCost';
+import BaselineBudget from './BaselineBudget';
+import GlobalTimephasing from './GlobalTimephasing';
 
 interface CostManagementProps {
   project: Project;
@@ -26,7 +28,7 @@ interface CostManagementProps {
   setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-type CostTab = 'costCodes' | 'forecasting' | 'actualCost' | 'costElements' | 'costCodeAttributes' | 'lineItemAttributes' | 'reportingPeriod' | 'resourceRates';
+type CostTab = 'costCodes' | 'timephasing' | 'actualCost' | 'baselineBudget' | 'costElements' | 'costCodeAttributes' | 'lineItemAttributes' | 'reportingPeriod' | 'resourceRates';
 
 const CostManagement: React.FC<CostManagementProps> = ({ 
   project, 
@@ -69,6 +71,7 @@ const CostManagement: React.FC<CostManagementProps> = ({
       label: 'Overview',
       items: [
         { id: 'costCodes', label: 'Cost Codes', icon: <List className="w-4 h-4" /> },
+        { id: 'timephasing', label: 'Timephasing', icon: <Calendar className="w-4 h-4" /> },
       ]
     },
     {
@@ -76,6 +79,7 @@ const CostManagement: React.FC<CostManagementProps> = ({
       label: 'Cost Module Settings',
       visible: isProjectAdmin,
       items: [
+        { id: 'baselineBudget', label: 'Baseline Budget', icon: <Target className="w-4 h-4" /> },
         { id: 'actualCost', label: 'Actual Cost', icon: <DollarSign className="w-4 h-4" /> },
         { id: 'costElements', label: 'Project Cost Elements', icon: <Hash className="w-4 h-4" /> },
         { id: 'costCodeAttributes', label: 'Cost Code Attributes', icon: <Database className="w-4 h-4" /> },
@@ -88,7 +92,7 @@ const CostManagement: React.FC<CostManagementProps> = ({
 
   const filteredSections = sections.filter(s => s.visible !== false);
 
-  const isSettingsTab = ['costElements', 'costCodeAttributes', 'lineItemAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
+  const isSettingsTab = ['baselineBudget', 'costElements', 'costCodeAttributes', 'lineItemAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
 
   const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === project.reportingPeriods?.currentPeriodId);
 
@@ -174,9 +178,22 @@ const CostManagement: React.FC<CostManagementProps> = ({
               />
             </div>
           )}
+          {activeTab === 'timephasing' && (
+            <div className="flex-1 flex flex-col overflow-hidden p-8">
+              <GlobalTimephasing 
+                project={project} 
+                enterprise={enterprise}
+              />
+            </div>
+          )}
           {activeTab === 'actualCost' && (
             <div className="flex-1 flex flex-col overflow-hidden">
               <ActualCost project={project} enterprise={enterprise} />
+            </div>
+          )}
+          {activeTab === 'baselineBudget' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <BaselineBudget project={project} enterprise={enterprise} />
             </div>
           )}
           {activeTab === 'costElements' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectCostElements project={project} /></div>}

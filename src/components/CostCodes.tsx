@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar } from '../types';
+import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord } from '../types';
 import { db, auth } from '../firebase';
 import { 
   doc, 
@@ -45,6 +45,7 @@ import {
   Layers,
   Settings,
   History,
+  Target,
   Columns,
   RotateCcw,
   ArrowUp,
@@ -90,6 +91,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { format, parseISO } from 'date-fns';
 import { AgGridReact } from 'ag-grid-react';
 import { 
   ColDef, 
@@ -127,6 +129,10 @@ const ActionsCellRenderer = (params: any) => {
     selectedActualsCode,
     setSelectedTimephasingCode,
     selectedTimephasingCode,
+    setSelectedChangesCode,
+    selectedChangesCode,
+    setSelectedBaselineCode,
+    selectedBaselineCode,
     setDeleteConfirm 
   } = params.context;
 
@@ -259,9 +265,45 @@ const ActionsCellRenderer = (params: any) => {
                   <Activity className="w-4 h-4 text-emerald-500" />
                   Timephasing
                 </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedBaselineCode(selectedBaselineCode === code.code ? null : code.code);
+                    if (selectedBaselineCode !== code.code) {
+                      setSelectedEtcCode(null);
+                      setSelectedActualsCode(null);
+                      setSelectedTimephasingCode(null);
+                      setSelectedChangesCode(null);
+                    }
+                    setIsMenuOpen(false);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold rounded-lg transition-colors",
+                    selectedBaselineCode === code.code 
+                      ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40" 
+                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                  )}
+                >
+                  <Target className="w-4 h-4 text-amber-500" />
+                  Baseline Budget
+                </button>
                 <button 
-                  onClick={(e) => { e.stopPropagation(); }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 rounded-lg transition-colors"
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    setSelectedChangesCode(selectedChangesCode === code.code ? null : code.code);
+                    if (selectedChangesCode !== code.code) {
+                      setSelectedEtcCode(null);
+                      setSelectedActualsCode(null);
+                      setSelectedTimephasingCode(null);
+                    }
+                    setIsMenuOpen(false);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold rounded-lg transition-colors",
+                    selectedChangesCode === code.code 
+                      ? "bg-purple-100 text-purple-700 dark:bg-purple-900/40" 
+                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                  )}
                 >
                   <RefreshCw className="w-4 h-4 text-purple-500" />
                   Changes
@@ -323,14 +365,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [selectedEtcCode, setSelectedEtcCode] = useState<string | null>(null);
   const [selectedActualsCode, setSelectedActualsCode] = useState<string | null>(null);
   const [selectedTimephasingCode, setSelectedTimephasingCode] = useState<string | null>(null);
+  const [selectedChangesCode, setSelectedChangesCode] = useState<string | null>(null);
+  const [selectedBaselineCode, setSelectedBaselineCode] = useState<string | null>(null);
+  const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
+  const [allChanges, setAllChanges] = useState<Change[]>([]);
+  const [isChangesLoading, setIsChangesLoading] = useState(false);
+  const [changesQuickFilterText, setChangesQuickFilterText] = useState('');
   const [etcRows, setEtcRows] = useState<any[]>([]);
   const [actualsRows, setActualsRows] = useState<any[]>([]);
+  const [baselineRows, setBaselineRows] = useState<any[]>([]);
   const [costPhasing, setCostPhasing] = useState<any[]>([]);
   const [timephasingRows, setTimephasingRows] = useState<any[]>([]);
   const [isEtcLoading, setIsEtcLoading] = useState(false);
   const [isActualsLoading, setIsActualsLoading] = useState(false);
+  const [isBaselineLoading, setIsBaselineLoading] = useState(false);
   const [isTimephasingLoading, setIsTimephasingLoading] = useState(false);
   const [actualsQuickFilterText, setActualsQuickFilterText] = useState('');
+  const [baselineQuickFilterText, setBaselineQuickFilterText] = useState('');
   const [timephasingQuickFilterText, setTimephasingQuickFilterText] = useState('');
   const [isActualsChartVisible, setIsActualsChartVisible] = useState(false);
   const [isTimephasingChartVisible, setIsTimephasingChartVisible] = useState(false);
@@ -567,6 +618,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const etcFileInputRef = useRef<HTMLInputElement>(null);
+  const timephasingFileInputRef = useRef<HTMLInputElement>(null);
 
   // Real-time duplicate check
   const isDuplicateId = useMemo(() => {
@@ -629,6 +681,40 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   // Fetch Actual Cost Details
   useEffect(() => {
+    if (!selectedBaselineCode) {
+      setBaselineRows([]);
+      return;
+    }
+
+    setIsBaselineLoading(true);
+    const costCodeObj = costCodes.find(c => c.code === selectedBaselineCode);
+    
+    const q = query(
+      collection(db, 'baselineBudgets'), 
+      where('projectId', '==', project.id)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const allBaseline = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      const filtered = allBaseline.filter((a: any) => 
+        a.costCodeId === costCodeObj?.id || a.costCodeId === selectedBaselineCode
+      );
+
+      setBaselineRows(filtered);
+      setIsBaselineLoading(false);
+    }, (error) => {
+      console.error("Error fetching baseline budgets:", error);
+      setIsBaselineLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [selectedBaselineCode, project.id, costCodes]);
+
+  useEffect(() => {
     if (!selectedActualsCode) {
       setActualsRows([]);
       return;
@@ -684,6 +770,46 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     return () => unsubscribe();
   }, [selectedTimephasingCode, project.id]);
+
+  // Changes Effects
+  useEffect(() => {
+    if (!project.id) return;
+    const q = query(collection(db, 'changes'), where('projectId', '==', project.id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setAllChanges(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Change)));
+    });
+    return () => unsubscribe();
+  }, [project.id]);
+
+  useEffect(() => {
+    if (!selectedChangesCode || !project.id) {
+      setChangeRecords([]);
+      return;
+    }
+    setIsChangesLoading(true);
+    const q = query(
+      collection(db, 'changeRecords'), 
+      where('projectId', '==', project.id),
+      where('costCodeId', '==', selectedChangesCode)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setChangeRecords(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChangeRecord)));
+      setIsChangesLoading(false);
+    });
+    return () => unsubscribe();
+  }, [selectedChangesCode, project.id]);
+
+  const changesPinnedBottomRowData = useMemo(() => {
+    if (changeRecords.length === 0) return [];
+    const totalBudget = changeRecords.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
+    const totalEac = changeRecords.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
+    return [{
+      changeIdStr: 'Total',
+      budgetAmount: totalBudget,
+      eacAmount: totalEac,
+      isTotalRow: true
+    }];
+  }, [changeRecords]);
 
   // Process Timephasing Rows
   useEffect(() => {
@@ -1974,12 +2100,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             const monthName = monthNames[month];
             const year = date.getUTCFullYear().toString().slice(-2);
             const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
-            const headerName = `P${periodNumber} (${monthName}'${year})`;
+            const headerName = `P${periodNumber}\n(${monthName}'${year})`;
 
             return {
               headerName,
               field: `periodValues.${p.id}`,
-              width: 110,
+              width: 120,
+              minWidth: 110,
               type: 'numericColumn',
               aggFunc: 'sum',
               editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
@@ -2041,7 +2168,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
 
           defs.push({
-            headerName: `P${periodNumber} (${monthName}'${year}) (Weekly)`,
+            headerName: `P${periodNumber}\n(${monthName}'${year}) (Weekly)`,
             children: weeks.map((w, wIdx) => ({
               headerName: w.name,
               field: `periodValues.${w.id}`,
@@ -2112,7 +2239,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
 
           defs.push({
-            headerName: `P${periodNumber} (${monthName}'${year}) (Daily)`,
+            headerName: `P${periodNumber}\n(${monthName}'${year}) (Daily)`,
             children: days.map((d, dIdx) => ({
               headerName: d.name,
               field: `periodValues.${d.id}`,
@@ -2210,13 +2337,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         field: 'type',
         width: 180,
         pinned: 'left',
+        lockPosition: 'left',
+        suppressMovable: true,
+        checkboxSelection: true,
+        headerCheckboxSelection: true,
         cellClass: 'font-bold bg-slate-50 dark:bg-slate-900',
       },
       {
         headerName: 'Phasing Source',
         field: 'phasingSource',
         width: 130,
-        pinned: 'left',
         editable: true,
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: (params: any) => {
@@ -2231,7 +2361,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         headerName: 'Start Date',
         field: 'startDate',
         width: 120,
-        pinned: 'left',
         editable: (params: any) => params.data.phasingSource === 'Auto',
         valueGetter: (params) => {
           const val = params.data.startDate;
@@ -2252,7 +2381,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         headerName: 'End Date',
         field: 'endDate',
         width: 120,
-        pinned: 'left',
         editable: (params: any) => params.data.phasingSource === 'Auto',
         valueGetter: (params) => {
           const val = params.data.endDate;
@@ -2273,18 +2401,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         headerName: 'Distribution',
         field: 'distribution',
         width: 130,
-        pinned: 'left',
         editable: (params: any) => params.data.phasingSource === 'Auto',
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: {
-          values: ['Even', 'Bell Curve', 'Front load', 'Back load', 'S-Curve']
+          values: ['Even', 'Bell Curve', 'Front load', 'Back load', 'S-Curve', 'Profile']
         },
         cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
       },
       {
         headerName: 'Total Phased',
         width: 130,
-        pinned: 'left',
         type: 'numericColumn',
         valueFormatter: currencyFormatter,
         valueGetter: (params) => {
@@ -2297,7 +2423,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         headerName: 'Total',
         field: 'totalFromCode',
         width: 130,
-        pinned: 'left',
         type: 'numericColumn',
         valueFormatter: currencyFormatter,
         cellClass: 'font-bold bg-slate-50 dark:bg-slate-900 text-blue-600',
@@ -2305,7 +2430,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       {
         headerName: 'Difference',
         width: 130,
-        pinned: 'left',
         type: 'numericColumn',
         valueFormatter: currencyFormatter,
         valueGetter: (params) => {
@@ -2326,13 +2450,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           const month = date.toLocaleString('default', { month: 'short' });
           const year = date.getFullYear().toString().slice(-2);
           const periodNumber = periods.findIndex(per => per.id === p.id) + 1;
-          const headerName = `P${periodNumber} (${month}'${year})`;
+          const headerName = `P${periodNumber}\n(${month}'${year})`;
           const periodIndex = periods.findIndex(per => per.id === p.id);
 
           return {
             headerName,
             field: `periodValues.${p.id}`,
-            width: 110,
+            width: 120,
+            minWidth: 110,
             type: 'numericColumn',
             valueFormatter: currencyFormatter,
             editable: (params: any) => {
@@ -2374,7 +2499,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     startDate: string,
     endDate: string,
     distribution: string,
-    periods: any[]
+    periods: any[],
+    existingPeriodValues?: Record<string, number>
   ) => {
     const start = new Date(startDate);
     const end = new Date(endDate);
@@ -2417,6 +2543,17 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           return sigmoid - prevSigmoid;
         });
         break;
+      case 'Profile':
+        if (existingPeriodValues) {
+          weights = activePeriods.map(p => existingPeriodValues[p.id] || 0);
+          const weightSum = weights.reduce((a, b) => a + b, 0);
+          if (weightSum === 0) {
+            weights = new Array(n).fill(1);
+          }
+        } else {
+          weights = new Array(n).fill(1);
+        }
+        break;
       default:
         weights = new Array(n).fill(1);
     }
@@ -2432,10 +2569,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const handleCalculateAutoPhasing = useCallback(async () => {
     if (!selectedTimephasingCode) return;
     
-    const autoRows = timephasingRows.filter(r => r.phasingSource === 'Auto');
-    if (autoRows.length === 0) {
-      toast.info("No rows set to 'Auto' phasing source.");
-      return;
+    // Get selected rows from grid API
+    const selectedNodes = timephasingGridRef.current?.api.getSelectedNodes();
+    const selectedRows = selectedNodes?.map(node => node.data) || [];
+    
+    let rowsToProcess = [];
+    if (selectedRows.length > 0) {
+      rowsToProcess = selectedRows.filter(r => r.phasingSource === 'Auto');
+      if (rowsToProcess.length === 0) {
+        toast.info("Selected rows are not set to 'Auto' phasing source.");
+        return;
+      }
+    } else {
+      rowsToProcess = timephasingRows.filter(r => r.phasingSource === 'Auto');
+      if (rowsToProcess.length === 0) {
+        toast.info("No rows set to 'Auto' phasing source.");
+        return;
+      }
     }
 
     setIsTimephasingLoading(true);
@@ -2452,7 +2602,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
       let updatedCount = 0;
 
-      for (const row of autoRows) {
+      for (const row of rowsToProcess) {
         if (row.startDate && row.endDate && row.distribution) {
           let total = row.totalFromCode || 0;
           let effectiveStartDate = row.startDate;
@@ -2478,7 +2628,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             effectiveStartDate,
             row.endDate,
             row.distribution,
-            periods
+            periods,
+            row.periodValues
           );
 
           // Find doc to update
@@ -2525,6 +2676,109 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       setIsTimephasingLoading(false);
     }
   }, [selectedTimephasingCode, timephasingRows, project.id, project.reportingPeriods, costCodes, calculatePhasing]);
+
+  const handleExportTimephasing = () => {
+    if (!selectedTimephasingCode) return;
+    const periods = project.reportingPeriods?.periods || [];
+    
+    const data = timephasingRows.map(row => {
+      const exportRow: any = {
+        'Type': row.type,
+        'Phasing Source': row.phasingSource,
+        'Start Date': row.startDate ? (row.startDate instanceof Date ? row.startDate.toLocaleDateString() : row.startDate) : '',
+        'End Date': row.endDate ? (row.endDate instanceof Date ? row.endDate.toLocaleDateString() : row.endDate) : '',
+        'Distribution': row.distribution,
+      };
+
+      periods.forEach(p => {
+        exportRow[p.name] = row.periodValues?.[p.id] || 0;
+      });
+      return exportRow;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Timephasing');
+    XLSX.writeFile(wb, `Timephasing_${selectedTimephasingCode}_${project.projectName}.xlsx`);
+  };
+
+  const handleImportTimephasing = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedTimephasingCode) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        const periods = project.reportingPeriods?.periods || [];
+        const currentPeriodId = project.reportingPeriods?.currentPeriodId;
+        const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
+        const futurePeriodIds = periods.slice(currentPeriodIndex + 1).map(p => p.id);
+
+        const batch = writeBatch(db);
+
+        for (const row of data) {
+          const type = row['Type'];
+          let phasingType = '';
+          if (type === 'Baseline Budget') phasingType = 'baseline';
+          else if (type === 'Approved Budget') phasingType = 'approved';
+          else if (type === 'Estimate At Completion') phasingType = 'eac';
+
+          if (!phasingType) continue;
+
+          const existingDoc = costPhasing.find(p => p.type === phasingType && p.costCodeId === selectedTimephasingCode);
+          
+          const periodValues: Record<string, number> = { ...(existingDoc?.periodValues || {}) };
+          periods.forEach(p => {
+            if (row[p.name] !== undefined) {
+              const newValue = Number(row[p.name]) || 0;
+              
+              if (phasingType === 'eac') {
+                // Only update future periods for EAC
+                if (futurePeriodIds.includes(p.id)) {
+                  periodValues[p.id] = newValue;
+                }
+              } else {
+                // Update all periods for Baseline and Approved
+                periodValues[p.id] = newValue;
+              }
+            }
+          });
+
+          const updatePayload: any = {
+            projectId: project.id,
+            costCodeId: selectedTimephasingCode,
+            type: phasingType,
+            phasingSource: row['Phasing Source'] || (phasingType === 'eac' ? 'ETC Details' : 'Manual'),
+            startDate: row['Start Date'] || '',
+            endDate: row['End Date'] || '',
+            distribution: row['Distribution'] || 'Even',
+            periodValues,
+            updatedAt: new Date().toISOString()
+          };
+
+          if (existingDoc) {
+            batch.update(doc(db, 'costPhasing', existingDoc.id), updatePayload);
+          } else {
+            batch.set(doc(collection(db, 'costPhasing')), updatePayload);
+          }
+        }
+
+        await batch.commit();
+        toast.success("Timephasing imported successfully");
+      } catch (error) {
+        console.error("Error importing timephasing:", error);
+        toast.error("Failed to import timephasing");
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
 
   const onTimephasingCellValueChanged = useCallback(async (event: CellValueChangedEvent) => {
     const { data, colDef, newValue, oldValue } = event;
@@ -2641,6 +2895,34 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       aggFunc: 'sum'
     }
   ], [project.reportingPeriods]);
+  
+  const baselineColumnDefs = useMemo<ColDef[]>(() => [
+    { 
+      headerName: 'Item', 
+      field: 'item', 
+      width: 150,
+      cellRenderer: (params: any) => {
+        if (params.node.rowPinned === 'top') return <span className="font-bold text-amber-800 dark:text-amber-200">TOTAL</span>;
+        return params.value;
+      }
+    },
+    { headerName: 'Description', field: 'description', flex: 1 },
+    { 
+      headerName: 'Amount', 
+      field: 'amount', 
+      width: 150,
+      type: 'numericColumn',
+      valueFormatter: currencyFormatter,
+      cellClass: 'font-bold',
+      aggFunc: 'sum'
+    },
+    { 
+      headerName: 'Created', 
+      field: 'createdAt', 
+      width: 150,
+      valueFormatter: (params) => params.value ? format(parseISO(params.value), 'MMM dd, yyyy') : ''
+    }
+  ], []);
 
   // Re-apply column group state when columnDefs change to prevent auto-collapsing
   useEffect(() => {
@@ -2676,8 +2958,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     selectedActualsCode,
     setSelectedTimephasingCode,
     selectedTimephasingCode,
+    setSelectedChangesCode,
+    selectedChangesCode,
+    setSelectedBaselineCode,
+    selectedBaselineCode,
     setDeleteConfirm
-  }), [selectedEtcCode, selectedActualsCode, selectedTimephasingCode]);
+  }), [selectedEtcCode, selectedActualsCode, selectedTimephasingCode, selectedChangesCode, selectedBaselineCode]);
 
   // Dynamic Attributes
   const enterpriseAttrs = useMemo(() => 
@@ -2711,6 +2997,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       const allEtcRows = etcSnapshot.docs.map(d => d.data());
       console.log(`Fetched ${allEtcRows.length} ETC detail records.`);
 
+      // 3. Fetch all changes and change records for this project
+      const changesQuery = query(collection(db, 'changes'), where('projectId', '==', project.id));
+      const changesSnapshot = await getDocs(changesQuery);
+      const allChanges = changesSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as Change));
+      console.log(`Fetched ${allChanges.length} change records.`);
+
+      const changeRecordsQuery = query(collection(db, 'changeRecords'), where('projectId', '==', project.id));
+      const changeRecordsSnapshot = await getDocs(changeRecordsQuery);
+      const allChangeRecords = changeRecordsSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as ChangeRecord));
+      console.log(`Fetched ${allChangeRecords.length} change line items.`);
+
+      // 4. Fetch all baseline budget records for this project
+      const baselineQuery = query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id));
+      const baselineSnapshot = await getDocs(baselineQuery);
+      const allBaselineRecords = baselineSnapshot.docs.map(d => d.data());
+      console.log(`Fetched ${allBaselineRecords.length} baseline budget records.`);
+
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
       const currentPeriodNum = currentPeriod ? project.reportingPeriods?.periods.indexOf(currentPeriod) + 1 : -1;
@@ -2728,8 +3031,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           })
           .reduce((sum, a) => sum + (Number(a.cost) || 0), 0);
 
-        const baselineBudget = code.baselineBudget || 0;
-        const budgetChanges = code.budgetChanges || 0;
+        // Aggregate baseline budget for this code
+        const codeBaselineRecords = allBaselineRecords.filter(a => a.costCodeId === code.id || a.costCodeId === code.code);
+        const baselineBudget = codeBaselineRecords.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+        
+        // Calculate budget changes from change records (Approved or Pending only)
+        const codeChangeRecords = allChangeRecords.filter(r => 
+          r.costCodeId === code.code || r.costCodeId === code.id
+        );
+        
+        const budgetChanges = codeChangeRecords.reduce((sum, record) => {
+          const parentChange = allChanges.find(c => c.id === record.changeId);
+          if (parentChange && (parentChange.status === 'Approved' || parentChange.status === 'Pending')) {
+            return sum + (Number(record.budgetAmount) || 0);
+          }
+          return sum;
+        }, 0);
+
         const approvedBudget = baselineBudget + budgetChanges;
         const approvedBudgetPrevious = code.approvedBudgetPrevious || 0;
         const approvedBudgetMovement = approvedBudget - approvedBudgetPrevious;
@@ -2752,6 +3070,17 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               return acc + (qty * (r.rate || 0));
             }, 0);
           estimateAtCompletion = actualCostToDate + estimateToComplete;
+        } else if (code.eacMethod === 'Change Management') {
+          // Calculate EAC changes from change records (Approved or Pending only)
+          const eacChanges = codeChangeRecords.reduce((sum, record) => {
+            const parentChange = allChanges.find(c => c.id === record.changeId);
+            if (parentChange && (parentChange.status === 'Approved' || parentChange.status === 'Pending')) {
+              return sum + (Number(record.eacAmount) || 0);
+            }
+            return sum;
+          }, 0);
+          estimateAtCompletion = baselineBudget + eacChanges;
+          estimateToComplete = estimateAtCompletion - actualCostToDate;
         } else {
           estimateToComplete = estimateAtCompletion - actualCostToDate;
         }
@@ -2764,6 +3093,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const costVarianceMovement = costVariance - costVariancePrevious;
 
         batch.update(doc(db, 'costCodes', code.id), {
+          baselineBudget,
+          budgetChanges,
           approvedBudget,
           approvedBudgetMovement,
           actualCostToDate,
@@ -2844,6 +3175,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const gridRef = useRef<AgGridReact>(null);
   const etcGridRef = useRef<AgGridReact>(null);
+  const timephasingGridRef = useRef<AgGridReact>(null);
   const etcGroupStateRef = useRef<any>(null);
   const [gridApi, setGridApi] = useState<GridApi | null>(null);
 
@@ -2884,6 +3216,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             checkboxSelection: true,
             headerCheckboxSelection: true,
             width: 150,
+            pinned: 'left',
             filter: 'agTextColumnFilter',
             sortable: true,
             enableRowGroup: true,
@@ -2898,6 +3231,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             headerName: 'Cost Code Description',
             field: 'name',
             width: 250,
+            pinned: 'left',
             filter: 'agTextColumnFilter',
             sortable: true,
             editable: true,
@@ -3047,8 +3381,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           width: 130,
           type: 'numericColumn',
           valueFormatter: currencyFormatter,
-          editable: true,
-          cellClass: 'bg-white dark:bg-slate-900 font-medium',
+          editable: false,
+          cellClass: 'bg-slate-100 dark:bg-slate-800 font-medium',
           aggFunc: 'sum',
         },
         {
@@ -3762,7 +4096,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       {/* Table Area */}
       <div className={cn(
         "flex flex-col transition-all duration-500 ease-in-out overflow-hidden",
-        (selectedEtcCode || selectedActualsCode || selectedTimephasingCode) 
+        (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode) 
           ? (isMainTableCollapsed ? "h-[60px]" : "h-[40%]") 
           : "flex-1"
       )}>
@@ -3799,25 +4133,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               </div>
             )}
           </div>
-          {selectedEtcCode && (
-            <button 
-              onClick={() => setIsMainTableCollapsed(!isMainTableCollapsed)}
-              className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md transition-colors text-gray-500"
-              title={isMainTableCollapsed ? "Expand Table" : "Collapse Table"}
-            >
-              {isMainTableCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            </button>
-          )}
-          {selectedActualsCode && (
-            <button 
-              onClick={() => setIsMainTableCollapsed(!isMainTableCollapsed)}
-              className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md transition-colors text-gray-500"
-              title={isMainTableCollapsed ? "Expand Table" : "Collapse Table"}
-            >
-              {isMainTableCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            </button>
-          )}
-          {selectedTimephasingCode && (
+          {(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) && (
             <button 
               onClick={() => setIsMainTableCollapsed(!isMainTableCollapsed)}
               className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md transition-colors text-gray-500"
@@ -3834,7 +4150,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           )}>
             <AgGridReact
               ref={gridRef}
-              rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode) ? costCodes.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode)) : costCodes}
+              rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) ? costCodes.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)) : costCodes}
               columnDefs={columnDefs}
               components={components}
               context={gridContext}
@@ -4294,7 +4610,136 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         )}
       </AnimatePresence>
       
-      {/* Actual Cost Details Section */}
+      {/* Changes Details Section */}
+      <AnimatePresence>
+        {selectedChangesCode && (
+          <motion.div 
+            key={selectedChangesCode}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ 
+              height: isMainTableCollapsed ? 'calc(100% - 60px)' : '60%', 
+              opacity: 1 
+            }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0a0a0a] flex flex-col overflow-hidden"
+          >
+            <div className="p-4 flex items-center justify-between bg-white dark:bg-[#141414] border-b border-gray-200 dark:border-white/10">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-purple-600" />
+                  <h3 className="font-bold dark:text-white">Related Changes: <span className="text-purple-600">{selectedChangesCode}</span></h3>
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10" />
+                <p className="text-xs text-gray-500 font-medium">Read-Only View</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search changes..."
+                    value={changesQuickFilterText}
+                    onChange={(e) => setChangesQuickFilterText(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-xs focus:ring-2 focus:ring-purple-500 outline-none w-48 dark:text-white"
+                  />
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
+                <button 
+                  onClick={() => setSelectedChangesCode(null)}
+                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex-1 min-h-0 relative">
+              <div className={cn(
+                "absolute inset-0 ag-theme-quartz",
+                theme === 'dark' ? "ag-theme-quartz-dark" : ""
+              )}>
+                <AgGridReact
+                  rowData={changeRecords.map(r => {
+                    const parentChange = allChanges.find(c => c.id === r.changeId);
+                    return {
+                      ...r,
+                      changeIdStr: parentChange?.changeId || 'Unknown',
+                      changeDescription: parentChange?.description || '',
+                      changeStatus: parentChange?.status || 'Unknown',
+                      changeType: parentChange?.type || ''
+                    };
+                  })}
+                  pinnedBottomRowData={changesPinnedBottomRowData}
+                  getRowClass={(params) => {
+                    if (params.node.rowPinned === 'bottom') return 'font-bold bg-gray-50 dark:bg-white/5';
+                    return '';
+                  }}
+                  columnDefs={[
+                    {
+                      headerName: 'Change ID',
+                      field: 'changeIdStr',
+                      width: 150,
+                      cellStyle: { fontWeight: 'bold' },
+                      pinned: 'left'
+                    },
+                    {
+                      headerName: 'Status',
+                      field: 'changeStatus',
+                      width: 120,
+                      cellClassRules: {
+                        'text-emerald-600 font-bold': (p: any) => p.value === 'Approved',
+                        'text-amber-600 font-bold': (p: any) => p.value === 'Pending',
+                        'text-red-600 font-bold': (p: any) => p.value === 'Rejected',
+                        'text-gray-500 font-bold': (p: any) => p.value === 'Withdrawn',
+                      }
+                    },
+                    {
+                      headerName: 'Type',
+                      field: 'changeType',
+                      width: 120
+                    },
+                    {
+                      headerName: 'Change Description',
+                      field: 'changeDescription',
+                      width: 250
+                    },
+                    {
+                      headerName: 'Scope',
+                      field: 'scope',
+                      width: 200
+                    },
+                    {
+                      headerName: 'Budget Amount',
+                      field: 'budgetAmount',
+                      width: 150,
+                      type: 'numericColumn',
+                      valueFormatter: (p: any) => formatCurrency(p.value),
+                      cellStyle: { fontWeight: 'bold' }
+                    },
+                    {
+                      headerName: 'EAC Amount',
+                      field: 'eacAmount',
+                      width: 150,
+                      type: 'numericColumn',
+                      valueFormatter: (p: any) => formatCurrency(p.value),
+                      cellStyle: { fontWeight: 'bold' }
+                    }
+                  ]}
+                  quickFilterText={changesQuickFilterText}
+                  defaultColDef={{
+                    sortable: true,
+                    filter: true,
+                    resizable: true,
+                    minWidth: 100,
+                  }}
+                  animateRows={true}
+                  loading={isChangesLoading}
+                />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {selectedActualsCode && (
           <motion.div 
@@ -4456,6 +4901,78 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         )}
       </AnimatePresence>
 
+      {/* Baseline Budget Details Section */}
+      <AnimatePresence>
+        {selectedBaselineCode && (
+          <motion.div 
+            key={selectedBaselineCode}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ 
+              height: isMainTableCollapsed ? 'calc(100% - 60px)' : '60%', 
+              opacity: 1 
+            }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0a0a0a] flex flex-col overflow-hidden"
+          >
+            <div className="p-4 flex items-center justify-between bg-white dark:bg-[#141414] border-b border-gray-200 dark:border-white/10">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Target className="w-5 h-5 text-amber-600" />
+                  <h3 className="font-bold dark:text-white">Baseline Budget Breakdown: <span className="text-amber-600">{selectedBaselineCode}</span></h3>
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10" />
+                <p className="text-xs text-gray-500">Read-Only View</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search items..."
+                    value={baselineQuickFilterText}
+                    onChange={(e) => setBaselineQuickFilterText(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-xs focus:ring-2 focus:ring-amber-500 outline-none w-48 dark:text-white"
+                  />
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
+                <button 
+                  onClick={() => setSelectedBaselineCode(null)}
+                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-0 relative">
+              <div className={cn(
+                "absolute inset-0 ag-theme-quartz",
+                theme === 'dark' ? "ag-theme-quartz-dark" : ""
+              )}>
+                <AgGridReact
+                  rowData={baselineRows}
+                  columnDefs={baselineColumnDefs}
+                  quickFilterText={baselineQuickFilterText}
+                  loading={isBaselineLoading}
+                  defaultColDef={{
+                    sortable: true,
+                    filter: true,
+                    resizable: true,
+                    minWidth: 100,
+                  }}
+                  animateRows={true}
+                  enableRangeSelection={true}
+                  enableCellTextSelection={true}
+                  grandTotalRow="top"
+                  pagination={true}
+                  paginationPageSize={100}
+                />
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Timephasing Details Section */}
       <AnimatePresence>
         {selectedTimephasingCode && (
@@ -4489,6 +5006,28 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                     className="pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none w-48 dark:text-white"
                   />
                 </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
+                <input 
+                  type="file" 
+                  ref={timephasingFileInputRef} 
+                  className="hidden" 
+                  accept=".xlsx,.xls,.csv"
+                  onChange={handleImportTimephasing}
+                />
+                <button 
+                  onClick={() => timephasingFileInputRef.current?.click()}
+                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                  title="Import Excel"
+                >
+                  <Upload className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={handleExportTimephasing}
+                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+                  title="Export Excel"
+                >
+                  <Download className="w-5 h-5" />
+                </button>
                 <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
                 <button 
                   onClick={() => setIsTimephasingChartVisible(!isTimephasingChartVisible)}
@@ -4641,17 +5180,24 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  ref={timephasingGridRef}
                   rowData={timephasingRows}
                   columnDefs={timephasingColumnDefs}
                   quickFilterText={timephasingQuickFilterText}
                   loading={isTimephasingLoading}
                   onCellValueChanged={onTimephasingCellValueChanged}
                   getRowId={(params) => params.data.id}
+                  rowSelection="multiple"
+                  suppressRowClickSelection={true}
+                  enableFillHandle={true}
+                  undoRedoCellEditing={true}
                   defaultColDef={{
                     sortable: true,
                     filter: true,
                     resizable: true,
                     minWidth: 100,
+                    wrapHeaderText: true,
+                    autoHeaderHeight: true,
                   }}
                   animateRows={true}
                   enableRangeSelection={true}

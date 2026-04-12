@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
 import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { Project, Enterprise } from '../types';
@@ -27,11 +27,14 @@ import {
   Tag,
   Upload,
   Trash2,
-  Edit2
+  Edit2,
+  Check,
+  Loader2
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { toast } from 'sonner';
 import CalendarManager from './CalendarManager';
 
 function cn(...inputs: ClassValue[]) {
@@ -60,6 +63,7 @@ type AdminTab =
 export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>('general');
   const [saving, setSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   const [formData, setFormData] = useState({
@@ -93,13 +97,13 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
 
     // Check if it's an image
     if (!file.type.startsWith('image/')) {
-      alert('Please upload a valid image file (JPG, PNG, etc.)');
+      toast.error('Please upload a valid image file (JPG, PNG, etc.)');
       return;
     }
 
     // Check file size (800KB limit for Firestore document safety)
     if (file.size > 800 * 1024) {
-      alert('File is too large. Please upload an image smaller than 800KB.');
+      toast.error('File is too large. Please upload an image smaller than 800KB.');
       return;
     }
 
@@ -170,25 +174,46 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
     setFormData(prev => ({ ...prev, [field]: adjustedValue }));
   };
 
-  const handleSave = async () => {
-    console.log('Attempting to save project settings...', formData);
+  const handleSave = useCallback(async (dataToSave: typeof formData) => {
     setSaving(true);
     try {
       if (!project.id) throw new Error('Project ID is missing');
 
       const projectRef = doc(db, 'projects', project.id);
       await updateDoc(projectRef, {
-        ...formData,
+        ...dataToSave,
         dateLastModified: new Date().toISOString()
       });
-      console.log('Project settings updated successfully');
+      setLastSaved(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Update failed', error);
-      alert('Failed to update project settings. Check console for details.');
     } finally {
       setSaving(false);
     }
-  };
+  }, [project.id]);
+
+  // Auto-save logic
+  const lastDataRef = useRef(formData);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+
+    // Deep comparison to avoid unnecessary saves
+    const hasChanged = JSON.stringify(formData) !== JSON.stringify(lastDataRef.current);
+    
+    if (hasChanged) {
+      const timer = setTimeout(() => {
+        handleSave(formData);
+        lastDataRef.current = formData;
+      }, 1500); // 1.5s debounce
+
+      return () => clearTimeout(timer);
+    }
+  }, [formData, handleSave]);
 
   const handleReplaceId = async () => {
     if (!newProjectCode.trim()) {
@@ -293,14 +318,19 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
         </nav>
         {isSidebarOpen && (
           <div className="p-4 border-t border-gray-200 dark:border-white/10">
-            <button 
-              onClick={handleSave}
-              disabled={saving}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Save className={`w-4 h-4 ${saving ? 'animate-pulse' : ''}`} />
-              {saving ? 'SAVING...' : 'SAVE CHANGES'}
-            </button>
+            <div className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {saving ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin text-blue-500" />
+                  <span>Saving changes...</span>
+                </>
+              ) : lastSaved ? (
+                <>
+                  <Check className="w-3 h-3 text-emerald-500" />
+                  <span>Last saved at {lastSaved}</span>
+                </>
+              ) : null}
+            </div>
           </div>
         )}
       </div>

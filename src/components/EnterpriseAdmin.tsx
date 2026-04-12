@@ -211,6 +211,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [newViewName, setNewViewName] = useState('');
   const [isSavedViewMenuOpen, setIsSavedViewMenuOpen] = useState<string | null>(null);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [newChangeType, setNewChangeType] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, Record<string, string>>>({
     users: {},
     projects: {},
@@ -3332,7 +3333,77 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
-          {['scheduleMgmt', 'changeMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
+          {activeTab === 'changeMgmt' && (
+            <motion.div 
+              key="change-mgmt"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex-1 flex flex-col p-8 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-8">
+                <div>
+                  <h3 className="text-lg font-bold dark:text-white">Change Management Settings</h3>
+                  <p className="text-sm text-gray-500">Configure global change types for the enterprise.</p>
+                </div>
+                <RefreshCw className="w-8 h-8 text-gray-300" />
+              </div>
+
+              <div className="space-y-6">
+                <div className="bg-gray-50 dark:bg-white/5 p-6 rounded-2xl border border-gray-100 dark:border-white/5">
+                  <h4 className="text-sm font-bold dark:text-white mb-4">Change Types</h4>
+                  <div className="flex gap-2 mb-4">
+                    <Input 
+                      placeholder="Enter new change type (e.g. Client Change, Internal Error...)"
+                      value={newChangeType}
+                      onChange={(e) => setNewChangeType(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button 
+                      onClick={async () => {
+                        if (!newChangeType.trim()) return;
+                        const currentTypes = enterprise.changeTypes || [];
+                        if (currentTypes.includes(newChangeType.trim())) {
+                          alert('This change type already exists.');
+                          return;
+                        }
+                        await handleUpdateEnterprise({
+                          changeTypes: [...currentTypes, newChangeType.trim()]
+                        });
+                        setNewChangeType('');
+                      }}
+                      className="bg-black dark:bg-white text-white dark:text-black"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add Type
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {(enterprise.changeTypes || []).map((type, i) => (
+                      <div key={i} className="flex items-center justify-between p-3 bg-white dark:bg-[#1a1a1a] rounded-xl border border-gray-100 dark:border-white/5 group">
+                        <span className="text-sm dark:text-white">{type}</span>
+                        <button 
+                          onClick={async () => {
+                            const newTypes = (enterprise.changeTypes || []).filter(t => t !== type);
+                            await handleUpdateEnterprise({ changeTypes: newTypes });
+                          }}
+                          className="p-2 text-gray-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {(enterprise.changeTypes || []).length === 0 && (
+                      <p className="text-xs text-gray-500 italic text-center py-4">No change types defined yet.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {['scheduleMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
             <motion.div 
               key="under-development"
               initial={{ opacity: 0, scale: 0.95 }}

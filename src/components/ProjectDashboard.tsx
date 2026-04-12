@@ -3,6 +3,8 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch, collectionGroup } from 'firebase/firestore';
 import { Project, Sheet, Enterprise, ForecastRow } from '../types';
 import CostManagement from './CostManagement';
+import ChangeManagement from './ChangeManagement';
+import ErrorBoundary from './ErrorBoundary';
 import { cn } from '../lib/utils';
 import { 
   Plus, 
@@ -174,7 +176,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
                 <div className="grid grid-cols-2 gap-4">
                   {[
                     { label: 'Cost Mgmt', status: 'Active', icon: DollarSign, color: 'text-emerald-500' },
-                    { label: 'Change Mgmt', status: 'Coming Soon', icon: RefreshCw, color: 'text-amber-500' },
+                    { label: 'Change Mgmt', status: 'Active', icon: RefreshCw, color: 'text-emerald-500' },
                     { label: 'Design Mgmt', status: 'Coming Soon', icon: PenTool, color: 'text-blue-500' },
                     { label: 'Field Mgmt', status: 'Coming Soon', icon: HardHat, color: 'text-purple-500' },
                   ].map((m, i) => (
@@ -204,6 +206,17 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
             setIsSidebarCollapsed={setIsSidebarCollapsed}
           />
         );
+      case 'change':
+        return (
+          <div className="flex-1 flex flex-col overflow-hidden p-8">
+            <ErrorBoundary>
+              <ChangeManagement 
+                project={project} 
+                enterprise={enterprise}
+              />
+            </ErrorBoundary>
+          </div>
+        );
       default:
         return (
           <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
@@ -222,14 +235,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
   return (
     <div className={cn(
       "flex-1 flex flex-col w-full h-full transition-colors duration-300",
-      currentModule === 'cost' ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
+      (currentModule === 'cost' || currentModule === 'change') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
     )}>
       <div className={cn(
         "w-full flex-1 flex flex-col min-h-0",
-        currentModule === 'cost' ? "" : "max-w-[1600px] mx-auto"
+        (currentModule === 'cost' || currentModule === 'change') ? "" : "max-w-[1600px] mx-auto"
       )}>
         {/* Project Hero Section */}
-        {project.photoURL && currentModule !== 'cost' && (
+        {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && (
           <div className="relative h-64 w-full rounded-3xl overflow-hidden shadow-2xl group mb-10 shrink-0">
             <img 
               src={project.photoURL} 
@@ -255,7 +268,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
           </div>
         )}
 
-        {currentModule !== 'cost' && (
+        {currentModule !== 'cost' && currentModule !== 'change' && (
           <div className="flex justify-between items-start mb-10 shrink-0">
             <div>
               {!project.photoURL && (

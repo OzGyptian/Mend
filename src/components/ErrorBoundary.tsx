@@ -40,7 +40,22 @@ export default class ErrorBoundary extends React.Component<Props, State> {
             </div>
             <h2 className="text-2xl font-bold mb-4">Something went wrong</h2>
             <p className="text-sm text-gray-500 mb-8 leading-relaxed">
-              The application encountered an unexpected error. This might be due to a data mismatch or a temporary connection issue.
+              {(() => {
+                try {
+                  if (error?.message) {
+                    const parsed = JSON.parse(error.message);
+                    if (parsed.error && parsed.operationType) {
+                      if (parsed.error.includes('Missing or insufficient permissions')) {
+                        return "You don't have permission to perform this action. Please check your project access rights.";
+                      }
+                      return `Database Error: ${parsed.error} (${parsed.operationType} on ${parsed.path})`;
+                    }
+                  }
+                } catch (e) {
+                  // Not a JSON error
+                }
+                return "The application encountered an unexpected error. This might be due to a data mismatch or a temporary connection issue.";
+              })()}
             </p>
             <div className="bg-red-50 p-4 rounded-xl mb-8 text-left overflow-auto max-h-32">
               <p className="text-[10px] font-mono text-red-800 break-all">
