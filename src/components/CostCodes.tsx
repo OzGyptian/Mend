@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord } from '../types';
+import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord, Subcontract } from '../types';
 import { db, auth } from '../firebase';
 import { 
   doc, 
@@ -93,6 +93,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { format, parseISO } from 'date-fns';
 import { AgGridReact } from 'ag-grid-react';
+import DataGridModule from './DataGridModule';
 import { 
   ColDef, 
   ColGroupDef,
@@ -133,6 +134,8 @@ const ActionsCellRenderer = (params: any) => {
     selectedChangesCode,
     setSelectedBaselineCode,
     selectedBaselineCode,
+    setSelectedSubcontractBreakdownCode,
+    selectedSubcontractBreakdownCode,
     setDeleteConfirm 
   } = params.context;
 
@@ -309,8 +312,24 @@ const ActionsCellRenderer = (params: any) => {
                   Changes
                 </button>
                 <button 
-                  onClick={(e) => { e.stopPropagation(); }}
-                  className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5 rounded-lg transition-colors"
+                  onClick={(e) => { 
+                    e.stopPropagation(); 
+                    setSelectedSubcontractBreakdownCode(selectedSubcontractBreakdownCode === code.code ? null : code.code);
+                    if (selectedSubcontractBreakdownCode !== code.code) {
+                      setSelectedEtcCode(null);
+                      setSelectedActualsCode(null);
+                      setSelectedTimephasingCode(null);
+                      setSelectedChangesCode(null);
+                      setSelectedBaselineCode(null);
+                    }
+                    setIsMenuOpen(false);
+                  }}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold rounded-lg transition-colors",
+                    selectedSubcontractBreakdownCode === code.code 
+                      ? "bg-green-100 text-green-700 dark:bg-green-900/40" 
+                      : "text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-white/5"
+                  )}
                 >
                   <Briefcase className="w-4 h-4 text-green-500" />
                   Sub-Contract
@@ -355,12 +374,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     category?: string;
     calendarId?: string;
     phasingMethod?: 'Manual' | 'Auto-Phase';
-    phasingUnit?: 'Daily' | 'Weekly' | 'Monthly' | 'Total';
+    phasingUnit?: 'Daily' | 'Weekly' | 'Monthly' | 'Total' | 'Profile';
     enterpriseAttributes: Record<string, string>;
     projectAttributes: Record<string, string>;
+    userDefined: Record<string, any>;
   }>({
     enterpriseAttributes: {},
     projectAttributes: {},
+    userDefined: {}
   });
   const [selectedEtcCode, setSelectedEtcCode] = useState<string | null>(null);
   const [selectedActualsCode, setSelectedActualsCode] = useState<string | null>(null);
@@ -369,7 +390,96 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [selectedBaselineCode, setSelectedBaselineCode] = useState<string | null>(null);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [allChanges, setAllChanges] = useState<Change[]>([]);
+  const [isCalculated, setIsCalculated] = useState(false);
+  const [isCalculating, setIsCalculating] = useState(false);
   const [isChangesLoading, setIsChangesLoading] = useState(false);
+
+  const handleRecalculateAll = async () => {
+    if (!project.id) return;
+    setIsCalculating(true);
+    const toastId = toast.loading('Recalculating project totals...');
+
+    try {
+      // 1. Bulk fetch all relevant data for the project
+      const [actualsSnap, budgetsSnap, changesSnap, changeRecordsSnap] = await Promise.all([
+        getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'changes'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'changeRecords'), where('projectId', '==', project.id)))
+      ]);
+
+      const allActuals = actualsSnap.docs.map(d => d.data());
+      const allBudgets = budgetsSnap.docs.map(d => d.data());
+      const fetchedChanges = changesSnap.docs.map(d => ({ ...d.data(), id: d.id } as Change));
+      const allChangeRecords = changeRecordsSnap.docs.map(d => d.data());
+      
+      // APPROVED CHANGES: Only sum records from approved changes
+      const approvedChangeIds = new Set(fetchedChanges.filter(c => c.status === 'Approved').map(c => c.id));
+
+      const batch = writeBatch(db);
+      let count = 0;
+
+      for (const cc of costCodes) {
+        const ccId = cc.id;
+        const ccCode = cc.code;
+
+        // Sum Actuals
+        const actualCost = allActuals
+          .filter((a: any) => a.costCodeId === ccId || a.costCodeId === ccCode)
+          .reduce((sum, a: any) => sum + (Number(a.cost) || 0), 0);
+
+        // Sum Baseline
+        const baselineBudget = allBudgets
+          .filter((b: any) => b.costCodeId === ccId || b.costCodeId === ccCode)
+          .reduce((sum, b: any) => sum + (Number(b.amount) || 0), 0);
+
+        // Sum Approved Changes
+        const approvedChanges = allChangeRecords
+          .filter((cr: any) => (cr.costCodeId === ccId || cr.costCodeId === ccCode) && approvedChangeIds.has(cr.changeId))
+          .reduce((sum, cr: any) => sum + (Number(cr.budgetAmount) || 0), 0);
+          
+        // Sum Subcontracts
+        let subcontractAmount = 0;
+        subcontracts.forEach(sub => {
+          (sub.lineItems || []).forEach(li => {
+            if (li.status === 'Rejected') return;
+            const assignedId = li.costCodeId || sub.defaultCostCodeId;
+            if (assignedId === ccId || assignedId === ccCode) {
+              subcontractAmount += (Number(li.total) || 0);
+            }
+          });
+        });
+
+        const ccRef = doc(db, 'costCodes', cc.id);
+        batch.update(ccRef, {
+          actualCostToDate: actualCost,
+          baselineBudget: baselineBudget,
+          approvedChanges: approvedChanges,
+          subcontractAmount: subcontractAmount,
+          updatedAt: new Date().toISOString()
+        });
+        count++;
+
+        // Batch limit is 500
+        if (count >= 450) {
+          await batch.commit();
+          // Reset batch for next set
+          // (Actually we would need a new batch object here)
+          // But usually cost codes are < 500. If more, we handle recursively.
+        }
+      }
+
+      if (count > 0) await batch.commit();
+
+      toast.success(`Recalculated totals for ${count} cost codes`, { id: toastId });
+      setIsCalculated(true);
+    } catch (error) {
+      console.error("Recalculation error:", error);
+      toast.error("Failed to recalculate project totals", { id: toastId });
+    } finally {
+      setIsCalculating(false);
+    }
+  };
   const [changesQuickFilterText, setChangesQuickFilterText] = useState('');
   const [etcRows, setEtcRows] = useState<any[]>([]);
   const [actualsRows, setActualsRows] = useState<any[]>([]);
@@ -389,6 +499,63 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
   const [forecastingGranularity, setForecastingGranularity] = useState<'monthly' | 'weekly' | 'daily'>('monthly');
   const [weekEndingDay, setWeekEndingDay] = useState<number>(0); // 0: Sun, 5: Fri, 6: Sat
+  const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
+  const [selectedSubcontractBreakdownCode, setSelectedSubcontractBreakdownCode] = useState<string | null>(null);
+  const [subcontractQuickFilterText, setSubcontractQuickFilterText] = useState('');
+
+  const subcontractBreakdownRows = useMemo(() => {
+    if (!selectedSubcontractBreakdownCode) return [];
+    
+    const targetCode = costCodes.find(c => 
+      c.code.trim().toUpperCase() === selectedSubcontractBreakdownCode.trim().toUpperCase()
+    );
+
+    const matchCode = selectedSubcontractBreakdownCode.trim().toUpperCase();
+
+    return subcontracts.flatMap(sub => 
+      (sub.lineItems || [])
+        .filter(li => {
+          if (li.status === 'Rejected') return false;
+          
+          // Capture the assigned code, preferring line item level over subcontract default
+          const rawId = li.costCodeId;
+          const assignedCodeId = (rawId && rawId.trim() !== '') ? rawId : sub.defaultCostCodeId;
+          
+          if (!assignedCodeId) return false;
+
+          const assignedClean = assignedCodeId.toString().trim().toUpperCase();
+          // Extract the code portion in case it's in "CODE - NAME" format
+          const assignedCodeOnly = assignedClean.split(' - ')[0].trim();
+
+          // 1. Direct match with the selected code string (e.g., "E3")
+          if (assignedClean === matchCode || assignedCodeOnly === matchCode) return true;
+          
+          // 2. Match with the full code object's internal ID or code string if found
+          if (targetCode) {
+            const targetId = (targetCode.id || '').toString().trim().toUpperCase();
+            const targetCodeValue = (targetCode.code || '').toString().trim().toUpperCase();
+            if (assignedClean === targetId || assignedCodeOnly === targetId || assignedClean === targetCodeValue || assignedCodeOnly === targetCodeValue) return true;
+          }
+
+          return false;
+        })
+        .map(li => ({
+          ...li,
+          subcontractId: sub.orderId,
+          subcontractName: sub.orderName,
+          vendorName: sub.vendorName
+        }))
+    );
+  }, [subcontracts, selectedSubcontractBreakdownCode, costCodes]);
+
+  const subcontractBreakdownPinnedBottomRowData = useMemo(() => {
+    if (subcontractBreakdownRows.length === 0) return [];
+    const total = subcontractBreakdownRows.reduce((sum, row) => sum + (Number(row.total) || 0), 0);
+    return [{
+      description: 'SubTotal',
+      total: total
+    }];
+  }, [subcontractBreakdownRows]);
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -410,23 +577,28 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     let cumulativeBaseline = 0;
     let cumulativeApproved = 0;
     let cumulativeEac = 0;
+    let cumulativeEacPrevious = 0;
 
     const baselineRow = timephasingRows.find(r => r.id === 'baseline');
     const approvedRow = timephasingRows.find(r => r.id === 'approved');
     const eacRow = timephasingRows.find(r => r.id === 'eac');
+    const eacPrevRow = timephasingRows.find(r => r.id === 'eacPrevious');
 
     const totalBaseline = baselineRow?.totalFromCode || 1;
     const totalApproved = approvedRow?.totalFromCode || 1;
     const totalEac = eacRow?.totalFromCode || 1;
+    const totalEacPrev = eacPrevRow?.totalFromCode || 1;
 
     return project.reportingPeriods.periods.map(p => {
       const baseline = baselineRow?.periodValues?.[p.id] || 0;
       const approved = approvedRow?.periodValues?.[p.id] || 0;
       const eac = eacRow?.periodValues?.[p.id] || 0;
+      const eacPrev = eacPrevRow?.periodValues?.[p.id] || 0;
 
       cumulativeBaseline += baseline;
       cumulativeApproved += approved;
       cumulativeEac += eac;
+      cumulativeEacPrevious += eacPrev;
       
       const date = new Date(p.endDate);
       const month = date.toLocaleString('default', { month: 'short' });
@@ -440,9 +612,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           baseline: (baseline / totalBaseline) * 100,
           approved: (approved / totalApproved) * 100,
           eac: (eac / totalEac) * 100,
+          eacPrevious: (eacPrev / totalEacPrev) * 100,
           cumulativeBaseline: (cumulativeBaseline / totalBaseline) * 100,
           cumulativeApproved: (cumulativeApproved / totalApproved) * 100,
-          cumulativeEac: (cumulativeEac / totalEac) * 100
+          cumulativeEac: (cumulativeEac / totalEac) * 100,
+          cumulativeEacPrevious: (cumulativeEacPrevious / totalEacPrev) * 100
         };
       }
 
@@ -451,9 +625,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         baseline,
         approved,
         eac,
+        eacPrevious: eacPrev,
         cumulativeBaseline,
         cumulativeApproved,
-        cumulativeEac
+        cumulativeEac,
+        cumulativeEacPrevious
       };
     });
   }, [project.reportingPeriods?.periods, timephasingRows, timephasingChartMode]);
@@ -782,6 +958,15 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   }, [project.id]);
 
   useEffect(() => {
+    if (!project.id) return;
+    const q = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
+    });
+    return () => unsubscribe();
+  }, [project.id]);
+
+  useEffect(() => {
     if (!selectedChangesCode || !project.id) {
       setChangeRecords([]);
       return;
@@ -857,6 +1042,41 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const etcSnap = await getDocs(etcQuery);
         const etcDetails = etcSnap.docs.map(doc => doc.data());
         
+        // 3. Get Subcontract Phasing
+        const subphasingByPeriod: Record<string, number> = {};
+        const matchCode = selectedTimephasingCode.trim().toUpperCase();
+        const targetCodeForSub = costCodes.find(c => 
+          c.code.trim().toUpperCase() === matchCode
+        );
+
+        subcontracts.forEach(sub => {
+          (sub.lineItems || []).forEach(li => {
+            if (li.status === 'Rejected') return;
+            
+            const rawId = li.costCodeId;
+            const assignedCodeId = (rawId && rawId.trim() !== '') ? rawId : sub.defaultCostCodeId;
+            if (!assignedCodeId) return;
+
+            const assignedClean = assignedCodeId.toString().trim().toUpperCase();
+            const assignedCodeOnly = assignedClean.split(' - ')[0].trim();
+
+            let isMatch = (assignedClean === matchCode || assignedCodeOnly === matchCode);
+            if (!isMatch && targetCodeForSub) {
+              const targetId = (targetCodeForSub.id || '').toString().trim().toUpperCase();
+              const targetCodeValue = (targetCodeForSub.code || '').toString().trim().toUpperCase();
+              if (assignedClean === targetId || assignedCodeOnly === targetId || assignedClean === targetCodeValue || assignedCodeOnly === targetCodeValue) {
+                isMatch = true;
+              }
+            }
+
+            if (isMatch && li.periodValues) {
+              Object.entries(li.periodValues).forEach(([pid, val]) => {
+                subphasingByPeriod[pid] = (subphasingByPeriod[pid] || 0) + (Number(val) || 0);
+              });
+            }
+          });
+        });
+
         const etcByPeriod: Record<string, number> = {};
         const futurePeriodIds = periods.slice(currentPeriodIndex + 1).map(p => p.id);
 
@@ -880,9 +1100,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const baselinePhasing = baselineDoc?.periodValues || {};
         const approvedPhasing = approvedDoc?.periodValues || {};
 
+        const eacPrevDoc = codePhasing.find(p => p.type === 'eacPrevious');
+
         // 4. Construct Rows
         const selectedCodeData = costCodes.find(c => c.code === selectedTimephasingCode);
-        const rows = [
+        const rows: any[] = [
           {
             id: 'baseline',
             type: 'Baseline Budget',
@@ -891,7 +1113,15 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             startDate: baselineDoc?.startDate ? new Date(baselineDoc.startDate) : '',
             endDate: baselineDoc?.endDate ? new Date(baselineDoc.endDate) : '',
             distribution: baselineDoc?.distribution || 'Even',
-            periodValues: baselinePhasing,
+            periodValues: periods.reduce((acc, p) => {
+              const source = baselineDoc?.phasingSource || 'Manual';
+              if (source === 'SubContract') {
+                acc[p.id] = subphasingByPeriod[p.id] || 0;
+              } else {
+                acc[p.id] = baselineDoc?.periodValues?.[p.id] || 0;
+              }
+              return acc;
+            }, {} as Record<string, number>),
             totalFromCode: selectedCodeData?.baselineBudget || 0,
             docId: baselineDoc?.id
           },
@@ -903,7 +1133,15 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             startDate: approvedDoc?.startDate ? new Date(approvedDoc.startDate) : '',
             endDate: approvedDoc?.endDate ? new Date(approvedDoc.endDate) : '',
             distribution: approvedDoc?.distribution || 'Even',
-            periodValues: approvedPhasing,
+            periodValues: periods.reduce((acc, p) => {
+              const source = approvedDoc?.phasingSource || 'Manual';
+              if (source === 'SubContract') {
+                acc[p.id] = subphasingByPeriod[p.id] || 0;
+              } else {
+                acc[p.id] = approvedDoc?.periodValues?.[p.id] || 0;
+              }
+              return acc;
+            }, {} as Record<string, number>),
             totalFromCode: selectedCodeData?.approvedBudget || 0,
             docId: approvedDoc?.id
           },
@@ -926,16 +1164,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 } else {
                   acc[p.id] = etcByPeriod[p.id] || 0;
                 }
+              } else if (phasingSource === 'SubContract') {
+                if (idx <= currentPeriodIndex) {
+                  acc[p.id] = actualsByPeriod[p.id] || 0;
+                } else {
+                  acc[p.id] = subphasingByPeriod[p.id] || 0;
+                }
               } else if (phasingSource === 'Manual' || phasingSource === 'Auto') {
-                // Use stored manual/auto values
                 acc[p.id] = eacDoc?.periodValues?.[p.id] || 0;
-                // But for past/current periods, we should probably still show actuals?
-                // The user said: "EAC calculation needs to incorporate actual costs for past/current periods and ETC forecasts for future periods"
-                // But they also want to override it.
-                // "Essentially we want the user to have a feature that let's them either use the phasing that is coming from the ETC Details, or they can override it"
-                // If they override, they probably want to see their override.
-                // However, usually EAC = Actuals + ETC. 
-                // If they override ETC, they still have Actuals.
                 if (idx <= currentPeriodIndex) {
                   acc[p.id] = actualsByPeriod[p.id] || 0;
                 }
@@ -944,6 +1180,18 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             }, {} as Record<string, number>)
           }
         ];
+
+        if (eacPrevDoc) {
+          rows.push({
+            id: 'eacPrevious',
+            type: 'EAC Previous',
+            costCode: selectedTimephasingCode,
+            periodValues: eacPrevDoc.periodValues || {},
+            totalFromCode: selectedCodeData?.estimateAtCompletionPrevious || 0,
+            docId: eacPrevDoc.id,
+            hidden: true
+          });
+        }
 
         setTimephasingRows(rows);
         setIsTimephasingLoading(false);
@@ -954,7 +1202,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     };
 
     fetchData();
-  }, [selectedTimephasingCode, project.id, costCodes, costPhasing, project.reportingPeriods]);
+  }, [selectedTimephasingCode, project.id, costCodes, costPhasing, project.reportingPeriods, subcontracts]);
 
   enum OperationType {
     CREATE = 'create',
@@ -1179,9 +1427,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   }, [project.id, project.reportingPeriods]);
 
   const handleCalculatePhasing = async () => {
-    const rowsToPhase = etcRows.filter(r => r.phasingMethod === 'Auto-Phase');
+    const selectedRows = etcGridRef.current?.api.getSelectedRows() || [];
+    let rowsToPhase = etcRows.filter(r => r.phasingMethod === 'Auto-Phase');
+    
+    // If user has selected specific rows, only phase those
+    if (selectedRows.length > 0) {
+      rowsToPhase = selectedRows;
+    }
+
     if (rowsToPhase.length === 0) {
-      toast.info("No rows selected for Auto-Phasing");
+      toast.info("No rows selected for phasing");
       return;
     }
 
@@ -1211,12 +1466,76 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     };
 
     for (const row of rowsToPhase) {
+      const phasingQty = Number(row.phasingQty) || 0;
+      if (!phasingQty || !row.phasingUnit) continue;
+
       // Validate inputs
       const userStartRaw = parseDate(row.phasingStartDate);
       const userEndRaw = parseDate(row.phasingEndDate);
 
-      if (!userStartRaw || !userEndRaw || !row.phasingQty || !row.phasingUnit) {
-        continue; // Skip invalid rows
+      const newPeriodValues: Record<string, number> = { ...row.periodValues };
+
+      // Clear existing values for eligible periods
+      eligiblePeriods.forEach(p => {
+        delete newPeriodValues[p.id];
+        Object.keys(newPeriodValues).forEach(key => {
+          if (key.startsWith(p.id + '_')) {
+            delete newPeriodValues[key];
+          }
+        });
+      });
+
+      // Special case for Profile without dates
+      if (row.phasingUnit === 'Profile' && (!userStartRaw || !userEndRaw)) {
+        const existingPeriodValues = (row.periodValues || {}) as Record<string, number>;
+        
+        // Calculate total weight including sub-periods for eligible periods
+        let totalWeight = 0;
+        const periodWeights: Record<string, number> = {};
+        
+        eligiblePeriods.forEach(p => {
+          let pWeight = Number(existingPeriodValues[p.id]) || 0;
+          // Also check for sub-periods (weeks/days)
+          Object.entries(existingPeriodValues).forEach(([key, val]) => {
+            if (key.startsWith(p.id + '_')) {
+              pWeight += Number(val) || 0;
+            }
+          });
+          periodWeights[p.id] = pWeight;
+          totalWeight += pWeight;
+        });
+
+        if (totalWeight > 0) {
+          eligiblePeriods.forEach(p => {
+            const weight = periodWeights[p.id] || 0;
+            newPeriodValues[p.id] = (weight / totalWeight) * phasingQty;
+          });
+        } else {
+          // Fallback to even distribution if no profile exists
+          const evenQty = phasingQty / eligiblePeriods.length;
+          eligiblePeriods.forEach(p => {
+            newPeriodValues[p.id] = evenQty;
+          });
+        }
+
+        // Round all values
+        Object.keys(newPeriodValues).forEach(key => {
+          newPeriodValues[key] = Math.round(newPeriodValues[key] * 10000) / 10000;
+        });
+
+        batch.update(doc(db, 'etcDetails', row.id), {
+          periodValues: newPeriodValues,
+          qty: Object.keys(newPeriodValues)
+            .filter(key => !key.includes('_'))
+            .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
+          updatedAt: new Date().toISOString()
+        });
+        updatedCount++;
+        continue;
+      }
+
+      if (!userStartRaw || !userEndRaw) {
+        continue; // Skip invalid rows for other units
       }
 
       // Normalize to UTC midnight based on calendar dates to prevent boundary issues
@@ -1235,27 +1554,15 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         return true;
       };
 
-      const newPeriodValues: Record<string, number> = { ...row.periodValues };
-
       // Calculate total working days for 'Total' phasing unit
       let totalWorkingDaysInRange = 0;
-      if (row.phasingUnit === 'Total') {
+      if (row.phasingUnit === 'Total' || row.phasingUnit === 'Profile') {
         let temp = new Date(userStart.getTime());
         while (temp <= userEnd) {
           if (isWorkingDay(temp)) totalWorkingDaysInRange++;
           temp.setUTCDate(temp.getUTCDate() + 1);
         }
       }
-
-      // Clear existing values for eligible periods
-      eligiblePeriods.forEach(p => {
-        delete newPeriodValues[p.id];
-        Object.keys(newPeriodValues).forEach(key => {
-          if (key.startsWith(p.id + '_')) {
-            delete newPeriodValues[key];
-          }
-        });
-      });
 
       let current = new Date(userStart.getTime());
       while (current <= userEnd) {
@@ -1313,6 +1620,45 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             dailyQty = monthWorkingDays > 0 ? phasingQty / monthWorkingDays : 0;
           } else if (row.phasingUnit === 'Total') {
             dailyQty = totalWorkingDaysInRange > 0 ? phasingQty / totalWorkingDaysInRange : 0;
+          } else if (row.phasingUnit === 'Profile') {
+            const existingPeriodValues = (row.periodValues || {}) as Record<string, number>;
+            
+            // Calculate total weight including sub-periods for eligible periods
+            let totalWeight = 0;
+            const periodWeights: Record<string, number> = {};
+            
+            eligiblePeriods.forEach(p => {
+              let pWeight = Number(existingPeriodValues[p.id]) || 0;
+              Object.entries(existingPeriodValues).forEach(([key, val]) => {
+                if (key.startsWith(p.id + '_')) {
+                  pWeight += Number(val) || 0;
+                }
+              });
+              periodWeights[p.id] = pWeight;
+              totalWeight += pWeight;
+            });
+            
+            if (totalWeight > 0) {
+              const currentPeriodWeight = periodWeights[period.id] || 0;
+              // Calculate how many working days in this period
+              let periodWorkingDays = 0;
+              let ps = parseDate(period.startDate);
+              let pe = parseDate(period.endDate);
+              if (ps && pe) {
+                let temp = new Date(Date.UTC(ps.getFullYear(), ps.getMonth(), ps.getDate()));
+                let end = new Date(Date.UTC(pe.getFullYear(), pe.getMonth(), pe.getDate()));
+                while (temp <= end) {
+                  if (isWorkingDay(temp)) periodWorkingDays++;
+                  temp.setUTCDate(temp.getUTCDate() + 1);
+                }
+              }
+              
+              const periodTotalQty = (currentPeriodWeight / totalWeight) * phasingQty;
+              dailyQty = periodWorkingDays > 0 ? periodTotalQty / periodWorkingDays : 0;
+            } else {
+              // Fallback to even distribution if no profile exists
+              dailyQty = totalWorkingDaysInRange > 0 ? phasingQty / totalWorkingDaysInRange : 0;
+            }
           }
 
           // 1. Add to monthly bucket
@@ -1449,6 +1795,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             ...etcBulkUpdateData.projectAttributes 
           };
         }
+
+        if (Object.keys(etcBulkUpdateData.userDefined || {}).length > 0) {
+          updateObj.userDefined = {
+            ...(row?.userDefined || {}),
+            ...etcBulkUpdateData.userDefined
+          };
+        }
         
         batch.update(doc(db, 'etcDetails', id), updateObj);
       });
@@ -1456,7 +1809,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       await batch.commit();
       setIsEtcBulkUpdating(false);
       setSelectedEtcIds(new Set());
-      setEtcBulkUpdateData({ enterpriseAttributes: {}, projectAttributes: {} });
+      setEtcBulkUpdateData({ enterpriseAttributes: {}, projectAttributes: {}, userDefined: {} });
       toast.success(`Updated ${selectedEtcIds.size} rows`);
     } catch (error) {
       console.error("Error bulk updating ETC:", error);
@@ -1491,6 +1844,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       projectLineItemAttrs.forEach(attr => {
         exportRow[`P_${attr.title}`] = row.projectAttributes?.[attr.id] || '';
       });
+
+      for (let i = 1; i <= 5; i++) {
+        exportRow[`Numeric ${i}`] = row.userDefined?.[`num${i}`] || 0;
+        exportRow[`Text ${i}`] = row.userDefined?.[`text${i}`] || '';
+      }
 
       futurePeriods.forEach(p => {
         exportRow[p.name] = row.periodValues?.[p.id] || 0;
@@ -1597,6 +1955,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const futurePeriodIds = futurePeriods.map(p => p.id);
 
     const totals: Record<string, number> = {};
+    let totalEtcPrevious = 0;
     
     etcRows.forEach(row => {
       const periodValues = row.periodValues || {};
@@ -1609,6 +1968,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           }
         });
       });
+      totalEtcPrevious += row.totalEtcPrevious || 0;
     });
 
     const totalQty = etcRows.reduce((acc, r) => {
@@ -1629,6 +1989,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       qty: totalQty,
       rate: null,
       totalEtc: totalEtc,
+      totalEtcPrevious: totalEtcPrevious,
+      etcMvmt: totalEtc - totalEtcPrevious,
       periodValues: totals,
       isSubtotal: true
     }];
@@ -1645,6 +2007,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   );
 
   const etcColumnDefsRef = useRef<(ColDef | ColGroupDef)[]>([]);
+  const DEFAULT_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries', 'Staff'];
+
   const etcColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
     const allPeriods = project.reportingPeriods?.periods || [];
     const currentPeriodId = project.reportingPeriods?.currentPeriodId;
@@ -1656,6 +2020,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const defs: (ColDef | ColGroupDef)[] = [
       {
         headerName: 'Core Information',
+        openByDefault: true,
         children: [
           {
             headerName: '',
@@ -1663,6 +2028,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             pinned: 'left',
             checkboxSelection: true,
             headerCheckboxSelection: true,
+            headerCheckboxSelectionFilteredOnly: true,
             cellRenderer: (params: any) => {
               if (params.node.rowPinned === 'top') return null;
               return null; // Ag-grid handles checkbox
@@ -1688,6 +2054,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           {
             headerName: 'Item Details',
             pinned: 'left',
+            openByDefault: true,
             children: [
               { 
                 field: 'item', 
@@ -1711,12 +2078,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               },
               { 
                 field: 'category', 
-                headerName: 'Category', 
+                headerName: 'Resource Category', 
                 width: 120, 
                 editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
                 cellEditor: 'agSelectCellEditor',
                 cellEditorParams: {
-                  values: ['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries']
+                  values: (enterprise.categories && enterprise.categories.length > 0) ? enterprise.categories : DEFAULT_CATEGORIES
                 }
               },
             ]
@@ -1728,6 +2095,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (enterpriseLineItemAttrs.length > 0) {
       defs.push({
         headerName: 'Enterprise Line-Item Attributes',
+        openByDefault: true,
         children: enterpriseLineItemAttrs.map((attr, index) => ({
           headerName: attr.title,
           field: `enterpriseAttributes.${attr.id}`,
@@ -1761,6 +2129,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (projectLineItemAttrs.length > 0) {
       defs.push({
         headerName: 'Project Line-Item Attributes',
+        openByDefault: true,
         children: projectLineItemAttrs.map((attr, index) => ({
           headerName: attr.title,
           field: `projectAttributes.${attr.id}`,
@@ -1794,6 +2163,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     // 4. User Defined Attributes
     defs.push({
       headerName: 'User Defined',
+      openByDefault: true,
       children: [
         ...Array.from({ length: 5 }).map((_, i) => ({
           headerName: `Numeric ${i + 1}`,
@@ -1833,6 +2203,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     defs.push({
       headerName: 'Pricing',
       pinned: 'left',
+      openByDefault: true,
       children: [
           { 
             field: 'qty', 
@@ -1908,12 +2279,55 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             valueFormatter: (params) => formatNumber(params.value, 2),
             cellStyle: (params: any) => params.node.rowPinned === 'top' ? {} : { backgroundColor: '#f3f4f6', fontWeight: 'bold', color: 'black' }
           },
+          { 
+            headerName: 'Total ETC Previous', 
+            width: 140, 
+            type: 'numericColumn',
+            aggFunc: 'sum',
+            editable: false,
+            valueGetter: (params) => {
+              if (params.node?.rowPinned === 'top') return params.data.totalEtcPrevious;
+              if (params.node?.group) return undefined;
+              return params.data.totalEtcPrevious || 0;
+            },
+            valueFormatter: (params) => formatNumber(params.value, 2),
+            cellStyle: (params: any) => params.node.rowPinned === 'top' ? {} : { backgroundColor: '#f3f4f6', fontWeight: 'bold', color: 'black' }
+          },
+          { 
+            headerName: 'ETC Mvmt', 
+            width: 120, 
+            type: 'numericColumn',
+            aggFunc: 'sum',
+            editable: false,
+            valueGetter: (params) => {
+              if (params.node?.rowPinned === 'top') return params.data.etcMvmt;
+              if (params.node?.group) return undefined;
+              
+              const periodValues = (params.data.periodValues || {}) as Record<string, number>;
+              const qty = periods.reduce((acc: number, p: any) => acc + (periodValues[p.id] || 0), 0);
+              const totalEtc = qty * (params.data.rate || 0);
+              const previous = params.data.totalEtcPrevious || 0;
+              return totalEtc - previous;
+            },
+            valueFormatter: (params) => formatNumber(params.value, 2),
+            cellStyle: (params: any) => {
+              const isPinned = params.node.rowPinned === 'top';
+              if (isPinned) return {};
+              const val = params.value || 0;
+              return {
+                backgroundColor: '#f3f4f6',
+                fontWeight: 'bold',
+                color: val > 0 ? '#ef4444' : (val < 0 ? '#10b981' : 'black')
+              };
+            }
+          },
         ]
       });
 
     defs.push({
       headerName: 'Auto-Phasing',
       pinned: 'left',
+      openByDefault: true,
       children: [
         {
           field: 'calendarId',
@@ -2072,7 +2486,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           editable: (params) => params.data.phasingMethod === 'Auto-Phase',
           cellEditor: 'agSelectCellEditor',
           cellEditorParams: {
-            values: ['Daily', 'Weekly', 'Monthly', 'Total']
+            values: ['Daily', 'Weekly', 'Monthly', 'Total', 'Profile']
           },
           cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
         },
@@ -2093,6 +2507,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       if (forecastingGranularity === 'monthly') {
         defs.push({
           headerName: 'Resource Forecasting',
+          openByDefault: true,
           children: periods.map((p, idx) => {
             const date = new Date(p.endDate);
             const month = date.getUTCMonth();
@@ -2962,8 +3377,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     selectedChangesCode,
     setSelectedBaselineCode,
     selectedBaselineCode,
-    setDeleteConfirm
-  }), [selectedEtcCode, selectedActualsCode, selectedTimephasingCode, selectedChangesCode, selectedBaselineCode]);
+    setDeleteConfirm,
+    setSelectedSubcontractBreakdownCode,
+    selectedSubcontractBreakdownCode
+  }), [selectedEtcCode, selectedActualsCode, selectedTimephasingCode, selectedChangesCode, selectedBaselineCode, selectedSubcontractBreakdownCode]);
 
   // Dynamic Attributes
   const enterpriseAttrs = useMemo(() => 
@@ -2980,155 +3397,185 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
 
   const calculateCosts = useCallback(async () => {
+    if (!project.id) return;
     setIsSaving(true);
-    console.log('Starting cost calculations...');
+    const toastId = toast.loading('Starting project cost calculations...');
+    
     try {
-      const batch = writeBatch(db);
-      
-      // 1. Fetch all actual costs for this project to aggregate
-      const actualsQuery = query(collection(db, 'actualCosts'), where('projectId', '==', project.id));
-      const actualsSnapshot = await getDocs(actualsQuery);
-      const allActuals = actualsSnapshot.docs.map(d => d.data());
-      console.log(`Fetched ${allActuals.length} actual cost records.`);
+      const codesToUpdate = selectedIds.size > 0 
+        ? costCodes.filter(c => selectedIds.has(c.id)) 
+        : costCodes;
 
-      // 2. Fetch all forecast rows for this project to link ETC if needed
-      const etcQuery = query(collection(db, 'etcDetails'), where('projectId', '==', project.id));
-      const etcSnapshot = await getDocs(etcQuery);
-      const allEtcRows = etcSnapshot.docs.map(d => d.data());
-      console.log(`Fetched ${allEtcRows.length} ETC detail records.`);
+      if (codesToUpdate.length === 0) {
+        toast.error('No cost codes found to calculate.', { id: toastId });
+        setIsSaving(false);
+        return;
+      }
 
-      // 3. Fetch all changes and change records for this project
-      const changesQuery = query(collection(db, 'changes'), where('projectId', '==', project.id));
-      const changesSnapshot = await getDocs(changesQuery);
-      const allChanges = changesSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as Change));
-      console.log(`Fetched ${allChanges.length} change records.`);
+      // 1. Fetch all project data once
+      const [actualsSnap, budgetsSnap, etcSnap, changesSnap, recordsSnap, subSnap] = await Promise.all([
+        getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'etcDetails'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'changes'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'changeRecords'), where('projectId', '==', project.id))),
+        getDocs(query(collection(db, 'subcontracts'), where('projectId', '==', project.id)))
+      ]);
 
-      const changeRecordsQuery = query(collection(db, 'changeRecords'), where('projectId', '==', project.id));
-      const changeRecordsSnapshot = await getDocs(changeRecordsQuery);
-      const allChangeRecords = changeRecordsSnapshot.docs.map(d => ({ ...d.data(), id: d.id } as ChangeRecord));
-      console.log(`Fetched ${allChangeRecords.length} change line items.`);
-
-      // 4. Fetch all baseline budget records for this project
-      const baselineQuery = query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id));
-      const baselineSnapshot = await getDocs(baselineQuery);
-      const allBaselineRecords = baselineSnapshot.docs.map(d => d.data());
-      console.log(`Fetched ${allBaselineRecords.length} baseline budget records.`);
+      const allActuals = actualsSnap.docs.map(d => d.data());
+      const allBudgets = budgetsSnap.docs.map(d => d.data());
+      const allEtcRows = etcSnap.docs.map(d => d.data());
+      const allChanges = changesSnap.docs.map(d => ({ ...d.data(), id: d.id } as Change));
+      const allChangeRecords = recordsSnap.docs.map(d => d.data());
+      const allSubcontracts = subSnap.docs.map(d => ({ ...d.data(), id: d.id } as Subcontract));
 
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
       const currentPeriodNum = currentPeriod ? project.reportingPeriods?.periods.indexOf(currentPeriod) + 1 : -1;
+      
+      const allPeriods = project.reportingPeriods?.periods || [];
+      const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
+      const futurePeriodIds = allPeriods.slice(currentIndex + 1).map(p => p.id);
 
-      costCodes.forEach(code => {
-        // Aggregate actual costs for this code - robust matching on ID or Code string
-        const codeActuals = allActuals.filter(a => a.costCodeId === code.id || a.costCodeId === code.code);
-        const actualCostToDate = codeActuals.reduce((sum, a) => sum + (Number(a.cost) || 0), 0);
+      // 2. Pre-process Approved Changes
+      const approvedChangeIds = new Set(allChanges.filter(c => c.status === 'Approved' || c.status === 'Pending').map(c => c.id));
+
+      // 3. Optimized Aggregation Lookups (O(N) instead of O(N*M))
+      const actualsToDateMap = new Map<string, number>();
+      const actualsThisPeriodMap = new Map<string, number>();
+      const baselineMap = new Map<string, number>();
+      const budgetChangeMap = new Map<string, number>();
+      const eacChangeMap = new Map<string, number>();
+      const etcMap = new Map<string, number>();
+
+      allActuals.forEach(a => {
+        const cost = Number(a.cost) || 0;
+        const key = a.costCodeId;
+        actualsToDateMap.set(key, (actualsToDateMap.get(key) || 0) + cost);
         
-        const actualCostThisPeriod = codeActuals
-          .filter(a => {
-            // Robust matching on Period ID or Period Number
-            return a.reportingPeriodId === currentPeriodId || 
-                   (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum));
-          })
-          .reduce((sum, a) => sum + (Number(a.cost) || 0), 0);
-
-        // Aggregate baseline budget for this code
-        const codeBaselineRecords = allBaselineRecords.filter(a => a.costCodeId === code.id || a.costCodeId === code.code);
-        const baselineBudget = codeBaselineRecords.reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
-        
-        // Calculate budget changes from change records (Approved or Pending only)
-        const codeChangeRecords = allChangeRecords.filter(r => 
-          r.costCodeId === code.code || r.costCodeId === code.id
-        );
-        
-        const budgetChanges = codeChangeRecords.reduce((sum, record) => {
-          const parentChange = allChanges.find(c => c.id === record.changeId);
-          if (parentChange && (parentChange.status === 'Approved' || parentChange.status === 'Pending')) {
-            return sum + (Number(record.budgetAmount) || 0);
-          }
-          return sum;
-        }, 0);
-
-        const approvedBudget = baselineBudget + budgetChanges;
-        const approvedBudgetPrevious = code.approvedBudgetPrevious || 0;
-        const approvedBudgetMovement = approvedBudget - approvedBudgetPrevious;
-
-        let estimateAtCompletion = code.estimateAtCompletion || 0;
-        
-        let estimateToComplete = 0;
-        if (code.eacMethod === 'ETC Details') {
-          // Sum ETC from etcDetails for this cost code - ONLY future periods
-          const allPeriods = project.reportingPeriods?.periods || [];
-          const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-          const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
-          const futurePeriodIds = allPeriods.slice(currentIndex + 1).map(p => p.id);
-
-          estimateToComplete = allEtcRows
-            .filter(r => r.costCode === code.code)
-            .reduce((acc, r) => {
-              const periodValues = (r.periodValues || {}) as Record<string, number>;
-              const qty = futurePeriodIds.reduce((sum: number, pId: string) => sum + (periodValues[pId] || 0), 0);
-              return acc + (qty * (r.rate || 0));
-            }, 0);
-          estimateAtCompletion = actualCostToDate + estimateToComplete;
-        } else if (code.eacMethod === 'Change Management') {
-          // Calculate EAC changes from change records (Approved or Pending only)
-          const eacChanges = codeChangeRecords.reduce((sum, record) => {
-            const parentChange = allChanges.find(c => c.id === record.changeId);
-            if (parentChange && (parentChange.status === 'Approved' || parentChange.status === 'Pending')) {
-              return sum + (Number(record.eacAmount) || 0);
-            }
-            return sum;
-          }, 0);
-          estimateAtCompletion = baselineBudget + eacChanges;
-          estimateToComplete = estimateAtCompletion - actualCostToDate;
-        } else {
-          estimateToComplete = estimateAtCompletion - actualCostToDate;
+        const isCurrent = a.reportingPeriodId === currentPeriodId || 
+                         (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum));
+        if (isCurrent) {
+          actualsThisPeriodMap.set(key, (actualsThisPeriodMap.get(key) || 0) + cost);
         }
+      });
 
-        const estimateAtCompletionPrevious = code.estimateAtCompletionPrevious || 0;
-        const estimateAtCompletionMovement = estimateAtCompletion - estimateAtCompletionPrevious;
+      allBudgets.forEach(b => {
+        const amount = Number(b.amount) || 0;
+        baselineMap.set(b.costCodeId, (baselineMap.get(b.costCodeId) || 0) + amount);
+      });
 
-        const costVariance = approvedBudget - estimateAtCompletion;
-        const costVariancePrevious = code.costVariancePrevious || 0;
-        const costVarianceMovement = costVariance - costVariancePrevious;
+      allChangeRecords.forEach(r => {
+        if (approvedChangeIds.has(r.changeId)) {
+          const budgetAmt = Number(r.budgetAmount) || 0;
+          const eacAmt = Number(r.eacAmount) || 0;
+          budgetChangeMap.set(r.costCodeId, (budgetChangeMap.get(r.costCodeId) || 0) + budgetAmt);
+          eacChangeMap.set(r.costCodeId, (eacChangeMap.get(r.costCodeId) || 0) + eacAmt);
+        }
+      });
 
-        batch.update(doc(db, 'costCodes', code.id), {
-          baselineBudget,
-          budgetChanges,
-          approvedBudget,
-          approvedBudgetMovement,
-          actualCostToDate,
-          actualCostThisPeriod,
-          estimateToComplete,
-          estimateAtCompletion,
-          estimateAtCompletionMovement,
-          costVariance,
-          costVarianceMovement,
-          dateLastModified: new Date().toISOString()
+      allEtcRows.forEach(r => {
+        const periodValues = (r.periodValues || {}) as Record<string, number>;
+        const futureQty = futurePeriodIds.reduce((sum, pId) => sum + (periodValues[pId] || 0), 0);
+        const etcVal = futureQty * (r.rate || 0);
+        etcMap.set(r.costCode, (etcMap.get(r.costCode) || 0) + etcVal);
+      });
+
+      // 4. Calculate everything for each Cost Code
+      const getVal = (map: Map<string, number>, id: string, code: string) => (map.get(id) || 0) + (map.get(code) || 0);
+
+      // Subcontract lookup optimization
+      const subTotalsByCode = new Map<string, number>();
+      allSubcontracts.forEach(sub => {
+        (sub.lineItems || []).forEach(li => {
+          if (li.status === 'Rejected') return;
+          const assignedId = li.costCodeId || sub.defaultCostCodeId;
+          if (assignedId) {
+            subTotalsByCode.set(assignedId, (subTotalsByCode.get(assignedId) || 0) + (Number(li.total) || 0));
+          }
         });
       });
 
-      await batch.commit();
-      console.log('Batch commit successful.');
-      toast.success('Calculations completed successfully.');
-    } catch (error) {
+      // 5. Bulk updates in chunks of 500
+      const batchSize = 450;
+      for (let i = 0; i < codesToUpdate.length; i += batchSize) {
+        const batch = writeBatch(db);
+        const chunk = codesToUpdate.slice(i, i + batchSize);
+
+        chunk.forEach(code => {
+          const baselineBudget = Number(getVal(baselineMap, code.id, code.code)) || 0;
+          const actualCostToDate = Number(getVal(actualsToDateMap, code.id, code.code)) || 0;
+          const actualCostThisPeriod = Number(getVal(actualsThisPeriodMap, code.id, code.code)) || 0;
+          const budgetChanges = Number(getVal(budgetChangeMap, code.id, code.code)) || 0;
+          const approvedBudget = baselineBudget + budgetChanges;
+          
+          let estimateAtCompletion = 0;
+          let estimateToComplete = 0;
+
+          if (code.eacMethod === 'ETC Details') {
+            estimateToComplete = Number(getVal(etcMap, code.id, code.code)) || 0;
+            estimateAtCompletion = actualCostToDate + estimateToComplete;
+          } else if (code.eacMethod === 'Change Management') {
+            const eacChanges = Number(getVal(eacChangeMap, code.id, code.code)) || 0;
+            estimateAtCompletion = baselineBudget + eacChanges;
+            estimateToComplete = estimateAtCompletion - actualCostToDate;
+          } else if (code.eacMethod === 'Sub-Contract Management') {
+            estimateAtCompletion = Number(getVal(subTotalsByCode, code.id, code.code)) || 0;
+            estimateToComplete = estimateAtCompletion - actualCostToDate;
+          } else {
+            estimateAtCompletion = Number(code.estimateAtCompletion) || 0;
+            estimateToComplete = estimateAtCompletion - actualCostToDate;
+          }
+
+          const approvedBudgetMovement = approvedBudget - (Number(code.approvedBudgetPrevious) || 0);
+          const estimateAtCompletionMovement = estimateAtCompletion - (Number(code.estimateAtCompletionPrevious) || 0);
+          const costVariance = approvedBudget - estimateAtCompletion;
+          const costVarianceMovement = costVariance - (Number(code.costVariancePrevious) || 0);
+
+          // Sanitize values to prevent Firestore rejection of NaN/Infinity
+          const sanitize = (val: number) => isFinite(val) ? val : 0;
+
+          batch.update(doc(db, 'costCodes', code.id), {
+            baselineBudget: sanitize(baselineBudget),
+            budgetChanges: sanitize(budgetChanges),
+            approvedBudget: sanitize(approvedBudget),
+            approvedBudgetMovement: sanitize(approvedBudgetMovement),
+            actualCostToDate: sanitize(actualCostToDate),
+            actualCostThisPeriod: sanitize(actualCostThisPeriod),
+            estimateToComplete: sanitize(estimateToComplete),
+            estimateAtCompletion: sanitize(estimateAtCompletion),
+            estimateAtCompletionMovement: sanitize(estimateAtCompletionMovement),
+            costVariance: sanitize(costVariance),
+            costVarianceMovement: sanitize(costVarianceMovement),
+            updatedAt: new Date().toISOString(),
+            projectId: code.projectId, // Re-affirming to satisfy rules
+            code: code.code // Re-affirming to satisfy rules
+          });
+        });
+
+        await batch.commit();
+      }
+
+      toast.success('Calculations completed successfully.', { id: toastId });
+    } catch (error: any) {
       console.error('Error calculating costs:', error);
-      handleFirestoreError(error, OperationType.UPDATE, 'costCodes/batch');
-      toast.error('Failed to run calculations.');
+      handleFirestoreError(error, OperationType.UPDATE, 'costCodes/batch_calculate');
+      toast.error(`Failed to complete calculations: ${error.message || 'Unknown error'}`, { id: toastId });
     } finally {
       setIsSaving(false);
     }
-  }, [project, costCodes]);
+  }, [project, costCodes, selectedIds, subcontracts]);
 
   const handleUpdateField = async (id: string, field: string, value: any) => {
     try {
       await updateDoc(doc(db, 'costCodes', id), {
         [field]: value,
-        dateLastModified: new Date().toISOString()
+        updatedAt: new Date().toISOString()
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating field:', error);
-      toast.error('Failed to update field.');
+      handleFirestoreError(error, OperationType.UPDATE, `costCodes/${id}/${field}`);
+      toast.error(`Failed to update field: ${error.message || 'Unknown error'}`);
     }
   };
 
@@ -3212,9 +3659,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           {
             headerName: 'Cost Code ID',
             field: 'code',
+            sort: 'asc',
             cellStyle: { backgroundColor: '#f3f4f6', fontWeight: 'bold', color: 'black' },
             checkboxSelection: true,
             headerCheckboxSelection: true,
+            headerCheckboxSelectionFilteredOnly: true,
             width: 150,
             pinned: 'left',
             filter: 'agTextColumnFilter',
@@ -3301,9 +3750,18 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           enableRowGroup: true,
           editable: true,
           cellClass: 'bg-white dark:bg-slate-900',
-          cellEditor: 'agSelectCellEditor',
+          cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: attr.values.map(v => v.id)
+            values: attr.values.map(v => v.id),
+            formatValue: (id: string) => {
+              if (!id) return '';
+              const match = attr.values.find(v => v.id === id);
+              return match ? `${match.id} - ${match.description}` : id;
+            },
+            searchType: 'match',
+            allowTyping: true,
+            filterList: true,
+            highlightMatch: true
           },
           refData: Object.fromEntries(attr.values.map(v => [v.id, `${v.id} - ${v.description}`])),
           valueSetter: (params: any) => {
@@ -3342,9 +3800,18 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           enableRowGroup: true,
           editable: true,
           cellClass: 'bg-white dark:bg-slate-900',
-          cellEditor: 'agSelectCellEditor',
+          cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: attr.values.map(v => v.id)
+            values: attr.values.map(v => v.id),
+            formatValue: (id: string) => {
+              if (!id) return '';
+              const match = attr.values.find(v => v.id === id);
+              return match ? `${match.id} - ${match.description}` : id;
+            },
+            searchType: 'match',
+            allowTyping: true,
+            filterList: true,
+            highlightMatch: true
           },
           refData: Object.fromEntries(attr.values.map(v => [v.id, `${v.id} - ${v.description}`])),
           valueSetter: (params: any) => {
@@ -3414,9 +3881,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         },
         {
           headerName: 'Mvmt',
-          field: 'approvedBudgetMovement',
           width: 130,
           type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const current = params.data?.approvedBudget || 0;
+            const previous = params.data?.approvedBudgetPrevious || 0;
+            return current - previous;
+          },
           cellRenderer: (params: any) => movementRenderer(params, 'budget'),
           cellClass: 'bg-slate-100 dark:bg-slate-800',
           aggFunc: 'sum',
@@ -3492,9 +3964,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         },
         {
           headerName: 'Mvmt',
-          field: 'estimateAtCompletionMovement',
           width: 130,
           type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const current = params.data?.estimateAtCompletion || 0;
+            const previous = params.data?.estimateAtCompletionPrevious || 0;
+            return current - previous;
+          },
           cellRenderer: (params: any) => movementRenderer(params, 'eac'),
           cellClass: 'bg-slate-100 dark:bg-slate-800',
           aggFunc: 'sum',
@@ -3510,9 +3987,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       children: [
         {
           headerName: 'Cost Variance',
-          field: 'costVariance',
           width: 130,
           type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const budget = params.data?.approvedBudget || 0;
+            const eac = params.data?.estimateAtCompletion || 0;
+            return budget - eac;
+          },
           valueFormatter: currencyFormatter,
           cellClass: 'bg-slate-100 dark:bg-slate-800',
           cellClassRules: {
@@ -3523,18 +4005,30 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         },
         {
           headerName: 'Var Prev',
-          field: 'costVariancePrevious',
           width: 130,
           type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const budgetPrev = params.data?.approvedBudgetPrevious || 0;
+            const eacPrev = params.data?.estimateAtCompletionPrevious || 0;
+            return budgetPrev - eacPrev;
+          },
           valueFormatter: currencyFormatter,
           cellClass: 'bg-slate-100 dark:bg-slate-800',
           aggFunc: 'sum',
         },
         {
           headerName: 'Var Mvmt',
-          field: 'costVarianceMovement',
           width: 130,
           type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const budget = params.data?.approvedBudget || 0;
+            const eac = params.data?.estimateAtCompletion || 0;
+            const budgetPrev = params.data?.approvedBudgetPrevious || 0;
+            const eacPrev = params.data?.estimateAtCompletionPrevious || 0;
+            return (budget - eac) - (budgetPrev - eacPrev);
+          },
           cellRenderer: (params: any) => movementRenderer(params, 'variance'),
           cellClass: 'bg-slate-100 dark:bg-slate-800',
           aggFunc: 'sum',
@@ -3600,7 +4094,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const onSelectionChanged = () => {
     if (gridRef.current?.api) {
-      const selectedRows = gridRef.current.api.getSelectedRows();
+      const selectedRows = gridRef.current.api.getSelectedRows().filter(row => {
+        const node = gridRef.current?.api.getRowNode(row.id);
+        return node && node.displayed;
+      });
       setSelectedIds(new Set(selectedRows.map(row => row.id)));
     }
   };
@@ -3624,6 +4121,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const { data, colDef, newValue, oldValue } = event;
     if (newValue === oldValue) return;
     if (!colDef.field) return;
+    if (isSaving) return; // Prevent triggering during bulk calculations or imports
 
     try {
       const docRef = doc(db, 'costCodes', data.id);
@@ -3673,9 +4171,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       event.node.setData({ ...data, ...updates });
 
       await updateDoc(docRef, updates);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Update error:', error);
-      toast.error('Failed to update');
+      handleFirestoreError(error, OperationType.UPDATE, `costCodes/${data.id}`);
+      toast.error(`Failed to update cell: ${error.message || 'Unknown error'}`);
       event.node.setDataValue(colDef.field, oldValue);
     }
   };
@@ -3994,8 +4493,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const getEtcRowClass = (params: any) => {
     const classes = ['overflow-visible'];
-    if (params.node.rowPinned === 'top') {
-      classes.push('bg-blue-50 dark:bg-blue-900/40 font-bold text-blue-800 dark:text-blue-200 border-b border-blue-100 dark:border-blue-900');
+    if (params.node.rowPinned) {
+      classes.push('pinned-row-highlight');
     }
     
     // Highlight invalid Auto-Phase rows
@@ -4018,176 +4517,185 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
-      {/* Header / Toolbar */}
-      <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
-        <div>
-          <h3 className="text-xl font-bold dark:text-white">Project Cost Codes</h3>
-          <p className="text-sm text-gray-900 dark:text-gray-400">Define and manage project-specific cost codes and attributes.</p>
-        </div>
-        <div className="flex gap-2">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder="Search cost codes..."
-              value={quickFilterText}
-              onChange={(e) => setQuickFilterText(e.target.value)}
-              className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none w-64 dark:text-white"
-            />
-          </div>
-          
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            accept=".xlsx,.xls,.csv"
-            onChange={handleImport}
-          />
-          
-          <button onClick={() => fileInputRef.current?.click()} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Import"><Upload className="w-5 h-5" /></button>
-          <button onClick={handleExport} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Export"><Download className="w-5 h-5" /></button>
-          
-          <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
-          
-          <button 
-            onClick={() => toggleAllCostCodeColumnGroups(true)}
-            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-            title="Expand All Groups"
-          >
-            <Maximize2 className="w-4 h-4" />
-          </button>
-          <button 
-            onClick={() => toggleAllCostCodeColumnGroups(false)}
-            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-            title="Collapse All Groups"
-          >
-            <Minimize2 className="w-4 h-4" />
-          </button>
-          
-          <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
+    <div className="flex-1 flex flex-col h-full gap-6 overflow-hidden">
+      <DataGridModule
+        title="Project Cost Codes"
+        description="Define and manage project-specific cost codes and attributes."
+        icon={<Hash className="w-4 h-4 text-gray-400" />}
+        searchPlaceholder="Search cost codes..."
+        quickFilterText={quickFilterText}
+        onQuickFilterChange={setQuickFilterText}
+        onImport={() => fileInputRef.current?.click()}
+        onExport={handleExport}
+        onCalculate={calculateCosts}
+        isCalculating={isSaving}
+        selectedCount={selectedIds.size}
+        onBulkUpdate={() => setIsBulkUpdating(true)}
+        onBulkDelete={() => setDeleteConfirm({ type: 'bulk', count: selectedIds.size })}
+        onAdd={() => { setFormData({ code: '', name: '', enterpriseAttributes: {}, projectAttributes: {}, eacMethod: 'Manual', assignedUsers: [] }); setIsEditing({ id: null }); }}
+        extraToolbarActions={
+          <>
+            <button 
+              onClick={() => toggleAllCostCodeColumnGroups(true)}
+              className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+              title="Expand All Groups"
+            >
+              <Maximize2 className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => toggleAllCostCodeColumnGroups(false)}
+              className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+              title="Collapse All Groups"
+            >
+              <Minimize2 className="w-4 h-4" />
+            </button>
+          </>
+        }
+        gridRef={gridRef}
+        rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) ? costCodes.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)) : costCodes}
+        columnDefs={columnDefs}
+        theme={theme}
+        isMainTableCollapsed={isMainTableCollapsed}
+        onToggleMainTableCollapse={() => setIsMainTableCollapsed(!isMainTableCollapsed)}
+        hasSubContent={!!(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)}
+        project={project}
+        showCurrentPeriod={true}
+        gridProps={{
+          getRowId: (params: any) => params.data.id,
+          components: components,
+          context: gridContext,
+          defaultColDef: defaultColDef,
+          autoGroupColumnDef: autoGroupColumnDef,
+          onGridReady: onGridReady,
+          onCellValueChanged: onCellValueChanged,
+          onSelectionChanged: onSelectionChanged,
+          onFilterChanged: onSelectionChanged,
+          processCellFromClipboard: (params: any) => {
+            const colId = params.column.getColId();
+            if (colId.startsWith('enterpriseAttributes.') || colId.startsWith('projectAttributes.')) {
+              const val = params.value;
+              if (typeof val === 'string' && val.includes(' - ')) {
+                return val.split(' - ')[0];
+              }
+            }
+            return params.value;
+          },
+          rowSelection: "multiple",
+          groupDisplayType: "multipleColumns",
+          groupTotalRow: "top",
+          grandTotalRow: "top",
+          getRowClass: getRowClass,
+          sideBar: sideBar,
+          statusBar: statusBar,
+          suppressRowClickSelection: true,
+          paginationPageSize: 50
+        }}
+      />
 
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        className="hidden" 
+        accept=".xlsx,.xls,.csv"
+        onChange={handleImport}
+      />
+
+
+
+
+
+      {/* Subcontract Breakdown Details Section */}
+      <AnimatePresence>
+        {selectedSubcontractBreakdownCode && (
+          <motion.div 
+            key={selectedSubcontractBreakdownCode}
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ 
+              height: isMainTableCollapsed ? 'calc(100% - 60px)' : '60%', 
+              opacity: 1 
+            }}
+            exit={{ height: 0, opacity: 0 }}
+            className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0a0a0a] flex flex-col overflow-hidden"
+          >
+            <div className="p-4 flex items-center justify-between bg-white dark:bg-[#141414] border-b border-gray-200 dark:border-white/10">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <Briefcase className="w-5 h-5 text-green-600" />
+                  <h3 className="font-bold dark:text-white">Related Subcontracts: <span className="text-green-600">{selectedSubcontractBreakdownCode}</span></h3>
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10" />
+                <p className="text-xs text-gray-500 font-medium">Read-Only View</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="Search subcontracts..."
+                    value={subcontractQuickFilterText}
+                    onChange={(e) => setSubcontractQuickFilterText(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-xs focus:ring-2 focus:ring-green-500 outline-none w-48 dark:text-white"
+                  />
+                </div>
+                <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
                 <button 
-                  onClick={calculateCosts} 
-                  disabled={isSaving}
-                  className="px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold flex items-center gap-2 hover:opacity-90 transition-all shadow-lg shadow-black/10 disabled:opacity-50"
+                  onClick={() => setSelectedSubcontractBreakdownCode(null)}
+                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
                 >
-                  {isSaving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Calculator className="w-4 h-4" />}
-                  Calculate
+                  <X className="w-5 h-5" />
                 </button>
-
-          {selectedIds.size > 0 && (
-            <div className="flex gap-2">
-              <button onClick={() => setIsBulkUpdating(true)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20">
-                <Edit2 className="w-4 h-4" /> Bulk Update ({selectedIds.size})
-              </button>
-              <button onClick={() => setDeleteConfirm({ type: 'bulk', count: selectedIds.size })} className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20">
-                <Trash2 className="w-4 h-4" /> Delete ({selectedIds.size})
-              </button>
-            </div>
-          )}
-
-          <button onClick={() => { setFormData({ code: '', name: '', enterpriseAttributes: {}, projectAttributes: {}, eacMethod: 'Manual', assignedUsers: [] }); setIsEditing({ id: null }); }} className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10">
-            <Plus className="w-4 h-4" /> Add
-          </button>
-        </div>
-      </div>
-
-      {/* Table Area */}
-      <div className={cn(
-        "flex flex-col transition-all duration-500 ease-in-out overflow-hidden",
-        (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode) 
-          ? (isMainTableCollapsed ? "h-[60px]" : "h-[40%]") 
-          : "flex-1"
-      )}>
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-white/5 border-b border-gray-200 dark:border-white/10">
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Hash className="w-4 h-4 text-gray-400" />
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Project Cost Codes</span>
+              </div>
             </div>
             
-            {/* Current Period Display moved here */}
-            {project.reportingPeriods?.currentPeriodId && (
-              <div className="flex items-center gap-4 border-l border-gray-200 dark:border-white/10 pl-6">
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-blue-600">Current Period:</span>
-                </div>
-                {(() => {
-                  const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === project.reportingPeriods?.currentPeriodId);
-                  if (!currentPeriod) return null;
-                  
-                  const date = new Date(currentPeriod.endDate);
-                  const month = date.toLocaleString('default', { month: 'short' });
-                  const year = date.getFullYear().toString().slice(-2);
-                  const periodNumber = project.reportingPeriods.periods.indexOf(currentPeriod) + 1;
-                  const dateStr = `P${periodNumber} (${month}'${year})`;
-                  
-                  return (
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-bold text-blue-600">{dateStr}</span>
-                    </div>
-                  );
-                })()}
+            <div className="flex-1 min-h-0 relative">
+              <div className={cn(
+                "absolute inset-0 ag-theme-quartz",
+                theme === 'dark' ? "ag-theme-quartz-dark" : ""
+              )}>
+                <AgGridReact
+                  rowData={subcontractBreakdownRows}
+                  pinnedBottomRowData={subcontractBreakdownPinnedBottomRowData}
+                  getRowClass={(params) => {
+                    if (params.node.rowPinned === 'bottom') return 'font-bold bg-gray-50 dark:bg-white/5';
+                    return '';
+                  }}
+                  columnDefs={[
+                    { field: 'subcontractId', headerName: 'Subcontract ID', width: 140, pinned: 'left', cellStyle: { fontWeight: 'bold' } },
+                    { field: 'subcontractName', headerName: 'Subcontract Name', width: 200 },
+                    { field: 'vendorName', headerName: 'Vendor', width: 180 },
+                    { field: 'itemNo', headerName: 'Item No', width: 100 },
+                    { 
+                      field: 'description', 
+                      headerName: 'Description', 
+                      width: 250,
+                      cellRenderer: (params: any) => {
+                        if (params.node.rowPinned === 'bottom') {
+                          return <span className="text-green-600 font-bold">SubTotal</span>;
+                        }
+                        return params.value;
+                      }
+                    },
+                    { field: 'qty', headerName: 'Qty', width: 100, type: 'numericColumn' },
+                    { field: 'unit', headerName: 'Unit', width: 80 },
+                    { field: 'rate', headerName: 'Rate', width: 120, type: 'numericColumn', valueFormatter: currencyFormatter },
+                    { field: 'total', headerName: 'Total', width: 140, type: 'numericColumn', valueFormatter: currencyFormatter, cellClass: 'font-bold' },
+                    { field: 'status', headerName: 'Status', width: 120 },
+                    { field: 'type', headerName: 'Type', width: 120 }
+                  ]}
+                  quickFilterText={subcontractQuickFilterText}
+                  defaultColDef={{
+                    sortable: true,
+                    filter: true,
+                    resizable: true,
+                    minWidth: 100,
+                  }}
+                  animateRows={true}
+                />
               </div>
-            )}
-          </div>
-          {(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) && (
-            <button 
-              onClick={() => setIsMainTableCollapsed(!isMainTableCollapsed)}
-              className="p-1 hover:bg-gray-200 dark:hover:bg-white/10 rounded-md transition-colors text-gray-500"
-              title={isMainTableCollapsed ? "Expand Table" : "Collapse Table"}
-            >
-              {isMainTableCollapsed ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
-            </button>
-          )}
-        </div>
-        <div className="flex-1 min-h-0 relative">
-          <div className={cn(
-            "absolute inset-0 ag-theme-quartz",
-            theme === 'dark' ? "ag-theme-quartz-dark" : ""
-          )}>
-            <AgGridReact
-              ref={gridRef}
-              rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) ? costCodes.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)) : costCodes}
-              columnDefs={columnDefs}
-              components={components}
-              context={gridContext}
-              defaultColDef={defaultColDef}
-              autoGroupColumnDef={autoGroupColumnDef}
-              onGridReady={onGridReady}
-              onCellValueChanged={onCellValueChanged}
-              onSelectionChanged={onSelectionChanged}
-              processCellFromClipboard={(params) => {
-                const colId = params.column.getColId();
-                if (colId.startsWith('enterpriseAttributes.') || colId.startsWith('projectAttributes.')) {
-                  const val = params.value;
-                  if (typeof val === 'string' && val.includes(' - ')) {
-                    return val.split(' - ')[0];
-                  }
-                }
-                return params.value;
-              }}
-              rowSelection="multiple"
-              groupDisplayType="multipleColumns"
-              groupTotalRow="top"
-              grandTotalRow="top"
-              getRowClass={getRowClass}
-              animateRows={true}
-              enableRangeSelection={true}
-              enableFillHandle={true}
-              undoRedoCellEditing={true}
-              pagination={true}
-              paginationPageSize={50}
-              sideBar={sideBar}
-              statusBar={statusBar}
-              suppressRowClickSelection={true}
-              getRowId={(params) => params.data.id}
-            />
-          </div>
-        </div>
-      </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* ETC Details Section */}
       <AnimatePresence>
@@ -4599,8 +5107,21 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                   rowSelection="multiple"
                   suppressRowClickSelection={true}
                   onSelectionChanged={(event) => {
-                    const selectedNodes = event.api.getSelectedNodes();
-                    const ids = new Set(selectedNodes.map(node => node.data.id));
+                    const selectedRows = event.api.getSelectedRows();
+                    const displayedSelected = selectedRows.filter(row => {
+                      const node = event.api.getRowNode(row.id);
+                      return node && node.displayed;
+                    });
+                    const ids = new Set(displayedSelected.map(row => row.id));
+                    setSelectedEtcIds(ids);
+                  }}
+                  onFilterChanged={(event) => {
+                    const selectedRows = event.api.getSelectedRows();
+                    const displayedSelected = selectedRows.filter(row => {
+                      const node = event.api.getRowNode(row.id);
+                      return node && node.displayed;
+                    });
+                    const ids = new Set(displayedSelected.map(row => row.id));
                     setSelectedEtcIds(ids);
                   }}
                 />
@@ -5107,6 +5628,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                           <div className="w-2 h-2 rounded-full bg-blue-500" />
                           <span className="text-[10px] font-bold text-gray-500 uppercase">EAC</span>
                         </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-2 h-2 rounded-full bg-slate-300" />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">EAC Prev</span>
+                        </div>
                         <div className="h-3 w-px bg-gray-200 dark:bg-white/10 mx-1" />
                         <div className="flex items-center gap-1.5">
                           <div className="w-3 h-0.5 bg-slate-400" />
@@ -5119,6 +5644,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                         <div className="flex items-center gap-1.5">
                           <div className="w-3 h-0.5 bg-blue-500" />
                           <span className="text-[10px] font-bold text-gray-500 uppercase">Cum. EAC</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3 h-0.5 bg-slate-300 border-t border-dashed border-slate-500" />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">Cum. EAC Prev</span>
                         </div>
                       </div>
                     </div>
@@ -5166,6 +5695,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                           <Line yAxisId="right" type="monotone" dataKey="cumulativeBaseline" name="Cum. Baseline" stroke="#94a3b8" strokeWidth={2} dot={false} />
                           <Line yAxisId="right" type="monotone" dataKey="cumulativeApproved" name="Cum. Approved" stroke="#10b981" strokeWidth={2} dot={false} />
                           <Line yAxisId="right" type="monotone" dataKey="cumulativeEac" name="Cum. EAC" stroke="#3b82f6" strokeWidth={2} dot={false} />
+                          <Line yAxisId="right" type="monotone" dataKey="cumulativeEacPrevious" name="Cum. EAC Prev" stroke="#94a3b8" strokeWidth={2} strokeDasharray="5 5" dot={false} />
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
@@ -5182,6 +5712,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 <AgGridReact
                   ref={timephasingGridRef}
                   rowData={timephasingRows}
+                  isExternalFilterPresent={() => true}
+                  doesExternalFilterPass={(node) => !node.data.hidden}
                   columnDefs={timephasingColumnDefs}
                   quickFilterText={timephasingQuickFilterText}
                   loading={isTimephasingLoading}
@@ -5355,14 +5887,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             <div className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Category</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Resource Category</label>
                   <select 
                     value={etcBulkUpdateData.category || ''} 
                     onChange={e => setEtcBulkUpdateData({ ...etcBulkUpdateData, category: e.target.value || undefined })} 
                     className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
                   >
                     <option value="">No Change</option>
-                    {['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries'].map(c => <option key={c} value={c}>{c}</option>)}
+                    {((enterprise.categories && enterprise.categories.length > 0) ? enterprise.categories : DEFAULT_CATEGORIES).map(c => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                   <p className="text-[9px] text-gray-400 mt-1 italic">* Only applies to manual rows</p>
                 </div>

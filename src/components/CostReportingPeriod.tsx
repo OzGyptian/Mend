@@ -1,10 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { Project } from '../types';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
-import { Calendar, Save, Calculator, Trash2, Lock, Unlock, Plus } from 'lucide-react';
+import { Project, CostCode, EtcDetail } from '../types';
+import { db, auth } from '../firebase';
+import { 
+  doc, 
+  updateDoc, 
+  collection, 
+  query, 
+  where, 
+  getDocs, 
+  writeBatch,
+  addDoc
+} from 'firebase/firestore';
+import { Calendar, Save, Calculator, Trash2, Lock, Unlock, Plus, AlertTriangle, RefreshCw, Eye, FileText, Download } from 'lucide-react';
 import { addMonths, addWeeks, subDays, format, parseISO } from 'date-fns';
 import { toast } from 'sonner';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import * as XLSX from 'xlsx';
 
 interface CostReportingPeriodProps {
   project: Project;
@@ -25,6 +46,14 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
   const [periods, setPeriods] = useState<Period[]>(project.reportingPeriods?.periods || []);
   const [currentPeriodId, setCurrentPeriodId] = useState<string | undefined>(project.reportingPeriods?.currentPeriodId);
   const [saving, setSaving] = useState(false);
+  const [isRollOverConfirmOpen, setIsRollOverConfirmOpen] = useState(false);
+  const [isRollingOver, setIsRollingOver] = useState(false);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<any>(null);
+  const [isSnapshotViewerOpen, setIsSnapshotViewerOpen] = useState(false);
+  const [isLoadingSnapshot, setIsLoadingSnapshot] = useState(false);
+
+  const currentUser = auth.currentUser;
+  const isAdmin = project.users[currentUser?.uid || ''] === 'Project Admin';
   const hasClosedPeriods = periods.some(p => p.status === 'closed');
 
   useEffect(() => {
@@ -120,32 +149,223 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
   };
 
   const handleRollOver = async () => {
+    if (!isAdmin) {
+      toast.error('Only Project Admins can roll over periods.');
+      return;
+    }
+
     const openPeriods = periods.filter(p => p.status === 'open');
     if (openPeriods.length === 0) {
       toast.error('No open periods to roll over.');
       return;
     }
 
-    const firstOpenPeriod = openPeriods[0];
-    const nextOpenPeriod = openPeriods[1];
+    setIsRollingOver(true);
+    try {
+      const firstOpenPeriod = openPeriods[0];
+      const nextOpenPeriod = openPeriods[1];
 
-    const newPeriods = periods.map(p => 
-      p.id === firstOpenPeriod.id ? { ...p, status: 'closed' as const } : p
-    );
-    
-    let newCurrentId = currentPeriodId;
-    if (nextOpenPeriod) {
-      newCurrentId = nextOpenPeriod.id;
-    }
+      // 1. Fetch all necessary data
+      const costCodesSnap = await getDocs(query(collection(db, 'costCodes'), where('projectId', '==', project.id)));
+      const etcDetailsSnap = await getDocs(query(collection(db, 'etcDetails'), where('projectId', '==', project.id)));
+      const costPhasingSnap = await getDocs(query(collection(db, 'costPhasing'), where('projectId', '==', project.id)));
+      const actualCostsSnap = await getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', project.id)));
 
-    setPeriods(newPeriods);
-    setCurrentPeriodId(newCurrentId);
-    await handleSave(newPeriods, baseDate, duration, numberOfPeriods, newCurrentId);
+      const costCodes = costCodesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as CostCode));
+      const etcDetails = etcDetailsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as EtcDetail));
+      const allPhasing = costPhasingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      const allActuals = actualCostsSnap.docs.map(doc => doc.data() as any);
 
-    if (nextOpenPeriod) {
-      toast.success(`${firstOpenPeriod.name} closed. Current period is now ${nextOpenPeriod.name}.`);
-    } else {
-      toast.success(`${firstOpenPeriod.name} closed. No more open periods.`);
+      const batch = writeBatch(db);
+      let opCount = 0;
+
+      // Helper to commit and start a new batch if limit reached
+      const checkBatch = async () => {
+        opCount++;
+        if (opCount >= 450) {
+          await batch.commit();
+          opCount = 0;
+        }
+      };
+
+      // 2. Update Cost Codes
+      for (const code of costCodes) {
+        const codeActuals = allActuals.filter(a => a.costCodeId === code.id || a.costCodeId === code.code);
+        const codeAccruals = codeActuals.filter(a => a.reportingPeriodId === firstOpenPeriod.id && a.source === 'ACC');
+        
+        // New Actual Cost To Date = Current Total + Reversals (which are -1 * Accruals)
+        const reversalSum = codeAccruals.reduce((sum, a) => sum + (Number(a.cost) || 0) * -1, 0);
+        const newActualCostToDate = (code.actualCostToDate || 0) + reversalSum;
+        
+        // New Actual Cost This Period = Reversals (since next period is now current)
+        const newActualCostThisPeriod = nextOpenPeriod ? reversalSum : 0;
+
+        batch.update(doc(db, 'costCodes', code.id), {
+          approvedBudgetPrevious: code.approvedBudget || 0,
+          approvedBudgetMovement: 0,
+          estimateAtCompletionPrevious: code.estimateAtCompletion || 0,
+          estimateAtCompletionMovement: 0,
+          actualCostToDate: newActualCostToDate,
+          actualCostThisPeriod: newActualCostThisPeriod,
+          updatedAt: new Date().toISOString()
+        });
+        await checkBatch();
+      }
+
+      // 3. Update ETC Details
+      const futurePeriods = periods.slice(periods.findIndex(p => p.id === firstOpenPeriod.id) + 1);
+      for (const etc of etcDetails) {
+        const periodValues = etc.periodValues || {};
+        const qty = futurePeriods.reduce((acc, p) => acc + (Number(periodValues[p.id]) || 0), 0);
+        const totalEtc = qty * (etc.rate || 0);
+
+        batch.update(doc(db, 'etcDetails', etc.id), {
+          totalEtcPrevious: totalEtc,
+          etcMvmt: 0,
+          updatedAt: new Date().toISOString()
+        });
+        await checkBatch();
+      }
+
+      // 4. Store Previous EAC Phasing
+      const currentPeriodIndex = periods.findIndex(p => p.id === firstOpenPeriod.id);
+      for (const code of costCodes) {
+        const codePhasing = allPhasing.filter((p: any) => p.costCodeId === code.code);
+        const eacDoc = codePhasing.find((p: any) => p.type === 'eac');
+        
+        const filteredActuals = allActuals.filter((a: any) => a.costCodeId === code.id || a.costCodeId === code.code);
+        const actualsByPeriod: Record<string, number> = {};
+        filteredActuals.forEach((a: any) => {
+          actualsByPeriod[a.reportingPeriodId] = (actualsByPeriod[a.reportingPeriodId] || 0) + (a.cost || 0);
+        });
+
+        const codeEtcDetails = etcDetails.filter((etc: any) => etc.costCode === code.code);
+        const etcByPeriod: Record<string, number> = {};
+        const futurePeriodIds = periods.slice(currentPeriodIndex + 1).map(p => p.id);
+        codeEtcDetails.forEach((etc: any) => {
+          if (etc.periodValues) {
+            Object.entries(etc.periodValues).forEach(([periodId, value]) => {
+              if (futurePeriodIds.includes(periodId)) {
+                etcByPeriod[periodId] = (etcByPeriod[periodId] || 0) + (Number(value) || 0) * (etc.rate || 0);
+              }
+            });
+          }
+        });
+
+        const currentEacPhasing = periods.reduce((acc, p, idx) => {
+          const phasingSource = eacDoc?.phasingSource || 'ETC Details';
+          if (phasingSource === 'ETC Details') {
+            if (idx <= currentPeriodIndex) {
+              acc[p.id] = actualsByPeriod[p.id] || 0;
+            } else {
+              acc[p.id] = etcByPeriod[p.id] || 0;
+            }
+          } else {
+            acc[p.id] = eacDoc?.periodValues?.[p.id] || 0;
+          }
+          return acc;
+        }, {} as Record<string, number>);
+
+        // Store as eacPrevious
+        const prevEacDoc = codePhasing.find((p: any) => p.type === 'eacPrevious');
+        const payload = {
+          projectId: project.id,
+          costCodeId: code.code,
+          type: 'eacPrevious',
+          periodValues: currentEacPhasing,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (prevEacDoc) {
+          batch.update(doc(db, 'costPhasing', prevEacDoc.id), payload);
+        } else {
+          batch.set(doc(collection(db, 'costPhasing')), payload);
+        }
+        await checkBatch();
+      }
+
+      // 5. Create Period Snapshot
+      const snapshotData = {
+        projectId: project.id,
+        periodId: firstOpenPeriod.id,
+        periodName: firstOpenPeriod.name,
+        snapshotDate: new Date().toISOString(),
+        costCodes: costCodes.map(c => ({ ...c })),
+        etcDetails: etcDetails.map(e => ({ ...e })),
+        costPhasing: allPhasing.map(p => ({ ...p })),
+        actualCosts: allActuals.map(a => ({ ...a }))
+      };
+
+      // Check size roughly
+      const dataStr = JSON.stringify(snapshotData);
+      if (dataStr.length > 900000) {
+        console.warn("Snapshot data is large, might exceed Firestore limit.");
+      }
+
+      batch.set(doc(collection(db, 'periodSnapshots')), snapshotData);
+      await checkBatch();
+
+      // 5.5 Reverse Accruals
+      if (nextOpenPeriod) {
+        const accruals = allActuals.filter((a: any) => 
+          a.reportingPeriodId === firstOpenPeriod.id && 
+          a.source === 'ACC'
+        );
+
+        for (const acc of accruals) {
+          const reversal = {
+            ...acc,
+            cost: (acc.cost || 0) * -1,
+            source: 'REV',
+            reportingPeriodId: nextOpenPeriod.id,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          // Ensure we don't carry over the old document ID if it was in the data
+          delete (reversal as any).id;
+          
+          batch.set(doc(collection(db, 'actualCosts')), reversal);
+          await checkBatch();
+        }
+      }
+
+      // 6. Update Reporting Periods
+      const newPeriods = periods.map(p => 
+        p.id === firstOpenPeriod.id ? { ...p, status: 'closed' as const } : p
+      );
+      
+      let newCurrentId = currentPeriodId;
+      if (nextOpenPeriod) {
+        newCurrentId = nextOpenPeriod.id;
+      }
+
+      batch.update(doc(db, 'projects', project.id), {
+        reportingPeriods: {
+          baseDate,
+          duration,
+          numberOfPeriods,
+          periods: newPeriods,
+          currentPeriodId: newCurrentId
+        }
+      });
+      await checkBatch();
+
+      await batch.commit();
+
+      setPeriods(newPeriods);
+      setCurrentPeriodId(newCurrentId);
+
+      if (nextOpenPeriod) {
+        toast.success(`${firstOpenPeriod.name} closed. Current period is now ${nextOpenPeriod.name}.`);
+      } else {
+        toast.success(`${firstOpenPeriod.name} closed. No more open periods.`);
+      }
+      setIsRollOverConfirmOpen(false);
+    } catch (error) {
+      console.error('Error during roll over:', error);
+      toast.error('Failed to roll over period. Please try again.');
+    } finally {
+      setIsRollingOver(false);
     }
   };
 
@@ -186,6 +406,46 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
     toast.info('All periods cleared and changes saved.');
   };
 
+  const handleViewSnapshot = async (periodId: string) => {
+    setIsLoadingSnapshot(true);
+    try {
+      const q = query(
+        collection(db, 'periodSnapshots'), 
+        where('projectId', '==', project.id),
+        where('periodId', '==', periodId)
+      );
+      const snap = await getDocs(q);
+      if (snap.empty) {
+        toast.error('No snapshot found for this period.');
+        setIsLoadingSnapshot(false);
+        return;
+      }
+      setSelectedSnapshot(snap.docs[0].data());
+      setIsSnapshotViewerOpen(true);
+    } catch (error) {
+      console.error("Error fetching snapshot:", error);
+      toast.error('Failed to load snapshot.');
+    } finally {
+      setIsLoadingSnapshot(false);
+    }
+  };
+
+  const exportSnapshotToExcel = () => {
+    if (!selectedSnapshot) return;
+    
+    const wb = XLSX.utils.book_new();
+    
+    // Cost Codes
+    const ccWs = XLSX.utils.json_to_sheet(selectedSnapshot.costCodes);
+    XLSX.utils.book_append_sheet(wb, ccWs, "Cost Codes");
+    
+    // ETC Details
+    const etcWs = XLSX.utils.json_to_sheet(selectedSnapshot.etcDetails);
+    XLSX.utils.book_append_sheet(wb, etcWs, "ETC Details");
+    
+    XLSX.writeFile(wb, `Snapshot_${selectedSnapshot.periodName}_${format(new Date(), 'yyyyMMdd')}.xlsx`);
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] overflow-hidden">
       <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
@@ -195,8 +455,8 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
         </div>
         <div className="flex gap-2">
           <button 
-            onClick={handleRollOver}
-            disabled={periods.length === 0 || !periods.some(p => p.status === 'open')}
+            onClick={() => setIsRollOverConfirmOpen(true)}
+            disabled={periods.length === 0 || !periods.some(p => p.status === 'open') || !isAdmin}
             className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50"
           >
             <Lock className="w-4 h-4" />
@@ -204,6 +464,47 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
           </button>
         </div>
       </div>
+
+      {/* Roll Over Confirmation Dialog */}
+      <Dialog open={isRollOverConfirmOpen} onOpenChange={setIsRollOverConfirmOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="w-5 h-5" />
+              Confirm Period Roll Over
+            </DialogTitle>
+            <DialogDescription className="py-4">
+              Are you sure you want to close the current period? This action will:
+              <ul className="list-disc list-inside mt-2 space-y-1 text-xs">
+                <li>Close the current reporting period and move to the next.</li>
+                <li>Archive current Budget and EAC values as "Previous".</li>
+                <li>Store current ETC Details totals as "Previous".</li>
+                <li>Snapshot the current EAC Phasing for historical comparison.</li>
+              </ul>
+              <p className="mt-4 font-bold text-red-600">This action cannot be undone.</p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsRollOverConfirmOpen(false)} disabled={isRollingOver}>
+              Cancel
+            </Button>
+            <Button 
+              className="bg-emerald-600 hover:bg-emerald-700 text-white" 
+              onClick={handleRollOver}
+              disabled={isRollingOver}
+            >
+              {isRollingOver ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                'Yes, Roll Over Period'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-8">
@@ -313,6 +614,7 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Start Date</th>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">End Date</th>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Status</th>
+                      <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Snapshot</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-white/5">
@@ -353,6 +655,18 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                             )}
                           </div>
                         </td>
+                        <td className="p-3">
+                          {period.status === 'closed' && (
+                            <button 
+                              onClick={() => handleViewSnapshot(period.id)}
+                              disabled={isLoadingSnapshot}
+                              className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 text-xs font-bold flex items-center gap-1 transition-colors disabled:opacity-50"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              View Data
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -370,6 +684,125 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
           )}
         </div>
       </div>
+      <Dialog open={isSnapshotViewerOpen} onOpenChange={setIsSnapshotViewerOpen}>
+        <DialogContent className="max-w-6xl h-[90vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 border-b border-gray-200 dark:border-white/10">
+            <div className="flex items-center justify-between w-full pr-8">
+              <div>
+                <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-blue-600" />
+                  Period Snapshot: {selectedSnapshot?.periodName}
+                </DialogTitle>
+                <DialogDescription>
+                  Archived data from {selectedSnapshot && format(new Date(selectedSnapshot.snapshotDate), 'PPP p')}
+                </DialogDescription>
+              </div>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={exportSnapshotToExcel}
+                className="flex items-center gap-2"
+              >
+                <Download className="w-4 h-4" />
+                Export to Excel
+              </Button>
+            </div>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-hidden">
+            <Tabs defaultValue="costCodes" className="h-full flex flex-col">
+              <div className="px-6 border-b border-gray-200 dark:border-white/10">
+                <TabsList className="bg-transparent h-12 gap-6">
+                  <TabsTrigger 
+                    value="costCodes" 
+                    className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none px-0 text-sm font-bold"
+                  >
+                    Cost Codes ({selectedSnapshot?.costCodes?.length || 0})
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="etcDetails" 
+                    className="data-[state=active]:bg-transparent data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-blue-600 rounded-none px-0 text-sm font-bold"
+                  >
+                    ETC Details ({selectedSnapshot?.etcDetails?.length || 0})
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+
+              <div className="flex-1 overflow-hidden">
+                <TabsContent value="costCodes" className="h-full m-0">
+                  <ScrollArea className="h-full">
+                    <div className="p-6">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10">
+                            <th className="p-2 font-bold uppercase">Code</th>
+                            <th className="p-2 font-bold uppercase">Name</th>
+                            <th className="p-2 font-bold uppercase text-right">Baseline</th>
+                            <th className="p-2 font-bold uppercase text-right">Approved</th>
+                            <th className="p-2 font-bold uppercase text-right">Actuals</th>
+                            <th className="p-2 font-bold uppercase text-right">ETC</th>
+                            <th className="p-2 font-bold uppercase text-right">EAC</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                          {selectedSnapshot?.costCodes?.map((cc: any) => (
+                            <tr key={cc.id} className="hover:bg-gray-50 dark:hover:bg-white/5">
+                              <td className="p-2 font-mono">{cc.code}</td>
+                              <td className="p-2">{cc.name}</td>
+                              <td className="p-2 text-right">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cc.baselineBudget || 0)}</td>
+                              <td className="p-2 text-right">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cc.approvedBudget || 0)}</td>
+                              <td className="p-2 text-right">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cc.actualCostToDate || 0)}</td>
+                              <td className="p-2 text-right">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cc.estimateToComplete || 0)}</td>
+                              <td className="p-2 text-right font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(cc.estimateAtCompletion || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                
+                <TabsContent value="etcDetails" className="h-full m-0">
+                  <ScrollArea className="h-full">
+                    <div className="p-6">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10">
+                            <th className="p-2 font-bold uppercase">Code</th>
+                            <th className="p-2 font-bold uppercase">Item</th>
+                            <th className="p-2 font-bold uppercase">Description</th>
+                            <th className="p-2 font-bold uppercase text-right">Qty</th>
+                            <th className="p-2 font-bold uppercase">Unit</th>
+                            <th className="p-2 font-bold uppercase text-right">Rate</th>
+                            <th className="p-2 font-bold uppercase text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                          {selectedSnapshot?.etcDetails?.map((etc: any) => (
+                            <tr key={etc.id} className="hover:bg-gray-50 dark:hover:bg-white/5">
+                              <td className="p-2 font-mono">{etc.costCode}</td>
+                              <td className="p-2 font-bold">{etc.item}</td>
+                              <td className="p-2">{etc.description}</td>
+                              <td className="p-2 text-right">{etc.qty}</td>
+                              <td className="p-2">{etc.unit}</td>
+                              <td className="p-2 text-right">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(etc.rate || 0)}</td>
+                              <td className="p-2 text-right font-bold">{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format((etc.qty || 0) * (etc.rate || 0))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              </div>
+            </Tabs>
+          </div>
+          
+          <DialogFooter className="p-6 border-t border-gray-200 dark:border-white/10">
+            <Button onClick={() => setIsSnapshotViewerOpen(false)}>Close Viewer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

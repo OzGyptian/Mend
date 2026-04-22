@@ -22,6 +22,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { AgGridReact } from 'ag-grid-react';
 import { 
   ColDef, 
@@ -69,6 +71,7 @@ import { OperationType, handleFirestoreError } from '../lib/errorHandlers';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from 'next-themes';
+import DataGridModule from './DataGridModule';
 import {
   Dialog,
   DialogContent,
@@ -89,7 +92,7 @@ interface ActualCostRecord {
   costCodeId: string;
   item: string;
   description: string;
-  source: 'MAN' | 'ACC' | 'FIN';
+  source: 'MAN' | 'ACC' | 'FIN' | 'REV';
   cost: number;
   reportingPeriodId: string;
   enterpriseAttributes?: Record<string, any>;
@@ -107,6 +110,26 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const [isChartVisible, setIsChartVisible] = useState(false);
+  
+  // Import Wizard State
+  const [importWizard, setImportWizard] = useState<{
+    isOpen: boolean;
+    phase: 'preview' | 'processing';
+    data: any[];
+    errors: { row: number; msg: string; type: 'error' | 'warning' }[];
+    progress: number;
+    total: number;
+    processed: number;
+  }>({
+    isOpen: false,
+    phase: 'preview',
+    data: [],
+    errors: [],
+    progress: 0,
+    total: 0,
+    processed: 0
+  });
+
   const gridRef = useRef<AgGridReact>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -160,15 +183,34 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
       if (!ccDoc.exists()) return;
       const ccData = ccDoc.data() as CostCode;
 
-      const q = query(
-        collection(db, 'actualCosts'), 
-        where('projectId', '==', project.id)
+      // OPTIMIZATION: Query only the records for this specific cost code
+      // We search for both the Firestore ID and the code string for legacy support
+      const qById = query(
+        collection(db, 'actualCosts'),
+        where('projectId', '==', project.id),
+        where('costCodeId', '==', costCodeId)
       );
-      const snapshot = await getDocs(q);
-      const allRecords = snapshot.docs.map(doc => doc.data() as ActualCostRecord);
+
+      const qByCode = query(
+        collection(db, 'actualCosts'),
+        where('projectId', '==', project.id),
+        where('costCodeId', '==', ccData.code)
+      );
+
+      const [snapById, snapByCode] = await Promise.all([
+        getDocs(qById),
+        getDocs(qByCode)
+      ]);
+
+      const recordsById = snapById.docs.map(doc => doc.data() as ActualCostRecord);
+      const recordsByCode = snapByCode.docs.map(doc => doc.data() as ActualCostRecord);
       
-      // Robust matching on ID or Code string
-      const codeActuals = allRecords.filter(a => a.costCodeId === costCodeId || a.costCodeId === ccData.code);
+      // Combine records and remove duplicates by ID if any
+      const uniqueRecordsMap = new Map<string, ActualCostRecord>();
+      snapById.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsById[i]));
+      snapByCode.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsByCode[i]));
+      
+      const codeActuals = Array.from(uniqueRecordsMap.values());
       
       const totalToDate = codeActuals.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
       
@@ -351,99 +393,110 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     reader.onload = async (evt) => {
       try {
         const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        if (data.length === 0) {
+          toast.error("The Excel file is empty.");
+          return;
+        }
 
         const periods = project.reportingPeriods?.periods || [];
         const currentPeriodId = project.reportingPeriods?.currentPeriodId;
         const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
         
-        const enterpriseAttrs = (enterprise.lineItemAttributes || []).filter(a => a.title);
-        const projectAttrs = (project.lineItemAttributes || []).filter(a => a.title);
-        
-        const batch = writeBatch(db);
-        const affectedCostCodeIds = new Set<string>();
+        const errors: { row: number; msg: string; type: 'error' | 'warning' }[] = [];
 
         const findPeriod = (val: any) => {
           const strVal = String(val).trim();
-          // Try matching by number (1-based index)
           const numVal = parseInt(strVal);
           if (!isNaN(numVal) && numVal > 0 && numVal <= periods.length) {
             return periods[numVal - 1];
           }
-          // Try matching by name
           return periods.find(p => p.name === strVal);
         };
 
-        // First pass: Validate all rows for valid and non-future periods, and valid cost codes
-        const futurePeriodRows: string[] = [];
-        const invalidPeriodRows: string[] = [];
-        const invalidCostCodeRows: string[] = [];
-
+        // Validation pass
         data.forEach((row, index) => {
-          // Validate Period
-          const periodValue = row['Reporting Period'];
-          const period = findPeriod(periodValue);
+          const rowNum = index + 1;
           
-          if (!period) {
-            invalidPeriodRows.push(`Row ${index + 1} (Value: "${periodValue}")`);
+          // Cost Code Validation
+          const costCodeValue = String(row['Cost Code ID'] || '').trim();
+          if (!costCodeValue) {
+            errors.push({ row: rowNum, msg: "Missing Cost Code ID", type: 'error' });
           } else {
-            const periodIndex = periods.findIndex(p => p.id === period.id);
-            if (periodIndex > currentPeriodIndex) {
-              futurePeriodRows.push(`Row ${index + 1} (Period ${periodIndex + 1})`);
+            const costCode = costCodes.find(cc => cc.code === costCodeValue);
+            if (!costCode) {
+              errors.push({ row: rowNum, msg: `Cost Code "${costCodeValue}" not found in project`, type: 'error' });
             }
           }
 
-          // Validate Cost Code
-          const costCodeValue = String(row['Cost Code ID']).trim();
-          const costCode = costCodes.find(cc => cc.code === costCodeValue);
-          if (!costCode) {
-            invalidCostCodeRows.push(`Row ${index + 1} (Value: "${costCodeValue}")`);
+          // Period Validation
+          const periodValue = row['Reporting Period'];
+          const period = findPeriod(periodValue);
+          if (!period) {
+            errors.push({ row: rowNum, msg: `Invalid Period: "${periodValue}"`, type: 'error' });
+          } else {
+            const pIdx = periods.findIndex(p => p.id === period.id);
+            if (pIdx > currentPeriodIndex) {
+              errors.push({ row: rowNum, msg: `Future Period (${pIdx + 1}) - Actuals not allowed`, type: 'error' });
+            }
+          }
+
+          // Cost Validation
+          if (isNaN(Number(row['Cost']))) {
+            errors.push({ row: rowNum, msg: `Invalid Cost: "${row['Cost']}" (Must be a number)`, type: 'error' });
           }
         });
 
-        if (invalidPeriodRows.length > 0 || futurePeriodRows.length > 0 || invalidCostCodeRows.length > 0) {
-          toast.error(
-            <div className="space-y-2">
-              <p className="font-bold">Import Failed</p>
-              {invalidCostCodeRows.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-red-500">Invalid Cost Codes (Not found):</p>
-                  <ul className="text-[10px] list-disc pl-4 max-h-20 overflow-y-auto">
-                    {invalidCostCodeRows.slice(0, 5).map((err, i) => <li key={i}>{err}</li>)}
-                    {invalidCostCodeRows.length > 5 && <li>...and {invalidCostCodeRows.length - 5} more</li>}
-                  </ul>
-                </div>
-              )}
-              {invalidPeriodRows.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-red-500">Invalid Periods (Not found):</p>
-                  <ul className="text-[10px] list-disc pl-4 max-h-20 overflow-y-auto">
-                    {invalidPeriodRows.slice(0, 5).map((err, i) => <li key={i}>{err}</li>)}
-                    {invalidPeriodRows.length > 5 && <li>...and {invalidPeriodRows.length - 5} more</li>}
-                  </ul>
-                </div>
-              )}
-              {futurePeriodRows.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-orange-500">Future Periods (Actuals not allowed):</p>
-                  <ul className="text-[10px] list-disc pl-4 max-h-20 overflow-y-auto">
-                    {futurePeriodRows.slice(0, 5).map((err, i) => <li key={i}>{err}</li>)}
-                    {futurePeriodRows.length > 5 && <li>...and {futurePeriodRows.length - 5} more</li>}
-                  </ul>
-                </div>
-              )}
-            </div>,
-            { duration: 8000 }
-          );
-          e.target.value = '';
-          return;
-        }
+        setImportWizard({
+          isOpen: true,
+          phase: 'preview',
+          data,
+          errors,
+          progress: 0,
+          total: data.length,
+          processed: 0
+        });
 
-        data.forEach(row => {
-          const costCode = costCodes.find(cc => cc.code === String(row['Cost Code ID']));
+      } catch (error) {
+        console.error("Error reading Excel:", error);
+        toast.error("Failed to read Excel file.");
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
+  const executeImport = async () => {
+    const { data } = importWizard;
+    const periods = project.reportingPeriods?.periods || [];
+    const enterpriseAttrs = (enterprise.lineItemAttributes || []).filter(a => a.title);
+    const projectAttrs = (project.lineItemAttributes || []).filter(a => a.title);
+    const affectedCostCodeIds = new Set<string>();
+
+    const findPeriod = (val: any) => {
+      const strVal = String(val).trim();
+      const numVal = parseInt(strVal);
+      if (!isNaN(numVal) && numVal > 0 && numVal <= periods.length) {
+        return periods[numVal - 1];
+      }
+      return periods.find(p => p.name === strVal);
+    };
+
+    setImportWizard(prev => ({ ...prev, phase: 'processing', progress: 0 }));
+
+    const chunkSize = 400;
+    const totalChunks = Math.ceil(data.length / chunkSize);
+    
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const chunk = data.slice(i * chunkSize, (i + 1) * chunkSize);
+        const batch = writeBatch(db);
+        
+        chunk.forEach(row => {
+          const costCode = costCodes.find(cc => cc.code === String(row['Cost Code ID']).trim());
           const period = findPeriod(row['Reporting Period']);
           
           if (costCode) affectedCostCodeIds.add(costCode.id);
@@ -478,20 +531,21 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
         });
 
         await batch.commit();
-        
-        // Sync affected cost codes
-        for (const ccId of affectedCostCodeIds) {
-          await syncActualCostsToCostCode(ccId);
-        }
-
-        toast.success(`Imported ${data.length} records successfully`);
-      } catch (error) {
-        console.error("Error importing Excel:", error);
-        toast.error("Failed to import records");
+        const processed = Math.min((i + 1) * chunkSize, data.length);
+        setImportWizard(prev => ({ 
+          ...prev, 
+          processed,
+          progress: Math.round((processed / data.length) * 100) 
+        }));
       }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = '';
+      
+      toast.success(`Imported ${data.length} records successfully. Click 'Calculate' in the Cost Codes module to update totals.`, { duration: 5000 });
+      setImportWizard(prev => ({ ...prev, isOpen: false }));
+    } catch (error) {
+      console.error("Import execution error:", error);
+      toast.error("Failed to complete import.");
+      setImportWizard(prev => ({ ...prev, isOpen: false }));
+    }
   };
 
   const onCellValueChanged = async (event: CellValueChangedEvent) => {
@@ -551,13 +605,23 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
           {
             headerName: 'Cost Code ID',
             field: 'costCodeId',
+            sort: 'asc',
             width: 180,
             checkboxSelection: true,
             headerCheckboxSelection: true,
+            headerCheckboxSelectionFilteredOnly: true,
             editable: isProjectAdmin,
-            cellEditor: 'agSelectCellEditor',
+            cellEditor: 'agRichSelectCellEditor',
             cellEditorParams: {
               values: ['', ...costCodes.map(c => c.id)],
+              formatValue: (id: string) => {
+                if (!id) return '';
+                const cc = costCodes.find(c => c.id === id);
+                return cc ? `${cc.code} - ${cc.name}` : id;
+              },
+              searchType: 'match',
+              allowTyping: true,
+              filterList: true
             },
             valueFormatter: (params) => {
               if (!params.value) return '';
@@ -586,7 +650,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
             editable: isProjectAdmin,
             cellEditor: 'agSelectCellEditor',
             cellEditorParams: {
-              values: ['MAN', 'ACC', 'FIN'],
+              values: ['MAN', 'ACC', 'FIN', 'REV'],
             },
             filter: 'agSetColumnFilter',
           },
@@ -678,17 +742,20 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
       headerName: 'Actions',
       width: 80,
       pinned: 'right',
-      cellRenderer: (params: any) => (
-        <div className="flex items-center justify-center h-full">
-          <button 
-            onClick={() => handleDeleteRecord(params.data.id, params.data.costCodeId)}
-            className="p-1 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded transition-colors"
-            disabled={!isProjectAdmin}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      )
+      cellRenderer: (params: any) => {
+        if (params.node.rowPinned) return null;
+        return (
+          <div className="flex items-center justify-center h-full">
+            <button 
+              onClick={() => handleDeleteRecord(params.data.id, params.data.costCodeId)}
+              className="p-1 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded transition-colors"
+              disabled={!isProjectAdmin}
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      }
     });
 
     return defs;
@@ -721,6 +788,17 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
   }), []);
 
   const totalActualCost = useMemo(() => records.reduce((sum, r) => sum + (Number(r.cost) || 0), 0), [records]);
+
+  const pinnedTopRowData = useMemo(() => {
+    if (records.length === 0) return [];
+    return [{
+      costCodeId: 'SubTotal',
+      item: 'TOTAL ACTUALS',
+      cost: totalActualCost,
+      isPinned: true
+    }];
+  }, [records, totalActualCost]);
+
   const currentPeriodId = project.reportingPeriods?.currentPeriodId;
   const currentPeriodCost = useMemo(() => 
     records.filter(r => r.reportingPeriodId === currentPeriodId).reduce((sum, r) => sum + (Number(r.cost) || 0), 0),
@@ -728,44 +806,20 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
   );
 
   return (
-    <div className="flex-1 flex flex-col p-8 overflow-hidden bg-gray-50/50 dark:bg-transparent">
-      <div className="flex justify-between items-end mb-8">
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 bg-black dark:bg-white rounded-lg flex items-center justify-center">
-              <DollarSign className="w-5 h-5 text-white dark:text-black" />
-            </div>
-            <h1 className="text-2xl font-bold dark:text-white">Actual Cost Management</h1>
-          </div>
-          <p className="text-sm text-gray-500">Track and manage project expenditures and actual costs.</p>
-        </div>
-        <div className="flex gap-3">
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            accept=".xlsx,.xls,.csv"
-            onChange={handleImportExcel}
-          />
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="rounded-xl border-gray-200 dark:border-white/10"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!isProjectAdmin}
-          >
-            <Upload className="w-4 h-4 mr-2" />
-            Import
-          </Button>
-          <Button 
-            variant="outline" 
-            size="sm" 
-            className="rounded-xl border-gray-200 dark:border-white/10"
-            onClick={handleExportExcel}
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
+    <div className="flex-1 flex flex-col p-8 overflow-hidden bg-gray-50/50 dark:bg-transparent h-full">
+      <DataGridModule
+        title="Actual Cost Management"
+        description="Track and manage project expenditures and actual costs."
+        icon={<DollarSign className="w-4 h-4 text-gray-400" />}
+        searchPlaceholder="Search transactions..."
+        quickFilterText={quickFilterText}
+        onQuickFilterChange={setQuickFilterText}
+        onImport={() => fileInputRef.current?.click()}
+        onExport={handleExportExcel}
+        onAdd={handleAddRecord}
+        selectedCount={selectedIds.size}
+        onBulkDelete={() => setIsDeleteConfirmOpen(true)}
+        extraToolbarActions={
           <Button 
             variant="outline"
             size="sm"
@@ -778,236 +832,338 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
             <BarChart3 className="w-4 h-4 mr-2" />
             Histogram
           </Button>
-          <Button 
-            size="sm" 
-            onClick={handleAddRecord}
-            className="rounded-xl bg-black dark:bg-white text-white dark:text-black hover:opacity-90 transition-opacity"
-            disabled={!isProjectAdmin}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add Transaction
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Total Actual Cost (To Date)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold dark:text-white">{formatCurrency(totalActualCost)}</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Actual Cost (This Period)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold dark:text-white">{formatCurrency(currentPeriodCost)}</p>
-          </CardContent>
-        </Card>
-        <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Total Transactions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-2xl font-bold dark:text-white">{records.length}</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <AnimatePresence>
-        {isChartVisible && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="mb-8 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 p-6 overflow-hidden shadow-sm"
-          >
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <BarChart3 className="w-5 h-5 text-blue-500" />
-                  <h3 className="text-sm font-bold dark:text-white uppercase tracking-widest">Cost Distribution & Cumulative Flow</h3>
-                </div>
-                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-sm bg-blue-500" />
-                    <span className="text-[10px] font-bold text-gray-500 uppercase">Periodic Cost</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-0.5 bg-emerald-500" />
-                    <span className="text-[10px] font-bold text-gray-500 uppercase">Cumulative Cost</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="h-80 w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? '#333' : '#eee'} />
-                    <XAxis 
-                      dataKey="name" 
-                      fontSize={10} 
-                      tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      label={{ value: 'Reporting Period', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#999' }}
-                    />
-                    <YAxis 
-                      yAxisId="left"
-                      fontSize={10} 
-                      tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                      domain={[0, 'auto']}
-                    />
-                    <YAxis 
-                      yAxisId="right"
-                      orientation="right"
-                      fontSize={10} 
-                      tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                      domain={[0, 'auto']}
-                    />
-                    <Tooltip 
-                      contentStyle={{ 
-                        backgroundColor: theme === 'dark' ? '#141414' : '#fff',
-                        borderColor: theme === 'dark' ? '#333' : '#eee',
-                        borderRadius: '12px',
-                        fontSize: '11px',
-                        padding: '12px',
-                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
-                      }}
-                      formatter={(val: number) => [`$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, '']}
-                      labelFormatter={(label) => `Period ${label}`}
-                    />
-                    <Bar 
-                      yAxisId="left" 
-                      dataKey="cost" 
-                      name="Periodic Cost" 
-                      fill="#3b82f6" 
-                      radius={[4, 4, 0, 0]} 
-                      barSize={30}
-                    >
-                      <LabelList 
-                        dataKey="cost" 
-                        position="top" 
-                        formatter={(val: number) => val > 0 ? `${Math.round(val / 1000)}k` : ''} 
-                        style={{ fill: theme === 'dark' ? '#fff' : '#000', fontWeight: 'bold', fontSize: '10px' }}
-                      />
-                    </Bar>
-                    <Line 
-                      yAxisId="right" 
-                      type="monotone" 
-                      dataKey="cumulative" 
-                      name="Cumulative Cost" 
-                      stroke="#10b981" 
-                      strokeWidth={3} 
-                      dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: theme === 'dark' ? '#141414' : '#fff' }} 
-                      activeDot={{ r: 6, strokeWidth: 0 }}
-                    />
-                  </ComposedChart>
-                </ResponsiveContainer>
-              </div>
+        }
+        topContent={
+          <div className="space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Total Actual Cost (To Date)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold dark:text-white">{formatCurrency(totalActualCost)}</p>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Actual Cost (This Period)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold dark:text-white">{formatCurrency(currentPeriodCost)}</p>
+                </CardContent>
+              </Card>
+              <Card className="rounded-2xl border-gray-200 dark:border-white/10 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Total Transactions</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold dark:text-white">{records.length}</p>
+                </CardContent>
+              </Card>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
-      <div className="flex-1 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 flex flex-col overflow-hidden shadow-sm">
-        <div className="p-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between gap-4 bg-gray-50/50 dark:bg-white/5">
-          <div className="flex items-center gap-4 flex-1">
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input 
-                placeholder="Search transactions..." 
-                value={quickFilterText}
-                onChange={(e) => setQuickFilterText(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-              />
-            </div>
-            {selectedIds.size > 0 && (
-              <div className="flex items-center gap-2 animate-in slide-in-from-left-2 duration-200">
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
-                  className="rounded-xl"
-                  onClick={() => setIsDeleteConfirmOpen(true)}
+            <AnimatePresence>
+              {isChartVisible && (
+                <motion.div 
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 p-6 overflow-hidden shadow-sm"
                 >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Delete Selected ({selectedIds.size})
-                </Button>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <BarChart3 className="w-5 h-5 text-blue-500" />
+                        <h3 className="text-sm font-bold dark:text-white uppercase tracking-widest">Cost Distribution & Cumulative Flow</h3>
+                      </div>
+                      <div className="flex items-center gap-6">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-sm bg-blue-500" />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">Periodic Cost</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-0.5 bg-emerald-500" />
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">Cumulative Cost</span>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="h-80 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? '#333' : '#eee'} />
+                          <XAxis 
+                            dataKey="name" 
+                            fontSize={10} 
+                            tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
+                            axisLine={false}
+                            tickLine={false}
+                            label={{ value: 'Reporting Period', position: 'insideBottom', offset: -10, fontSize: 10, fill: '#999' }}
+                          />
+                          <YAxis 
+                            yAxisId="left"
+                            fontSize={10} 
+                            tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
+                            domain={[0, 'auto']}
+                          />
+                          <YAxis 
+                            yAxisId="right"
+                            orientation="right"
+                            fontSize={10} 
+                            tick={{ fill: theme === 'dark' ? '#999' : '#666' }} 
+                            axisLine={false}
+                            tickLine={false}
+                            tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
+                            domain={[0, 'auto']}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: theme === 'dark' ? '#141414' : '#fff',
+                              borderColor: theme === 'dark' ? '#333' : '#eee',
+                              borderRadius: '12px',
+                              fontSize: '11px',
+                              padding: '12px',
+                              boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)'
+                            }}
+                            formatter={(val: number) => [`$${val.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, '']}
+                            labelFormatter={(label) => `Period ${label}`}
+                          />
+                          <Bar 
+                            yAxisId="left" 
+                            dataKey="cost" 
+                            name="Periodic Cost" 
+                            fill="#3b82f6" 
+                            radius={[4, 4, 0, 0]} 
+                            barSize={30}
+                          >
+                            <LabelList 
+                              dataKey="cost" 
+                              position="top" 
+                              formatter={(val: number) => val > 0 ? `${Math.round(val / 1000)}k` : ''} 
+                              style={{ fill: theme === 'dark' ? '#fff' : '#000', fontWeight: 'bold', fontSize: '10px' }}
+                            />
+                          </Bar>
+                          <Line 
+                            yAxisId="right" 
+                            type="monotone" 
+                            dataKey="cumulative" 
+                            name="Cumulative Cost" 
+                            stroke="#10b981" 
+                            strokeWidth={3} 
+                            dot={{ r: 4, fill: '#10b981', strokeWidth: 2, stroke: theme === 'dark' ? '#141414' : '#fff' }} 
+                            activeDot={{ r: 6, strokeWidth: 0 }}
+                          />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        }
+        gridRef={gridRef}
+        rowData={records}
+        columnDefs={columnDefs}
+        pinnedTopRowData={pinnedTopRowData}
+        theme={theme}
+        gridProps={{
+          getRowId: (params: any) => params.data.id,
+          onCellValueChanged: onCellValueChanged,
+          defaultColDef: {
+            sortable: true,
+            filter: true,
+            resizable: true,
+            minWidth: 100,
+            enableRowGroup: true,
+            enablePivot: true,
+            enableValue: true,
+          },
+          sideBar: sideBar,
+          statusBar: statusBar,
+          loading: isLoading,
+          rowSelection: "multiple",
+          suppressRowClickSelection: true,
+          enableRangeSelection: true,
+          enableFillHandle: true,
+          undoRedoCellEditing: true,
+          enableCellTextSelection: true,
+          pagination: true,
+          paginationPageSize: 100,
+          onSelectionChanged: (event: any) => {
+            const selectedRows = event.api.getSelectedRows();
+            const displayedSelected = selectedRows.filter((row: any) => {
+              const node = event.api.getRowNode(row.id);
+              return node && node.displayed;
+            });
+            setSelectedIds(new Set(displayedSelected.map((r: any) => r.id)));
+          },
+          onFilterChanged: (event: any) => {
+            const selectedRows = event.api.getSelectedRows();
+            const displayedSelected = selectedRows.filter((row: any) => {
+              const node = event.api.getRowNode(row.id);
+              return node && node.displayed;
+            });
+            setSelectedIds(new Set(displayedSelected.map((r: any) => r.id)));
+          }
+        }}
+      />
+
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        className="hidden" 
+        accept=".xlsx,.xls,.csv"
+        onChange={handleImportExcel}
+      />
+
+      {/* Import Wizard Modal */}
+      <Dialog 
+        open={importWizard.isOpen} 
+        onOpenChange={(open) => !importWizard.phase.includes('processing') && setImportWizard(prev => ({ ...prev, isOpen: open }))}
+      >
+        <DialogContent className="max-w-[95vw] w-full max-h-[95vh] flex flex-col p-0 overflow-hidden rounded-[2rem] border-none shadow-2xl ring-1 ring-black/5 dark:ring-white/5 bg-white dark:bg-[#1a1a1a]">
+          <DialogHeader className="p-8 pb-4 bg-gray-50 dark:bg-white/5 border-b border-gray-100 dark:border-white/10 shrink-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-2xl font-bold tracking-tight">
+                  {importWizard.phase === 'preview' ? 'Import Preview' : 'Processing Import'}
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  {importWizard.phase === 'preview' 
+                    ? `Reviewing ${importWizard.data.length} transactions from Excel.` 
+                    : `Please wait while we process ${importWizard.total} records.`}
+                </DialogDescription>
+              </div>
+              <Badge variant={importWizard.errors.some(e => e.type === 'error') ? 'destructive' : 'secondary'} className="px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest">
+                {importWizard.errors.filter(e => e.type === 'error').length} Errors Found
+              </Badge>
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-hidden flex flex-col">
+            {importWizard.phase === 'preview' ? (
+              <div className="flex-1 overflow-hidden flex flex-col">
+                {/* Error List */}
+                {importWizard.errors.length > 0 && (
+                  <div className="p-4 bg-red-50/50 dark:bg-red-500/5 border-b border-red-100 dark:border-red-500/10 shrink-0">
+                    <div className="flex items-center gap-2 mb-2 text-red-600 font-bold text-xs uppercase tracking-wider">
+                      <AlertCircle className="w-4 h-4" />
+                      Critical Validation Errors
+                    </div>
+                    <ScrollArea className="h-24">
+                      <ul className="space-y-1">
+                        {importWizard.errors.map((err, i) => (
+                          <li key={i} className="text-[11px] text-red-700 dark:text-red-400 flex gap-2">
+                            <span className="font-mono font-bold shrink-0">Row {err.row}:</span>
+                            <span>{err.msg}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {/* Data Preview Table */}
+                <div className="flex-1 overflow-auto p-4">
+                  <table className="w-full text-left text-[11px] border-collapse">
+                    <thead className="sticky top-0 bg-white dark:bg-[#1a1a1a] shadow-sm z-10">
+                      <tr className="border-b border-gray-200 dark:border-white/10 uppercase tracking-widest text-gray-500 transition-colors">
+                        <th className="py-2 px-4 font-bold">#</th>
+                        <th className="py-2 px-4 font-bold">Cost Code ID</th>
+                        <th className="py-2 px-4 font-bold">Item</th>
+                        <th className="py-2 px-4 font-bold">Reporting Period</th>
+                        <th className="py-2 px-4 font-bold text-right">Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                      {importWizard.data.slice(0, 100).map((row, i) => (
+                        <tr key={i} className="hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group">
+                          <td className="py-2 px-4 font-mono text-gray-400">{i + 1}</td>
+                          <td className="py-2 px-4 font-bold text-blue-600 dark:text-blue-400">{row['Cost Code ID']}</td>
+                          <td className="py-2 px-4">{row['Item']}</td>
+                          <td className="py-2 px-4">{row['Reporting Period']}</td>
+                          <td className="py-2 px-4 text-right font-mono font-bold">{formatCurrency(row['Cost'])}</td>
+                        </tr>
+                      ))}
+                      {importWizard.data.length > 100 && (
+                        <tr>
+                          <td colSpan={5} className="py-4 text-center text-gray-400 italic">
+                            + {importWizard.data.length - 100} more rows...
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-12 gap-8 bg-white dark:bg-[#141414]">
+                <div className="relative w-48 h-48">
+                  {/* Circular Progress (Stylized) */}
+                  <svg className="w-full h-full rotate-[-90deg]">
+                    <circle
+                      cx="96" cy="96" r="80"
+                      fill="none" stroke="currentColor" strokeWidth="12"
+                      className="text-gray-100 dark:text-white/5"
+                    />
+                    <circle
+                      cx="96" cy="96" r="80"
+                      fill="none" stroke="currentColor" strokeWidth="12"
+                      strokeDasharray={2 * Math.PI * 80}
+                      strokeDashoffset={2 * Math.PI * 80 * (1 - importWizard.progress / 100)}
+                      strokeLinecap="round"
+                      className="text-blue-600 transition-all duration-500 ease-out"
+                    />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-4xl font-bold text-slate-900 dark:text-white">{importWizard.progress}%</span>
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">Complete</span>
+                  </div>
+                </div>
+
+                <div className="w-full max-w-md space-y-2">
+                  <div className="flex justify-between text-xs font-bold text-gray-500 uppercase tracking-widest">
+                    <span>Processed {importWizard.processed} records</span>
+                    <span>Total {importWizard.total}</span>
+                  </div>
+                  <div className="h-3 w-full bg-gray-100 dark:bg-white/5 rounded-full overflow-hidden">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${importWizard.progress}%` }}
+                      className="h-full bg-blue-600 rounded-full"
+                    />
+                  </div>
+                  <p className="text-center text-sm text-gray-500 animate-pulse mt-4 italic font-medium">
+                    Saving transactions in robust chunks to ensure stability...
+                  </p>
+                </div>
               </div>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="rounded-xl border-gray-200 dark:border-white/10">
-              <Filter className="w-4 h-4 mr-2" />
-              Filter
-            </Button>
-          </div>
-        </div>
-        
-        <div className="flex-1 min-h-0 relative ag-theme-quartz dark:ag-theme-quartz-dark">
-          <AgGridReact
-            ref={gridRef}
-            rowData={records}
-            columnDefs={columnDefs}
-            quickFilterText={quickFilterText}
-            onCellValueChanged={onCellValueChanged}
-            defaultColDef={{
-              sortable: true,
-              filter: true,
-              resizable: true,
-              minWidth: 100,
-              enableRowGroup: true,
-              enablePivot: true,
-              enableValue: true,
-            }}
-            sideBar={sideBar}
-            statusBar={statusBar}
-            animateRows={true}
-            loading={isLoading}
-            rowSelection="multiple"
-            suppressRowClickSelection={true}
-            enableRangeSelection={true}
-            enableFillHandle={true}
-            undoRedoCellEditing={true}
-            enableCellTextSelection={true}
-            pagination={true}
-            paginationPageSize={100}
-            onSelectionChanged={(event) => {
-              const selectedNodes = event.api.getSelectedNodes();
-              setSelectedIds(new Set(selectedNodes.map(node => node.data.id)));
-            }}
-          />
-        </div>
-      </div>
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
-        <DialogContent className="rounded-3xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <AlertCircle className="w-5 h-5" />
-              Confirm Deletion
-            </DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete {selectedIds.size} selected transaction{selectedIds.size > 1 ? 's' : ''}? This action cannot be undone and will update the associated Cost Codes.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)} className="rounded-xl">
+          <DialogFooter className="p-8 bg-gray-50 dark:bg-white/5 border-t border-gray-100 dark:border-white/10 shrink-0 gap-3">
+            <Button 
+              variant="ghost" 
+              onClick={() => setImportWizard(prev => ({ ...prev, isOpen: false }))}
+              disabled={importWizard.phase === 'processing'}
+              className="rounded-xl px-6 font-bold"
+            >
               Cancel
             </Button>
-            <Button variant="destructive" onClick={handleDeleteSelected} className="rounded-xl">
-              Delete Transactions
-            </Button>
+            {importWizard.phase === 'preview' && (
+              <Button 
+                onClick={executeImport}
+                disabled={importWizard.errors.some(e => e.type === 'error')}
+                className="bg-black dark:bg-white text-white dark:text-black rounded-xl px-8 font-bold flex items-center gap-2 hover:opacity-90 shadow-xl shadow-black/20"
+              >
+                <Upload className="w-4 h-4" />
+                Proceed with Import
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
-import { toast } from 'sonner';
+import toast from 'react-hot-toast';
 import DataGridModule from './DataGridModule';
 import { ColDef } from 'ag-grid-community';
 
@@ -47,11 +47,11 @@ const AttributeTitleInput = ({
   );
 };
 
-interface ProjectLineItemAttributesProps {
+interface SubcontractAttributesProps {
   project: Project;
 }
 
-const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ project }) => {
+const SubcontractAttributes: React.FC<SubcontractAttributesProps> = ({ project }) => {
   const [attributes, setAttributes] = useState<ProjectAttribute[]>([]);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>('01');
   const [attrSearch, setAttrSearch] = useState('');
@@ -62,20 +62,20 @@ const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ p
 
   useEffect(() => {
     // Initialize with 10 default attributes if empty
-    const currentAttrs = project.lineItemAttributes || [];
+    const currentAttrs = project.subcontractAttributes || [];
     const initializedAttrs = Array.from({ length: 10 }, (_, i) => {
       const id = (i + 1).toString().padStart(2, '0');
       const existing = currentAttrs.find(a => a.id === id);
       return existing || { id, title: '', values: [] };
     });
     setAttributes(initializedAttrs);
-  }, [project.lineItemAttributes]);
+  }, [project.subcontractAttributes]);
 
   const handleGlobalSave = async (updatedAttrs: ProjectAttribute[]) => {
     try {
-      await updateDoc(doc(db, 'projects', project.id), { lineItemAttributes: updatedAttrs });
+      await updateDoc(doc(db, 'projects', project.id), { subcontractAttributes: updatedAttrs });
     } catch (error) {
-      console.error('Error saving line item attributes:', error);
+      console.error('Error saving subcontract attributes:', error);
       toast.error('Failed to save changes.');
     }
   };
@@ -196,7 +196,7 @@ const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ p
     const ws = XLSX.utils.json_to_sheet(attr.values);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Attribute ${attr.id}`);
-    XLSX.writeFile(wb, `${project.projectCode}_LineItemAttr_${attr.id}.xlsx`);
+    XLSX.writeFile(wb, `${project.projectCode}_SubcontractAttr_${attr.id}.xlsx`);
   };
 
   const selectedAttr = attributes.find(a => a.id === selectedAttrId);
@@ -309,7 +309,7 @@ const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ p
                 className="flex-1 flex flex-col min-h-0"
               >
                 <DataGridModule
-                  title={`Attribute ${selectedAttrId}${selectedAttr?.title ? `: ${selectedAttr.title}` : ''}`}
+                  title={`Subcontract Attribute ${selectedAttrId}${selectedAttr?.title ? `: ${selectedAttr.title}` : ''}`}
                   description="Manage the list of allowed values for this attribute."
                   rowData={selectedAttr?.values || []}
                   columnDefs={columnDefs}
@@ -440,4 +440,4 @@ const ProjectLineItemAttributes: React.FC<ProjectLineItemAttributesProps> = ({ p
   );
 };
 
-export default ProjectLineItemAttributes;
+export default SubcontractAttributes;

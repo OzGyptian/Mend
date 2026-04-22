@@ -69,7 +69,11 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
     },
     getSelectedRows: () => {
       if (gridRef.current?.api) {
-        return gridRef.current.api.getSelectedRows();
+        const selectedRows = gridRef.current.api.getSelectedRows();
+        return selectedRows.filter(row => {
+          const node = gridRef.current?.api.getRowNode(row.id);
+          return node && node.displayed;
+        });
       }
       return [];
     },
@@ -132,7 +136,8 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
         width: 120,
         filter: 'agTextColumnFilter',
         checkboxSelection: true,
-        headerCheckboxSelection: true
+        headerCheckboxSelection: true,
+        headerCheckboxSelectionFilteredOnly: true
       },
       { 
         headerName: 'Description', 
@@ -312,7 +317,45 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
       valueFormatter: currencyFormatter
     }));
 
-    return [...baseCols, ...phasingCols];
+    // Enterprise Cost Code Attributes
+    const enterpriseCostCodeAttrs = (enterprise.costCodeAttributes || []).filter(attr => attr.title && attr.title.trim() !== '');
+    const costCodeAttrCols: ColDef[] = enterpriseCostCodeAttrs.map(attr => ({
+      headerName: `Cost Code: ${attr.title}`,
+      field: `enterpriseCostCodeAttributes.${attr.id}`,
+      width: 150,
+      editable: true,
+      filter: 'agSetColumnFilter',
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: {
+        values: ['', ...(attr.values?.map(v => v.id) || [])]
+      },
+      valueFormatter: (params: ValueFormatterParams) => {
+        if (!params.value) return '';
+        const match = attr.values?.find(v => v.id === params.value);
+        return match ? `${match.id} - ${match.description}` : params.value;
+      }
+    }));
+
+    // Enterprise Line-Item Attributes
+    const enterpriseLineItemAttrs = (enterprise.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '');
+    const lineItemAttrCols: ColDef[] = enterpriseLineItemAttrs.map(attr => ({
+      headerName: `Line Item: ${attr.title}`,
+      field: `enterpriseLineItemAttributes.${attr.id}`,
+      width: 150,
+      editable: true,
+      filter: 'agSetColumnFilter',
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: {
+        values: ['', ...(attr.values?.map(v => v.id) || [])]
+      },
+      valueFormatter: (params: ValueFormatterParams) => {
+        if (!params.value) return '';
+        const match = attr.values?.find(v => v.id === params.value);
+        return match ? `${match.id} - ${match.description}` : params.value;
+      }
+    }));
+
+    return [...baseCols, ...costCodeAttrCols, ...lineItemAttrCols, ...phasingCols];
   }, [sheetType, project, enterprise, phasingMonths, theme]);
 
   const onCellValueChanged = useCallback((event: CellValueChangedEvent) => {
@@ -381,6 +424,7 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
         ref={gridRef}
         rowData={data}
         columnDefs={columnDefs}
+        getRowId={(params) => params.data.id}
         defaultColDef={defaultColDef}
         sideBar={sideBar}
         rowSelection="multiple"

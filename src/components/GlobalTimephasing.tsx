@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Project, Enterprise, CostCode } from '../types';
+import { Project, Enterprise, CostCode, Subcontract } from '../types';
 import { db, auth } from '../firebase';
 import { 
   collection, 
@@ -50,6 +50,7 @@ import { cn, formatCurrency } from '../lib/utils';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
+import DataGridModule from './DataGridModule';
 import { 
   Dialog, 
   DialogContent, 
@@ -69,6 +70,7 @@ interface GlobalTimephasingProps {
 
 export default function GlobalTimephasing({ project, enterprise, theme = 'light' }: GlobalTimephasingProps) {
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [loading, setLoading] = useState(true);
   const [timephasingRows, setTimephasingRows] = useState<any[]>([]);
   const [isTimephasingLoading, setIsTimephasingLoading] = useState(false);
@@ -121,6 +123,18 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     });
     return () => unsubscribe();
   }, [project.id, project.users]);
+
+  // Fetch all subcontracts
+  useEffect(() => {
+    const q = query(
+      collection(db, 'subcontracts'),
+      where('projectId', '==', project.id)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
+    });
+    return () => unsubscribe();
+  }, [project.id]);
 
   // Fetch all phasing data and construct rows
   useEffect(() => {
@@ -186,6 +200,38 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             }
           });
 
+          // Subcontract Phasing Aggregation
+          const subphasingByPeriod: Record<string, number> = {};
+          const matchCode = code.code.trim().toUpperCase();
+          
+          subcontracts.forEach(sub => {
+            (sub.lineItems || []).forEach(li => {
+              if (li.status === 'Rejected') return;
+              
+              const rawId = li.costCodeId;
+              const assignedCodeId = (rawId && rawId.trim() !== '') ? rawId : sub.defaultCostCodeId;
+              if (!assignedCodeId) return;
+
+              const assignedClean = assignedCodeId.toString().trim().toUpperCase();
+              const assignedCodeOnly = assignedClean.split(' - ')[0].trim();
+
+              let isMatch = (assignedClean === matchCode || assignedCodeOnly === matchCode);
+              if (!isMatch) {
+                const targetId = (code.id || '').toString().trim().toUpperCase();
+                const targetCodeValue = (code.code || '').toString().trim().toUpperCase();
+                if (assignedClean === targetId || assignedCodeOnly === targetId || assignedClean === targetCodeValue || assignedCodeOnly === targetCodeValue) {
+                  isMatch = true;
+                }
+              }
+
+              if (isMatch && li.periodValues) {
+                Object.entries(li.periodValues).forEach(([pid, val]) => {
+                  subphasingByPeriod[pid] = (subphasingByPeriod[pid] || 0) + (Number(val) || 0);
+                });
+              }
+            });
+          });
+
           // Baseline Row
           allRows.push({
             id: `${code.code}_baseline`,
@@ -197,7 +243,15 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             startDate: baselineDoc?.startDate ? new Date(baselineDoc.startDate) : '',
             endDate: baselineDoc?.endDate ? new Date(baselineDoc.endDate) : '',
             distribution: baselineDoc?.distribution || 'Even',
-            periodValues: baselineDoc?.periodValues || {},
+            periodValues: periods.reduce((acc, p) => {
+              const source = baselineDoc?.phasingSource || 'Manual';
+              if (source === 'SubContract') {
+                acc[p.id] = subphasingByPeriod[p.id] || 0;
+              } else {
+                acc[p.id] = baselineDoc?.periodValues?.[p.id] || 0;
+              }
+              return acc;
+            }, {} as Record<string, number>),
             totalFromCode: code.baselineBudget || 0,
             docId: baselineDoc?.id
           });
@@ -213,7 +267,15 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             startDate: approvedDoc?.startDate ? new Date(approvedDoc.startDate) : '',
             endDate: approvedDoc?.endDate ? new Date(approvedDoc.endDate) : '',
             distribution: approvedDoc?.distribution || 'Even',
-            periodValues: approvedDoc?.periodValues || {},
+            periodValues: periods.reduce((acc, p) => {
+              const source = approvedDoc?.phasingSource || 'Manual';
+              if (source === 'SubContract') {
+                acc[p.id] = subphasingByPeriod[p.id] || 0;
+              } else {
+                acc[p.id] = approvedDoc?.periodValues?.[p.id] || 0;
+              }
+              return acc;
+            }, {} as Record<string, number>),
             totalFromCode: code.approvedBudget || 0,
             docId: approvedDoc?.id
           });
@@ -239,12 +301,37 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
                 } else {
                   acc[p.id] = etcByPeriod[p.id] || 0;
                 }
+              } else if (phasingSource === 'SubContract') {
+                if (idx <= currentPeriodIndex) {
+                  acc[p.id] = actualsByPeriod[p.id] || 0;
+                } else {
+                  acc[p.id] = subphasingByPeriod[p.id] || 0;
+                }
               } else {
                 acc[p.id] = eacDoc?.periodValues?.[p.id] || 0;
+                if (idx <= currentPeriodIndex) {
+                  acc[p.id] = actualsByPeriod[p.id] || 0;
+                }
               }
               return acc;
             }, {} as Record<string, number>)
           });
+
+          // EAC Previous Row (for chart only)
+          const eacPrevDoc = codePhasing.find((p: any) => p.type === 'eacPrevious');
+          if (eacPrevDoc) {
+            allRows.push({
+              id: `${code.code}_eac_prev`,
+              costCode: code.code,
+              costCodeName: code.name,
+              type: 'EAC Previous',
+              rowType: 'eacPrevious',
+              periodValues: eacPrevDoc.periodValues || {},
+              totalFromCode: code.estimateAtCompletionPrevious || 0,
+              docId: eacPrevDoc.id,
+              hidden: true
+            });
+          }
         });
 
         setTimephasingRows(allRows);
@@ -256,7 +343,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     };
 
     fetchData();
-  }, [costCodes, project.id, project.reportingPeriods, refreshTrigger]);
+  }, [costCodes, project.id, project.reportingPeriods, refreshTrigger, subcontracts]);
 
   const calculatePhasing = useCallback((
     total: number,
@@ -515,6 +602,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
       {
         headerName: 'Cost Code',
         field: 'costCode',
+        sort: 'asc',
         width: 150,
         pinned: 'left',
         lockPosition: 'left',
@@ -841,10 +929,10 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     if (!project.reportingPeriods?.periods || timephasingRows.length === 0) return [];
     
     // Aggregate all rows by type and period
-    const totalsByPeriod: Record<string, { baseline: number, approved: number, eac: number }> = {};
+    const totalsByPeriod: Record<string, { baseline: number, approved: number, eac: number, eacPrevious: number }> = {};
     
     project.reportingPeriods.periods.forEach(p => {
-      totalsByPeriod[p.id] = { baseline: 0, approved: 0, eac: 0 };
+      totalsByPeriod[p.id] = { baseline: 0, approved: 0, eac: 0, eacPrevious: 0 };
     });
 
     timephasingRows.forEach(row => {
@@ -853,6 +941,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           if (row.rowType === 'baseline') totalsByPeriod[periodId].baseline += Number(value) || 0;
           if (row.rowType === 'approved') totalsByPeriod[periodId].approved += Number(value) || 0;
           if (row.rowType === 'eac') totalsByPeriod[periodId].eac += Number(value) || 0;
+          if (row.rowType === 'eacPrevious') totalsByPeriod[periodId].eacPrevious += Number(value) || 0;
         }
       });
     });
@@ -860,16 +949,19 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     let cumulativeBaseline = 0;
     let cumulativeApproved = 0;
     let cumulativeEac = 0;
+    let cumulativeEacPrevious = 0;
 
     const totalBaseline = timephasingRows.filter(r => r.rowType === 'baseline').reduce((acc, r) => acc + (r.totalFromCode || 0), 0) || 1;
     const totalApproved = timephasingRows.filter(r => r.rowType === 'approved').reduce((acc, r) => acc + (r.totalFromCode || 0), 0) || 1;
     const totalEac = timephasingRows.filter(r => r.rowType === 'eac').reduce((acc, r) => acc + (r.totalFromCode || 0), 0) || 1;
+    const totalEacPrevious = timephasingRows.filter(r => r.rowType === 'eacPrevious').reduce((acc, r) => acc + (r.totalFromCode || 0), 0) || 1;
 
     return project.reportingPeriods.periods.map(p => {
-      const { baseline, approved, eac } = totalsByPeriod[p.id];
+      const { baseline, approved, eac, eacPrevious } = totalsByPeriod[p.id];
       cumulativeBaseline += baseline;
       cumulativeApproved += approved;
       cumulativeEac += eac;
+      cumulativeEacPrevious += eacPrevious;
       
       const date = new Date(p.endDate);
       const month = date.toLocaleString('default', { month: 'short' });
@@ -883,9 +975,11 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           baseline: (baseline / totalBaseline) * 100,
           approved: (approved / totalApproved) * 100,
           eac: (eac / totalEac) * 100,
+          eacPrevious: (eacPrevious / totalEacPrevious) * 100,
           cumulativeBaseline: (cumulativeBaseline / totalBaseline) * 100,
           cumulativeApproved: (cumulativeApproved / totalApproved) * 100,
-          cumulativeEac: (cumulativeEac / totalEac) * 100
+          cumulativeEac: (cumulativeEac / totalEac) * 100,
+          cumulativeEacPrevious: (cumulativeEacPrevious / totalEacPrevious) * 100
         };
       }
 
@@ -894,123 +988,58 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         baseline,
         approved,
         eac,
+        eacPrevious,
         cumulativeBaseline,
         cumulativeApproved,
-        cumulativeEac
+        cumulativeEac,
+        cumulativeEacPrevious
       };
     });
   }, [project.reportingPeriods?.periods, timephasingRows, chartMode]);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden">
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-white/10 flex flex-col gap-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg">
-              <Activity className="w-5 h-5 text-emerald-600" />
-            </div>
-            <div>
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-bold dark:text-white">Global Timephasing</h2>
-                {project.reportingPeriods?.currentPeriodId && (() => {
-                  const periods = project.reportingPeriods.periods;
-                  const currentIndex = periods.findIndex(p => p.id === project.reportingPeriods?.currentPeriodId);
-                  const currentPeriod = periods[currentIndex];
-                  if (!currentPeriod) return null;
-                  
-                  const date = new Date(currentPeriod.endDate);
-                  const month = date.toLocaleString('default', { month: 'short' });
-                  const year = date.getFullYear().toString().slice(-2);
-                  const dateStr = `P${currentIndex + 1} (${month}'${year})`;
-                  
-                  return (
-                    <span className="px-3 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 text-[10px] font-bold uppercase tracking-widest rounded-full border border-blue-100 dark:border-blue-500/20">
-                      Current Period: {dateStr}
-                    </span>
-                  );
-                })()}
-              </div>
-              <p className="text-xs text-gray-500 uppercase tracking-widest font-bold">Project-wide Phasing Overview</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search cost codes..."
-                value={quickFilterText}
-                onChange={(e) => setQuickFilterText(e.target.value)}
-                className="pl-9 pr-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white w-64"
-              />
-            </div>
-            <button
-              onClick={() => setIsChartVisible(!isChartVisible)}
-              className={cn(
-                "p-2 rounded-xl border transition-all",
-                isChartVisible 
-                  ? "bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-600/20" 
-                  : "bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/10"
-              )}
-              title="Toggle Charts"
-            >
-              <BarChart3 className="w-5 h-5" />
-            </button>
-            {selectedRowCount > 0 && (
-              <button
-                onClick={() => setIsBulkUpdateOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10 dark:shadow-white/10"
-                title={`Bulk Update (${selectedRowCount})`}
-              >
-                <Edit2 className="w-4 h-4" />
-                ({selectedRowCount})
-              </button>
+    <div className="flex-1 flex flex-col overflow-hidden h-full">
+      <DataGridModule
+        title="Global Timephasing"
+        description="Project-wide Phasing Overview"
+        icon={<Activity className="w-4 h-4 text-gray-400" />}
+        searchPlaceholder="Search cost codes..."
+        quickFilterText={quickFilterText}
+        onQuickFilterChange={setQuickFilterText}
+        onImport={() => document.getElementById('excel-import')?.click()}
+        onExport={handleExport}
+        onCalculate={handleCalculateAutoPhasing}
+        isCalculating={isTimephasingLoading}
+        selectedCount={selectedRowCount}
+        onBulkUpdate={() => setIsBulkUpdateOpen(true)}
+        project={project}
+        showCurrentPeriod={true}
+        extraToolbarActions={
+          <Button 
+            variant="outline"
+            size="sm"
+            className={cn(
+              "rounded-xl border-gray-200 dark:border-white/10 transition-all",
+              isChartVisible && "bg-black text-white dark:bg-white dark:text-black shadow-lg"
             )}
-            <button
-              onClick={handleCalculateAutoPhasing}
-              className="flex items-center gap-2 px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10 dark:shadow-white/10"
-            >
-              <Calculator className="w-4 h-4" />
-              Calculate
-            </button>
-            <div className="flex items-center gap-1">
-              <input
-                type="file"
-                id="excel-import"
-                className="hidden"
-                accept=".xlsx, .xls"
-                onChange={handleImport}
-              />
-              <button
-                onClick={() => document.getElementById('excel-import')?.click()}
-                className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                title="Import from Excel"
-              >
-                <Upload className="w-5 h-5 text-emerald-600" />
-              </button>
-              <button
-                onClick={handleExport}
-                className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                title="Export to Excel"
-              >
-                <Download className="w-5 h-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Chart Section */}
-        <AnimatePresence>
-          {isChartVisible && (
+            onClick={() => setIsChartVisible(!isChartVisible)}
+          >
+            <BarChart3 className="w-4 h-4 mr-2" />
+            Charts
+          </Button>
+        }
+        topContent={isChartVisible ? (
+          <AnimatePresence mode="wait">
             <motion.div
+              key="global-phasing-chart"
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               className="overflow-hidden"
             >
-              <div className="bg-slate-50 dark:bg-white/5 rounded-2xl p-6 border border-slate-200 dark:border-white/10">
-                <div className="flex items-center justify-between mb-6">
+              <div className="bg-slate-50 dark:bg-white/5 rounded-2xl border border-slate-200 dark:border-white/10">
+                <div className="p-6">
+                  <div className="flex items-center justify-between mb-6">
                   <div className="flex items-center gap-4">
                     <h3 className="text-sm font-bold dark:text-white">Project Cashflow Profile</h3>
                     <div className="flex bg-white dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10">
@@ -1067,6 +1096,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
                       <Area type="monotone" dataKey="cumulativeBaseline" name="Baseline (Cumulative)" stroke="#3b82f6" fill="url(#colorBaseline)" strokeWidth={3} dot={false} />
                       <Area type="monotone" dataKey="cumulativeApproved" name="Approved (Cumulative)" stroke="#10b981" fill="url(#colorApproved)" strokeWidth={3} dot={false} />
                       <Area type="monotone" dataKey="cumulativeEac" name="EAC (Cumulative)" stroke="#f59e0b" fill="url(#colorEac)" strokeWidth={3} dot={false} />
+                      <Area type="monotone" dataKey="cumulativeEacPrevious" name="EAC Previous (Cumulative)" stroke="#94a3b8" fill="url(#colorEacPrev)" strokeWidth={2} strokeDasharray="5 5" dot={false} />
                       <defs>
                         <linearGradient id="colorBaseline" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
@@ -1080,52 +1110,72 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
                           <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
                           <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
                         </linearGradient>
+                        <linearGradient id="colorEacPrev" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.05}/>
+                          <stop offset="95%" stopColor="#94a3b8" stopOpacity={0}/>
+                        </linearGradient>
                       </defs>
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               </div>
-            </motion.div>
-          )}
+            </div>
+          </motion.div>
         </AnimatePresence>
-      </div>
+      ) : null}
+        gridRef={gridRef}
+        rowData={timephasingRows}
+        columnDefs={columnDefs}
+        theme={theme}
+        gridProps={{
+          quickFilterText: quickFilterText,
+          loading: isTimephasingLoading,
+          onCellValueChanged: onCellValueChanged,
+          onSelectionChanged: (event: any) => {
+            const selectedRows = event.api.getSelectedRows();
+            const displayedSelected = selectedRows.filter((row: any) => {
+              const node = event.api.getRowNode(row.id);
+              return node && node.displayed;
+            });
+            setSelectedRowCount(displayedSelected.length);
+          },
+          onFilterChanged: (event: any) => {
+            const selectedRows = event.api.getSelectedRows();
+            const displayedSelected = selectedRows.filter((row: any) => {
+              const node = event.api.getRowNode(row.id);
+              return node && node.displayed;
+            });
+            setSelectedRowCount(displayedSelected.length);
+          },
+          getRowId: (params: any) => params.data.id,
+          isExternalFilterPresent: () => true,
+          doesExternalFilterPass: (node: any) => !node.data.hidden,
+          rowSelection: "multiple",
+          suppressRowClickSelection: true,
+          enableFillHandle: true,
+          undoRedoCellEditing: true,
+          defaultColDef: {
+            sortable: true,
+            filter: true,
+            resizable: true,
+            minWidth: 100,
+            wrapHeaderText: true,
+            autoHeaderHeight: true,
+          },
+          animateRows: true,
+          enableRangeSelection: true,
+          enableCellTextSelection: true,
+          suppressRowTransform: true,
+        }}
+      />
 
-      {/* Grid */}
-      <div className="flex-1 min-h-0 relative">
-        <div className={cn(
-          "absolute inset-0 ag-theme-quartz",
-          theme === 'dark' ? "ag-theme-quartz-dark" : ""
-        )}>
-          <AgGridReact
-            ref={gridRef}
-            rowData={timephasingRows}
-            columnDefs={columnDefs}
-            quickFilterText={quickFilterText}
-            loading={isTimephasingLoading}
-            onCellValueChanged={onCellValueChanged}
-            onSelectionChanged={() => {
-              setSelectedRowCount(gridRef.current?.api.getSelectedNodes().length || 0);
-            }}
-            getRowId={(params) => params.data.id}
-            rowSelection="multiple"
-            suppressRowClickSelection={true}
-            enableFillHandle={true}
-            undoRedoCellEditing={true}
-            defaultColDef={{
-              sortable: true,
-              filter: true,
-              resizable: true,
-              minWidth: 100,
-              wrapHeaderText: true,
-              autoHeaderHeight: true,
-            }}
-            animateRows={true}
-            enableRangeSelection={true}
-            enableCellTextSelection={true}
-            suppressRowTransform={true}
-          />
-        </div>
-      </div>
+      <input
+        type="file"
+        id="excel-import"
+        className="hidden"
+        accept=".xlsx, .xls"
+        onChange={handleImport}
+      />
 
       {/* Bulk Update Modal */}
       <Dialog open={isBulkUpdateOpen} onOpenChange={setIsBulkUpdateOpen}>

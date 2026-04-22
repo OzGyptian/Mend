@@ -53,11 +53,11 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidCostCode(data) {
-      return data.code is string && data.code.size() > 0 && data.code.size() <= 50 &&
+      return data.code is string && 
              data.projectId is string &&
-             data.name is string && data.name.size() <= 200 &&
-             data.eacMethod in ['Manual', 'Change Management', 'ETC Details', 'Sub-Contract Management'] &&
-             data.sortOrder is number;
+             (!('name' in data) || (data.name is string && data.name.size() <= 600)) &&
+             (!('eacMethod' in data) || data.eacMethod in ['Manual', 'Change Management', 'ETC Details', 'Sub-Contract Management']) &&
+             (!('sortOrder' in data) || data.sortOrder is number);
     }
 
     function isValidEtcDetail(data) {
@@ -129,6 +129,45 @@ service cloud.firestore {
              data.eacAmount is number &&
              isValidTimestamp(data.createdAt) &&
              isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidSubcontract(data) {
+      return data.projectId is string &&
+             data.enterpriseId is string &&
+             data.orderId is string && data.orderId.size() <= 100 &&
+             data.orderName is string &&
+             (!('status' in data) || data.status in ['Active', 'Complete', 'On Hold']) &&
+             (!('paymentType' in data) || data.paymentType in ['LumpSum', 'Schedule of Rates', 'Re-measurable']) &&
+             (!('vendorId' in data) || data.vendorId is string) &&
+             (!('vendorUsers' in data) || data.vendorUsers is list) &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidSubcontractLineItem(data) {
+      return data.subcontractId is string &&
+             data.projectId is string &&
+             data.itemNo is string &&
+             data.description is string &&
+             data.qty is number &&
+             data.rate is number &&
+             data.total is number &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidInvoice(data) {
+      return data.subcontractId is string &&
+             data.projectId is string &&
+             data.invoiceId is string &&
+             data.status in ['Draft', 'Submitted', 'Certified', 'Rejected', 'Paid'] &&
+             data.initiator is string &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidInvoiceItem(data) {
+      return data.invoiceId is string &&
+             data.subcontractItemId is string &&
+             data.itemNo is string &&
+             isValidTimestamp(data.createdAt);
     }
 
     // ===============================================================
@@ -250,6 +289,61 @@ service cloud.firestore {
       allow create: if canAccessProject(request.resource.data.projectId) && isValidChangeRecord(request.resource.data);
       allow update: if canAccessProject(resource.data.projectId) && isValidChangeRecord(request.resource.data);
       allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /periodSnapshots/{snapshotId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if isProjectAdmin(request.resource.data.projectId);
+      allow update: if isProjectAdmin(request.resource.data.projectId);
+      allow delete: if isProjectAdmin(request.resource.data.projectId);
+    }
+
+    match /subcontracts/{subcontractId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow read: if isAuthenticated() && request.auth.token.email.lower() in resource.data.vendorUsers;
+      allow create: if isProjectAdmin(request.resource.data.projectId) && isValidSubcontract(request.resource.data);
+      allow update: if isProjectAdmin(request.resource.data.projectId) && isValidSubcontract(request.resource.data);
+      allow delete: if isProjectAdmin(request.resource.data.projectId);
+    }
+
+    match /subcontractLineItems/{itemId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow read: if isAuthenticated() && request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(resource.data.subcontractId)).data.vendorUsers;
+      allow create: if isProjectAdmin(request.resource.data.projectId) && isValidSubcontractLineItem(request.resource.data);
+      allow update: if isProjectAdmin(request.resource.data.projectId) && isValidSubcontractLineItem(request.resource.data);
+      allow delete: if isProjectAdmin(request.resource.data.projectId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow read: if isAuthenticated() && request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(resource.data.subcontractId)).data.vendorUsers;
+      allow create: if isAuthenticated() && (
+        isProjectAdmin(request.resource.data.projectId) || 
+        request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(request.resource.data.subcontractId)).data.vendorUsers
+      ) && isValidInvoice(request.resource.data);
+      allow update: if isAuthenticated() && (
+        isProjectAdmin(resource.data.projectId) || 
+        (request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(resource.data.subcontractId)).data.vendorUsers && 
+         resource.data.status in ['Draft', 'Rejected'])
+      ) && isValidInvoice(request.resource.data);
+      allow delete: if isAuthenticated() && (
+        isProjectAdmin(resource.data.projectId) || 
+        (request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(resource.data.subcontractId)).data.vendorUsers && 
+         resource.data.status == 'Draft')
+      );
+    }
+
+    match /invoiceItems/{itemId} {
+      allow read: if isAuthenticated() && (
+        canAccessProject(get(/databases/$(database)/documents/invoices/$(resource.data.invoiceId)).data.projectId)
+      );
+      allow read: if isAuthenticated() && (
+        request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(get(/databases/$(database)/documents/invoices/$(resource.data.invoiceId)).data.subcontractId)).data.vendorUsers
+      );
+      allow write: if isAuthenticated() && (
+        isProjectAdmin(get(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.projectId) || 
+        request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(get(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.subcontractId)).data.vendorUsers
+      ) && isValidInvoiceItem(request.resource.data);
     }
   }
 }

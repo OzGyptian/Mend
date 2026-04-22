@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
-import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc, writeBatch } from 'firebase/firestore';
 import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, SavedView } from '../types';
 import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, PenTool, HardHat, ShoppingCart, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -16,8 +17,9 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import CalendarManager from './CalendarManager';
+import DataGridModule from './DataGridModule';
 
-const RESOURCE_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor'];
+const RESOURCE_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries', 'Staff'];
 const RESOURCE_UNITS = [
   // International
   'm', 'm2', 'm3', 'ton', 'kg', 'no', 'item', 'hour', 'week', 'month',
@@ -30,6 +32,26 @@ const getAvailableUnits = (category: string) => {
     return ['hour', 'week', 'month', 'no', 'item'];
   }
   return RESOURCE_UNITS;
+};
+
+const AttributeTitleInput = ({ attr, type, onSave }: { attr: any, type: any, onSave: any }) => {
+  const [val, setVal] = useState(attr.title || '');
+  
+  useEffect(() => {
+    setVal(attr.title || '');
+  }, [attr.title]);
+
+  return (
+    <input 
+      type="text"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => onSave(type, attr.id, val)}
+      placeholder="Assign Title..."
+      className="w-full bg-transparent border-none p-0 text-sm font-medium focus:ring-0 dark:text-white placeholder:text-gray-300 dark:placeholder:text-gray-600"
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
 };
 
 interface EnterpriseAdminProps {
@@ -57,7 +79,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       title: 'Cost Management',
       icon: <DollarSign className="w-4 h-4" />,
       items: [
-        { id: 'costElements', label: 'Enterprise Cost Elements', icon: <Hash className="w-4 h-4" /> },
         { id: 'lineItemAttributes', label: 'Enterprise Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'costCodeAttributes', label: 'Enterprise Cost Code Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'resourceRates', label: 'Enterprise Resources Rates', icon: <DollarSign className="w-4 h-4" /> },
@@ -74,6 +95,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       title: 'Change Management',
       icon: <RefreshCw className="w-4 h-4" />,
       items: [
+        { id: 'changeAttributes', label: 'Enterprise Change Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'changeMgmt', label: 'Change Settings', icon: <RefreshCw className="w-4 h-4" /> },
       ]
     },
@@ -102,7 +124,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       title: 'Sub-Contract Management',
       icon: <Briefcase className="w-4 h-4" />,
       items: [
+        { id: 'subcontractAttributes', label: 'Enterprise Sub-Contract Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'subContractMgmt', label: 'Sub-Contract Settings', icon: <Briefcase className="w-4 h-4" /> },
+        { id: 'vendors', label: 'Enterprise Vendors', icon: <Building2 className="w-4 h-4" /> },
       ]
     },
     {
@@ -133,11 +157,14 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [valueSearch, setValueSearch] = useState('');
   const [resourceSearch, setResourceSearch] = useState('');
   const [costElementSearch, setCostElementSearch] = useState('');
+  const [vendorSearch, setVendorSearch] = useState('');
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'user' | 'project' | 'attr-value' | 'rate' | 'costElement', id: string } | null>(null);
+  const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(new Set());
+  const [selectedChangeTypeIds, setSelectedChangeTypeIds] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'user' | 'project' | 'attr-value' | 'rate' | 'costElement' | 'vendor', id: string } | null>(null);
   const [selectedAttrId, setSelectedAttrId] = useState<string>('01');
   const [selectedAttrValueIds, setSelectedAttrValueIds] = useState<Set<string>>(new Set());
   const [selectedRateIds, setSelectedRateIds] = useState<Set<string>>(new Set());
@@ -145,11 +172,14 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [projectSort, setProjectSort] = useState<{ field: 'dateCreated' | 'dateLastModified' | 'projectName' | 'projectCode', direction: 'asc' | 'desc' }>({ field: 'dateCreated', direction: 'desc' });
   
   // Modal States
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement', id?: string, name?: string, count?: number } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'bulk-user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement' | 'vendor' | 'bulk-vendor' | 'bulk-changeType', id?: string, name?: string, count?: number } | null>(null);
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [isInviting, setIsInviting] = useState(false);
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+
+  const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState<{ type: 'rate' | 'project' | 'vendor', count: number } | null>(null);
+  const [bulkUpdateFormData, setBulkUpdateFormData] = useState<Record<string, any>>({});
 
   const [isReplaceIdModalOpen, setIsReplaceIdModalOpen] = useState(false);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
@@ -162,11 +192,13 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<'description' | 'sortOrder' | null>(null);
 
-  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string | null } | null>(null);
+  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string | null } | null>(null);
   const [isEditingResource, setIsEditingResource] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [isEditingCostElement, setIsEditingCostElement] = useState<{ id: string | null, insertIndex?: number } | null>(null);
+  const [isEditingVendor, setIsEditingVendor] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [valueFormData, setValueFormData] = useState({ id: '', description: '', sortOrder: '' as any });
   const [costElementFormData, setCostElementFormData] = useState({ id: '', description: '', sortCode: '' });
+  const [vendorFormData, setVendorFormData] = useState({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
   const [resourceFormData, setResourceFormData] = useState({ 
     id: '', 
     name: '', 
@@ -188,8 +220,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     lineItemAttributes: ['id', 'description', 'sortOrder'],
     costCodeAttributes: ['id', 'description', 'sortOrder'],
     projectAttributes: ['id', 'description', 'sortOrder'],
+    subcontractAttributes: ['id', 'description', 'sortOrder'],
+    changeAttributes: ['id', 'description', 'sortOrder'],
     resourceRates: ['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'],
-    costElements: ['id', 'description', 'sortCode']
+    vendors: ['id', 'name', 'code', 'contactName', 'contactEmail']
   });
   const [isColumnMenuOpen, setIsColumnMenuOpen] = useState<string | null>(null);
   const [isFrozen, setIsFrozen] = useState<Record<string, boolean>>({
@@ -198,10 +232,12 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     lineItemAttributes: true,
     costCodeAttributes: true,
     projectAttributes: true,
+    subcontractAttributes: true,
+    changeAttributes: true,
     resourceRates: true,
-    costElements: true
+    vendors: true
   });
-  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', data: any[], attrId?: string } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'subcontractAttributes' | 'changeAttributes', data: any[], attrId?: string } | null>(null);
   const [userSort, setUserSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
   const [attrSort, setAttrSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'sortOrder', direction: 'asc' });
   const [resourceSort, setResourceSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
@@ -218,8 +254,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     lineItemAttributes: {},
     costCodeAttributes: {},
     projectAttributes: {},
-    resourceRates: {},
-    costElements: {}
+    subcontractAttributes: {},
+    changeAttributes: {},
+    resourceRates: {}
   });
 
   const clearAllFilters = (tableId: string) => {
@@ -227,11 +264,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (tableId === 'resourceRates') setResourceSearch('');
     if (tableId === 'projects') setProjectSearch('');
     if (tableId === 'users') setUserSearch('');
-    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') {
+    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'changeAttributes') {
       setAttrSearch('');
       setValueSearch('');
     }
-    if (tableId === 'costElements') setCostElementSearch('');
   };
 
   useEffect(() => {
@@ -259,9 +295,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           isFrozen: isFrozen[tableId],
           sort: tableId === 'users' ? userSort : 
                 tableId === 'projects' ? projectSort : 
-                tableId === 'costElements' ? costElementSort : 
                 tableId === 'resourceRates' ? resourceSort : 
-                (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes') ? attrSort : {},
+                (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'changeAttributes') ? attrSort : {},
           columnFilters: columnFilters[tableId]
         }
       } as any;
@@ -287,9 +322,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       
       if (view.tableId === 'users') setUserSort(config.sort);
       else if (view.tableId === 'projects') setProjectSort(config.sort);
-      else if (view.tableId === 'costElements') setCostElementSort(config.sort);
       else if (view.tableId === 'resourceRates') setResourceSort(config.sort);
-      else if (view.tableId === 'lineItemAttributes' || view.tableId === 'costCodeAttributes' || view.tableId === 'projectAttributes') setAttrSort(config.sort);
+      else if (view.tableId === 'resourceRates') setResourceSort(config.sort);
+      else if (view.tableId === 'lineItemAttributes' || view.tableId === 'costCodeAttributes' || view.tableId === 'projectAttributes' || view.tableId === 'subcontractAttributes' || view.tableId === 'changeAttributes') setAttrSort(config.sort);
     }
     
     setIsSavedViewMenuOpen(null);
@@ -303,8 +338,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const getAttributes = (type: 'project' | 'lineItem' | 'costCode') => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+  const getAttributes = (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change') => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const attrs = (enterprise as any)[field] || [];
     
     // Legacy check: if it's an array of strings, convert to new structure
@@ -329,7 +364,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   };
 
   const resourceIdExists = !isSubmitting && !isEditingResource?.id && (enterprise.resourceRates || []).some(r => r.id === resourceFormData.id);
-  const costElementIdExists = !isSubmitting && !isEditingCostElement?.id && (enterprise.costElements || []).some(ce => ce.id === costElementFormData.id);
   const valueIdExists = !isSubmitting && !isEditingValue?.valueId && isEditingValue && (getAttributes(isEditingValue.type).find(a => a.id === isEditingValue.attrId)?.values || []).some(v => v.id === valueFormData.id);
 
   useEffect(() => {
@@ -365,18 +399,54 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const bulkDeleteCostElements = async () => {
-    if (!enterprise.id || selectedCostElementIds.size === 0) return;
+  const saveVendor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!enterprise.id || !vendorFormData.name) return;
+    setIsSubmitting(true);
     try {
-      const newElements = (enterprise.costElements || []).filter(ce => !selectedCostElementIds.has(ce.id));
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { costElements: newElements });
-      setSelectedCostElementIds(new Set());
-      setDeleteConfirm(null);
+      const currentVendors = enterprise.vendors || [];
+      let newVendors;
+      if (isEditingVendor?.id) {
+        newVendors = currentVendors.map(v => v.id === isEditingVendor.id ? { ...vendorFormData } : v);
+      } else {
+        newVendors = [...currentVendors, { ...vendorFormData, id: vendorFormData.id || Math.random().toString(36).substring(2, 9) }];
+      }
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      setIsEditingVendor(null);
+      setVendorFormData({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
     } catch (error) {
-      console.error('Bulk delete cost elements failed', error);
-      alert('Failed to delete cost elements.');
+      console.error('Save vendor failed', error);
+      alert('Failed to save vendor.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const deleteVendor = async (id: string) => {
+    if (!enterprise.id) return;
+    try {
+      const newVendors = (enterprise.vendors || []).filter(v => v.id !== id);
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Delete vendor failed', error);
+      alert('Failed to delete vendor.');
+    }
+  };
+
+  const bulkDeleteVendors = async () => {
+    if (!enterprise.id || selectedVendorIds.size === 0) return;
+    try {
+      const newVendors = (enterprise.vendors || []).filter(v => !selectedVendorIds.has(v.id));
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      setSelectedVendorIds(new Set());
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Bulk delete vendors failed', error);
+      alert('Failed to delete vendors.');
+    }
+  };
+
   const toggleUserRole = async (uid: string) => {
     const user = enterprise.users?.[uid];
     if (!user) return;
@@ -394,6 +464,38 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
     setDeleteConfirm(null);
     if (selectedUserId === uid) setSelectedUserId(null);
+  };
+
+  const bulkDeleteUsers = async () => {
+    if (!enterprise.id || selectedUserIds.size === 0) return;
+    try {
+      const newUsers = { ...enterprise.users };
+      selectedUserIds.forEach(uid => {
+        delete newUsers[uid];
+      });
+      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        users: newUsers
+      });
+      setSelectedUserIds(new Set());
+      setDeleteConfirm(null);
+      if (selectedUserId && selectedUserIds.has(selectedUserId)) setSelectedUserId(null);
+    } catch (error) {
+      console.error('Bulk delete users failed', error);
+      alert('Failed to delete users.');
+    }
+  };
+
+  const bulkDeleteChangeTypes = async () => {
+    if (!enterprise.id || selectedChangeTypeIds.size === 0) return;
+    try {
+      const newTypes = (enterprise.changeTypes || []).filter(t => !selectedChangeTypeIds.has(t));
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { changeTypes: newTypes });
+      setSelectedChangeTypeIds(new Set());
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Bulk delete change types failed', error);
+      alert('Failed to delete change types.');
+    }
   };
 
   const deleteProject = async (projectId: string) => {
@@ -494,32 +596,34 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   }, [enterprise.resourceRates, resourceSearch, resourceSort, columnFilters.resourceRates]);
 
-  const filteredCostElements = useMemo(() => {
-    let result = (enterprise.costElements || [])
-      .filter(e => 
-        e.id.toLowerCase().includes(costElementSearch.toLowerCase()) ||
-        e.description.toLowerCase().includes(costElementSearch.toLowerCase()) ||
-        e.sortCode.toLowerCase().includes(costElementSearch.toLowerCase())
+  const [vendorSort, setVendorSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
+
+  const filteredVendors = useMemo(() => {
+    let result = (enterprise.vendors || [])
+      .filter(v => 
+        v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
+        (v.code || '').toLowerCase().includes(vendorSearch.toLowerCase()) ||
+        (v.contactEmail || '').toLowerCase().includes(vendorSearch.toLowerCase())
       );
 
     // Apply column filters
-    const filters = columnFilters.costElements;
+    const filters = columnFilters.vendors || {};
     Object.entries(filters).forEach(([field, value]) => {
       if (value) {
-        result = result.filter(e => {
-          const val = (e as any)[field];
+        result = result.filter(v => {
+          const val = (v as any)[field];
           return String(val || '').toLowerCase().includes(value.toLowerCase());
         });
       }
     });
 
     return result.sort((a: any, b: any) => {
-      const aVal = a[costElementSort.field];
-      const bVal = b[costElementSort.field];
-      if (costElementSort.direction === 'asc') return aVal > bVal ? 1 : -1;
+      const aVal = a[vendorSort.field] || '';
+      const bVal = b[vendorSort.field] || '';
+      if (vendorSort.direction === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [enterprise.costElements, costElementSearch, costElementSort, columnFilters.costElements]);
+  }, [enterprise.vendors, vendorSearch, vendorSort, columnFilters.vendors]);
 
   const bulkDeleteProjects = async () => {
     const promises = Array.from(selectedProjectIds).map((id: string) => deleteDoc(doc(db, 'projects', id)));
@@ -529,8 +633,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setSelectedProjectId(null);
   };
 
-  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem' | 'costCode', attrId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -543,6 +647,20 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
     setSelectedAttrValueIds(new Set());
     setDeleteConfirm(null);
+  };
+
+  const deleteAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+    const currentAttrs = getAttributes(type);
+    const newAttrs = currentAttrs.map(a => {
+      if (a.id === attrId) {
+        return { ...a, values: (a.values || []).filter(v => v.id !== valueId) };
+      }
+      return a;
+    });
+    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      [field]: newAttrs
+    });
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -691,6 +809,59 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     return projects.some(p => p.projectCode === newProjectCode.trim() && p.id !== projectToReplace?.id);
   }, [newProjectCode, projects, projectToReplace]);
 
+  const handleBulkUpdate = async () => {
+    if (!isBulkUpdateModalOpen) return;
+    try {
+      setIsSubmitting(true);
+      const { type } = isBulkUpdateModalOpen;
+      
+      if (type === 'rate') {
+        const currentResources = enterprise.resourceRates || [];
+        const newResources = currentResources.map(r => {
+          if (selectedRateIds.has(r.id)) {
+            return { ...r, ...bulkUpdateFormData };
+          }
+          return r;
+        });
+        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+          resourceRates: newResources
+        });
+        setSelectedRateIds(new Set());
+      } else if (type === 'project') {
+        const batch = writeBatch(db);
+        selectedProjectIds.forEach(id => {
+          batch.update(doc(db, 'projects', id), {
+            ...bulkUpdateFormData,
+            dateLastModified: new Date().toISOString()
+          });
+        });
+        await batch.commit();
+        setSelectedProjectIds(new Set());
+      } else if (type === 'vendor') {
+        const currentVendors = enterprise.vendors || [];
+        const newVendors = currentVendors.map(v => {
+          if (selectedVendorIds.has(v.id)) {
+            return { ...v, ...bulkUpdateFormData };
+          }
+          return v;
+        });
+        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+          vendors: newVendors
+        });
+        setSelectedVendorIds(new Set());
+      }
+
+      toast.success(`Bulk update successful for ${isBulkUpdateModalOpen.count} items.`);
+      setIsBulkUpdateModalOpen(null);
+      setBulkUpdateFormData({});
+    } catch (error) {
+      console.error("Bulk update error:", error);
+      toast.error("Failed to perform bulk update.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleUpdateEnterprise = async (updates: Partial<Enterprise>) => {
     try {
       await updateDoc(doc(db, 'enterprises', enterprise.id), updates);
@@ -767,9 +938,271 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const projectAttributes = useMemo(() => getAttributes('project'), [enterprise.projectAttributes]);
   const lineItemAttributes = useMemo(() => getAttributes('lineItem'), [enterprise.lineItemAttributes]);
   const costCodeAttributes = useMemo(() => getAttributes('costCode'), [enterprise.costCodeAttributes]);
+  const subcontractAttributes = useMemo(() => getAttributes('subcontract'), [enterprise.subcontractAttributes]);
+  const changeAttributes = useMemo(() => getAttributes('change'), [enterprise.changeAttributes]);
+
+  const userColumnDefs = useMemo(() => [
+    {
+      headerName: 'Photo',
+      field: 'photoURL',
+      width: 80,
+      cellRenderer: (params: any) => (
+        <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center overflow-hidden">
+          {params.value ? (
+            <img src={params.value} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+          ) : (
+            <Users className="w-4 h-4 text-gray-400" />
+          )}
+        </div>
+      )
+    },
+    {
+      headerName: 'Name',
+      field: 'displayName',
+      flex: 1,
+      editable: true,
+      cellRenderer: (params: any) => (
+        <div className="flex flex-col">
+          <span className="text-xs font-medium dark:text-white">{params.value || params.data.name || 'Anonymous'}</span>
+          <span className="text-[10px] text-gray-400">ID: {params.data.uid.slice(0, 8)}...</span>
+        </div>
+      )
+    },
+    { headerName: 'Email', field: 'email', flex: 1.5, editable: true },
+    {
+      headerName: 'Joined',
+      field: 'joinedAt',
+      width: 120,
+      valueFormatter: (params: any) => params.value ? new Date(params.value).toLocaleDateString() : 'N/A'
+    },
+    {
+      headerName: 'Access',
+      field: 'role',
+      width: 180,
+      cellRenderer: (params: any) => (
+        <Badge variant="outline" className={cn(
+          "text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5",
+          params.value === 'Enterprise System Admin' ? "border-blue-200 text-blue-600 bg-blue-50 dark:bg-blue-500/10 dark:border-blue-500/20" : "border-gray-200 text-gray-500 dark:border-white/10 dark:text-gray-400"
+        )}>
+          {params.value}
+        </Badge>
+      )
+    },
+    {
+      headerName: '',
+      width: 60,
+      pinned: 'right',
+      cellRenderer: (params: any) => {
+        if (params.data.isSubtotal) return null;
+        return (
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setContextMenu({ x: e.clientX, y: e.clientY, type: 'user', id: params.data.uid });
+            }}
+            className="p-1 text-gray-400 hover:text-black dark:hover:text-white"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+        );
+      }
+    }
+  ], []);
+
+  const projectColumnDefs = useMemo(() => [
+    {
+      headerName: 'Photo',
+      field: 'photoURL',
+      width: 80,
+      cellRenderer: (params: any) => (
+        <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-100 dark:bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10">
+          {params.value ? <img src={params.value} alt="" className="w-full h-full object-cover" /> : <Briefcase className="w-4 h-4 text-gray-400" />}
+        </div>
+      )
+    },
+    {
+      headerName: 'Project Name',
+      field: 'projectName',
+      flex: 1,
+      editable: true,
+      cellStyle: (params: any) => ({ fontWeight: 'bold', color: selectedProjectId === params.data.id ? '#2563eb' : undefined })
+    },
+    { headerName: 'Project Code', field: 'projectCode', width: 150, editable: true },
+    {
+      headerName: 'Status',
+      field: 'status',
+      width: 150,
+      cellRenderer: (params: any) => (
+        <select 
+          value={params.value || 'Active'}
+          onChange={(e) => handleUpdateProjectStatus(params.data.id, e.target.value)}
+          className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-white/5 border-none rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <option value="Active">Active</option>
+          <option value="On Hold">On Hold</option>
+          <option value="Closed">Closed</option>
+          <option value="Archived">Archived</option>
+        </select>
+      )
+    },
+    {
+      headerName: 'Created',
+      field: 'dateCreated',
+      width: 120,
+      valueFormatter: (params: any) => params.value ? new Date(params.value).toLocaleDateString() : 'N/A'
+    },
+    {
+      headerName: 'Users',
+      field: 'users',
+      width: 100,
+      valueGetter: (params: any) => Object.keys(params.value || {}).length
+    },
+    {
+      headerName: 'Sheets',
+      field: 'id',
+      width: 100,
+      valueGetter: (params: any) => sheets.filter(s => s.projectId === params.data.id).length
+    },
+    {
+      headerName: '',
+      width: 60,
+      pinned: 'right',
+      cellRenderer: (params: any) => {
+        if (params.data.isSubtotal) return null;
+        return (
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveMenuId(activeMenuId === `project-${params.data.id}` ? null : `project-${params.data.id}`);
+            }}
+            className="p-1 text-gray-400 hover:text-black dark:hover:text-white"
+          >
+            <MoreVertical className="w-4 h-4" />
+          </button>
+        );
+      }
+    }
+  ], [selectedProjectId, activeMenuId, sheets]);
+
+  const attributeValueColumnDefs = useMemo(() => [
+    { headerName: 'ID', field: 'id', width: 120 },
+    {
+      headerName: 'Description',
+      field: 'description',
+      flex: 1,
+      editable: true
+    },
+    {
+      headerName: 'Sort Order',
+      field: 'sortOrder',
+      width: 120,
+      editable: true
+    },
+    {
+      headerName: '',
+      width: 60,
+      pinned: 'right',
+      cellRenderer: (params: any) => {
+        if (params.data.isSubtotal) return null;
+        return (
+          <button 
+            onClick={(e) => {
+              e.stopPropagation();
+              const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem';
+              deleteAttributeValue(type, selectedAttrId, params.data.id);
+            }}
+            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        );
+      }
+    }
+  ], [activeTab, selectedAttrId]);
+
+  const resourceRateColumnDefs = useMemo(() => [
+    { headerName: 'ID', field: 'id', width: 150, editable: false },
+    { headerName: 'Resource Name', field: 'name', flex: 1, editable: true },
+    { headerName: 'Category', field: 'category', width: 150, editable: true },
+    { headerName: 'Unit', field: 'unit', width: 100, editable: true },
+    {
+      headerName: 'Rate ($)',
+      field: 'rate',
+      width: 120,
+      type: 'numericColumn',
+      editable: true,
+      valueFormatter: (params: any) => params.value ? `$${params.value.toLocaleString()}` : '-'
+    },
+    { headerName: 'UDF 1', field: 'udf1', width: 120, editable: true },
+    { headerName: 'UDF 2', field: 'udf2', width: 120, editable: true },
+    { headerName: 'UDF 3', field: 'udf3', width: 120, editable: true },
+    {
+      headerName: '',
+      width: 60,
+      pinned: 'right',
+      cellRenderer: (params: any) => {
+        if (params.data.isSubtotal) return null;
+        return (
+          <div className="flex gap-1">
+            <button 
+              onClick={() => {
+                setResourceFormData(params.data);
+                setIsEditingResource({ id: params.data.id });
+              }}
+              className="p-1 text-gray-400 hover:text-black dark:hover:text-white"
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setDeleteConfirm({ type: 'rate', id: params.data.id, name: params.data.name })}
+              className="p-1 text-gray-400 hover:text-red-600"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      }
+    }
+  ], [activeMenuId]);
+
+  const vendorColumnDefs = useMemo(() => [
+    { headerName: 'Vendor ID', field: 'id', width: 150, editable: false },
+    { headerName: 'Vendor Name', field: 'name', flex: 1, editable: true },
+    { headerName: 'Code', field: 'code', width: 120, editable: true },
+    { headerName: 'Contact Name', field: 'contactName', width: 150, editable: true },
+    { headerName: 'Contact Email', field: 'contactEmail', width: 200, editable: true },
+    {
+      headerName: '',
+      width: 100,
+      pinned: 'right',
+      cellRenderer: (params: any) => {
+        if (params.data.isSubtotal) return null;
+        return (
+          <div className="flex gap-1">
+            <button 
+              onClick={() => {
+                setVendorFormData(params.data);
+                setIsEditingVendor({ id: params.data.id });
+              }}
+              className="p-1 text-gray-400 hover:text-black dark:hover:text-white"
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setDeleteConfirm({ type: 'vendor', id: params.data.id, name: params.data.name })}
+              className="p-1 text-gray-400 hover:text-red-600"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      }
+    }
+  ], []);
 
   const sortedAttrValues = useMemo(() => {
-    const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
+    const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
     let result = [...values].filter(v => 
       v.description.toLowerCase().includes(valueSearch.toLowerCase()) ||
       v.id.toLowerCase().includes(valueSearch.toLowerCase())
@@ -792,22 +1225,32 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       if (attrSort.direction === 'asc') return aVal > bVal ? 1 : -1;
       return aVal < bVal ? 1 : -1;
     });
-  }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, attrSort, activeTab, valueSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes]);
+  }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, subcontractAttributes, changeAttributes, attrSort, activeTab, valueSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes, columnFilters.subcontractAttributes, columnFilters.changeAttributes]);
 
 
-  const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode', id: string, title: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+  const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', id: string, title: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => a.id === id ? { ...a, title } : a);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      [field]: newAttrs
-    });
+    
+    // Check if the title actually changed to prevent purely redundant saves
+    const currentAttr = currentAttrs.find(a => a.id === id);
+    if (currentAttr && currentAttr.title === title) return;
+
+    try {
+      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        [field]: newAttrs
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to update attribute title');
+    }
   };
 
-  const addAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, value: ProjectAttributeValue) => {
+  const addAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, value: ProjectAttributeValue) => {
     try {
       setIsSubmitting(true);
-      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
       const currentAttrs = getAttributes(type);
       const finalValue = {
         ...value,
@@ -836,8 +1279,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -850,8 +1293,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
-  const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+  const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -868,7 +1311,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   };
 
   const handleInlineUpdate = (valueId: string, field: 'description' | 'sortOrder', newValue: string) => {
-    const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem';
+    const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem';
     const updates: Partial<ProjectAttributeValue> = {};
     if (field === 'sortOrder') {
       updates.sortOrder = Number(newValue);
@@ -880,25 +1323,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setEditingField(null);
   };
 
-  const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'costElements', attrId?: string) => {
-    if (type === 'costElements') {
-      const elements = enterprise.costElements || [];
-      if (elements.length === 0) {
-        alert('No cost elements to export.');
-        return;
-      }
-      const data = elements.map(e => ({
-        ID: e.id,
-        Description: e.description,
-        'Sort Code': e.sortCode
-      }));
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'CostElements');
-      XLSX.writeFile(wb, `CostElements_${new Date().toISOString().split('T')[0]}.xlsx`);
-      return;
-    }
-
+  const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'subcontract' | 'change', attrId?: string) => {
     if (type === 'resourceRates') {
       const rates = enterprise.resourceRates || [];
       if (rates.length === 0) {
@@ -919,7 +1344,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       return;
     }
 
-    const attrs = type === 'project' ? projectAttributes : type === 'costCode' ? costCodeAttributes : lineItemAttributes;
+    const attrs = type === 'project' ? projectAttributes : type === 'costCode' ? costCodeAttributes : type === 'subcontract' ? subcontractAttributes : type === 'change' ? changeAttributes : lineItemAttributes;
     const attr = attrs.find(a => a.id === attrId);
     if (!attr || !attr.values || attr.values.length === 0) {
       alert('No values to export.');
@@ -935,10 +1360,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Values');
-    XLSX.writeFile(wb, `${type === 'project' ? 'Project' : type === 'costCode' ? 'CostCode' : 'LineItem'}_Attr_${attrId}_${attr.title || 'Untitled'}.xlsx`);
+    XLSX.writeFile(wb, `${type === 'project' ? 'Project' : type === 'costCode' ? 'CostCode' : type === 'subcontract' ? 'Subcontract' : type === 'change' ? 'Change' : 'LineItem'}_Attr_${attrId}_${attr.title || 'Untitled'}.xlsx`);
   };
 
-  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'costElements', file: File, attrId?: string) => {
+  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'subcontractAttributes' | 'changeAttributes' | 'resourceRates', file: File, attrId?: string) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = new Uint8Array(e.target?.result as ArrayBuffer);
@@ -955,9 +1380,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (!importPreview) return;
     const { type, data, attrId } = importPreview;
 
-    if ((type === 'lineItemAttributes' || type === 'costCodeAttributes' || type === 'projectAttributes') && attrId) {
-      const attrType = type === 'projectAttributes' ? 'project' : type === 'costCodeAttributes' ? 'costCode' : 'lineItem';
-      const field = attrType === 'project' ? 'projectAttributes' : attrType === 'costCode' ? 'costCodeAttributes' : 'lineItemAttributes';
+    if ((type === 'lineItemAttributes' || type === 'costCodeAttributes' || type === 'projectAttributes' || type === 'subcontractAttributes' || type === 'changeAttributes') && attrId) {
+      const attrType = type === 'projectAttributes' ? 'project' : type === 'costCodeAttributes' ? 'costCode' : type === 'subcontractAttributes' ? 'subcontract' : type === 'changeAttributes' ? 'change' : 'lineItem';
       const currentAttrs = getAttributes(attrType);
       
       const newAttrs = currentAttrs.map(a => {
@@ -979,7 +1403,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         }
         return a;
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { [field]: newAttrs });
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { [type]: newAttrs });
     } else if (type === 'resourceRates') {
       const currentResources = [...(enterprise.resourceRates || [])];
       data.forEach(row => {
@@ -1039,21 +1463,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           });
         }
       }
-    } else if (type === 'costElements') {
-      const currentElements = [...(enterprise.costElements || [])];
-      data.forEach(row => {
-        const id = row.ID?.toString() || row.id?.toString();
-        const description = row.Description?.toString() || row.description?.toString() || '';
-        const sortCode = (row['Sort Code'] || row.sortCode || '').toString().padStart(2, '0');
-        if (!id) return;
-        const existingIndex = currentElements.findIndex(e => e.id === id);
-        if (existingIndex > -1) {
-          currentElements[existingIndex] = { ...currentElements[existingIndex], description, sortCode };
-        } else {
-          currentElements.push({ id, description, sortCode });
-        }
-      });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { costElements: currentElements });
     }
 
     setImportPreview(null);
@@ -1135,53 +1544,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
+  const updateVendor = async (id: string, updates: any) => {
+    const currentVendors = enterprise.vendors || [];
+    const newVendors = currentVendors.map(v => v.id === id ? { ...v, ...updates } : v);
+    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      vendors: newVendors
+    });
+  };
+
   const deleteResourceRate = async (id: string) => {
     const currentResources = enterprise.resourceRates || [];
     const newResources = currentResources.filter(r => r.id !== id);
     await updateDoc(doc(db, 'enterprises', enterprise.id), {
       resourceRates: newResources
-    });
-  };
-
-  const addCostElement = async (element: any, index?: number) => {
-    try {
-      setIsSubmitting(true);
-      const currentElements = [...(enterprise.costElements || [])];
-      if (currentElements.some(e => e.id === element.id)) {
-        alert(`Cost Element ID "${element.id}" already exists.`);
-        setIsSubmitting(false);
-        return;
-      }
-      
-      if (typeof index === 'number') {
-        currentElements.splice(index, 0, element);
-      } else {
-        currentElements.push(element);
-      }
-
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
-        costElements: currentElements
-      });
-    } catch (error) {
-      console.error('Failed to add cost element', error);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const updateCostElement = async (id: string, updates: any) => {
-    const currentElements = enterprise.costElements || [];
-    const newElements = currentElements.map(e => e.id === id ? { ...e, ...updates } : e);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      costElements: newElements
-    });
-  };
-
-  const deleteCostElement = async (id: string) => {
-    const currentElements = enterprise.costElements || [];
-    const newElements = currentElements.filter(e => e.id !== id);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      costElements: newElements
     });
   };
 
@@ -1271,7 +1646,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           </div>
         )}
         
-        <div className="flex-1 overflow-auto p-8">
+        <div className="flex-1 flex flex-col min-h-0 p-8 overflow-hidden">
           <AnimatePresence mode="wait">
             {activeTab === 'enterpriseSettings' && (
               <motion.div 
@@ -1279,7 +1654,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
-                className="space-y-8"
+                className="flex-1 overflow-auto space-y-8 pr-2"
               >
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                   <Card className="lg:col-span-2">
@@ -1320,22 +1695,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                             <Button variant="outline" size="sm" onClick={() => enterpriseLogoInputRef.current?.click()}>
                               Change Logo
                             </Button>
-                            <input 
-                              type="file" 
-                              ref={enterpriseLogoInputRef}
-                              className="hidden" 
-                              accept="image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    handleUpdateEnterprise({ logoURL: reader.result as string });
-                                  };
-                                  reader.readAsDataURL(file);
-                                }
-                              }}
-                            />
                           </div>
                         </div>
                       </div>
@@ -1380,350 +1739,35 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 exit={{ opacity: 0, y: -20 }}
                 className="flex-1 flex flex-col min-h-0"
               >
-                <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
-                  <div className="relative flex-1 max-w-md">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input 
-                      type="text"
-                      placeholder="Search users by name or email..."
-                      value={userSearch}
-                      onChange={e => setUserSearch(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => setInviteModal(true)}>
-                      <UserPlus className="w-4 h-4" />
-                      Invite User
-                    </Button>
-                    <button 
-                      onClick={() => clearAllFilters('users')}
-                      className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                      title="Clear All Filters"
-                    >
-                      <Filter className="w-4 h-4" /> Clear Filters
-                    </button>
-                    <div className="relative">
-                      <button 
-                        onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'users' ? null : 'users')}
-                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
-                      >
-                        <Layout className="w-4 h-4" /> Views
-                      </button>
-                      <AnimatePresence>
-                        {isSavedViewMenuOpen === 'users' && (
-                          <motion.div 
-                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                          >
-                            <div className="mb-3">
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                              <div className="flex gap-2">
-                                <input 
-                                  type="text"
-                                  placeholder="View name..."
-                                  value={newViewName}
-                                  onChange={e => setNewViewName(e.target.value)}
-                                  className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                                />
-                                <button 
-                                  onClick={() => saveView('users', newViewName)}
-                                  className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                                >
-                                  Save
-                                </button>
-                              </div>
-                            </div>
-                            <Separator className="my-2 dark:bg-white/10" />
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                              {savedViews.filter(v => v.tableId === 'users').map(view => (
-                                <div key={view.id} className="flex items-center justify-between group">
-                                  <button 
-                                    onClick={() => applyView(view)}
-                                    className="flex-1 text-left px-2 py-1.5 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded transition-colors"
-                                  >
-                                    {view.name}
-                                  </button>
-                                  <button 
-                                    onClick={() => deleteView(view.id)}
-                                    className="p-1 text-gray-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              ))}
-                              {savedViews.filter(v => v.tableId === 'users').length === 0 && (
-                                <p className="text-[10px] text-gray-500 italic p-2">No saved views</p>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                    <div className="relative">
-                      <button 
-                        onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'users' ? null : 'users')}
-                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
-                      >
-                        <Layout className="w-4 h-4" /> Columns
-                      </button>
-                      <AnimatePresence>
-                        {isColumnMenuOpen === 'users' && (
-                          <motion.div 
-                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                          >
-                            <div className="p-2 flex items-center justify-between border-b border-gray-100 dark:border-white/10 mb-2">
-                              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Table Controls</span>
-                              <button 
-                                onClick={() => setIsFrozen(prev => ({ ...prev, users: !prev.users }))}
-                                className={cn(
-                                  "p-1 rounded transition-colors",
-                                  isFrozen.users ? "text-blue-600 bg-blue-50 dark:bg-blue-500/10" : "text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5"
-                                )}
-                                title={isFrozen.users ? "Unfreeze First Column" : "Freeze First Column"}
-                              >
-                                <Lock className="w-3 h-3" />
-                              </button>
-                            </div>
-                            {['photo', 'name', 'email', 'joined', 'access'].map(col => (
-                              <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded cursor-pointer transition-colors">
-                                <input 
-                                  type="checkbox"
-                                  checked={visibleColumns.users.includes(col)}
-                                  onChange={() => {
-                                    const newCols = visibleColumns.users.includes(col)
-                                      ? visibleColumns.users.filter(c => c !== col)
-                                      : [...visibleColumns.users, col];
-                                    setVisibleColumns(prev => ({ ...prev, users: newCols }));
-                                  }}
-                                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="text-xs capitalize dark:text-white">{col}</span>
-                              </label>
-                            ))}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex-1 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-xl overflow-hidden flex flex-col">
-                  <div className="flex-1 overflow-auto">
-                    <table className="w-full text-left border-collapse min-w-[800px]">
-                      <thead>
-                        <tr className="border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/2">
-                          <th className="p-2 w-10">
-                            <input 
-                              type="checkbox"
-                              checked={filteredUsers.length > 0 && filteredUsers.every(u => selectedUserIds.has(u.uid))}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedUserIds(new Set(filteredUsers.map(u => u.uid)));
-                                } else {
-                                  setSelectedUserIds(new Set());
-                                }
-                              }}
-                              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                            />
-                          </th>
-                          {visibleColumns.users.includes('photo') && (
-                            <th className={`p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 ${isFrozen.users ? 'sticky left-0 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>Photo</th>
-                          )}
-                          {visibleColumns.users.includes('name') && (
-                            <th className={`p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 ${isFrozen.users ? 'sticky left-12 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                              <button onClick={() => setUserSort({ field: 'name', direction: userSort.field === 'name' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
-                                Name {userSort.field === 'name' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
-                              </button>
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('email') && (
-                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                              <button onClick={() => setUserSort({ field: 'email', direction: userSort.field === 'email' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
-                                Email {userSort.field === 'email' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
-                              </button>
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('joined') && (
-                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                              <button onClick={() => setUserSort({ field: 'joinedAt', direction: userSort.field === 'joinedAt' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
-                                Joined {userSort.field === 'joinedAt' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
-                              </button>
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('access') && (
-                            <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400">
-                              <button onClick={() => setUserSort({ field: 'role', direction: userSort.field === 'role' && userSort.direction === 'asc' ? 'desc' : 'asc' })} className="flex items-center gap-1 hover:text-black dark:hover:text-white transition-colors">
-                                Access {userSort.field === 'role' && (userSort.direction === 'asc' ? <ChevronDown className="w-3 h-3" /> : <ChevronDown className="w-3 h-3 rotate-180" />)}
-                              </button>
-                            </th>
-                          )}
-                          <th className="p-2"></th>
-                        </tr>
-                        <tr className="border-b border-gray-100 dark:border-white/5 bg-gray-50/20 dark:bg-white/1">
-                          <th className="p-2"></th>
-                          {visibleColumns.users.includes('photo') && (
-                            <th className={`p-2 ${isFrozen.users ? 'sticky left-0 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}></th>
-                          )}
-                          {visibleColumns.users.includes('name') && (
-                            <th className={`p-2 ${isFrozen.users ? 'sticky left-12 z-20 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                              <input 
-                                type="text"
-                                placeholder="Filter Name..."
-                                value={columnFilters.users.name || ''}
-                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, name: e.target.value } }))}
-                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                              />
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('email') && (
-                            <th className="p-2">
-                              <input 
-                                type="text"
-                                placeholder="Filter Email..."
-                                value={columnFilters.users.email || ''}
-                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, email: e.target.value } }))}
-                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                              />
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('joined') && (
-                            <th className="p-2">
-                              <input 
-                                type="text"
-                                placeholder="Filter Joined..."
-                                value={columnFilters.users.joinedAt || ''}
-                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, joinedAt: e.target.value } }))}
-                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                              />
-                            </th>
-                          )}
-                          {visibleColumns.users.includes('access') && (
-                            <th className="p-2">
-                              <input 
-                                type="text"
-                                placeholder="Filter Access..."
-                                value={columnFilters.users.role || ''}
-                                onChange={(e) => setColumnFilters(prev => ({ ...prev, users: { ...prev.users, role: e.target.value } }))}
-                                className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                              />
-                            </th>
-                          )}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                        {filteredUsers.map((user) => (
-                          <tr 
-                            key={user.uid} 
-                            className={cn(
-                              "group hover:bg-gray-50/50 dark:hover:bg-white/2 transition-colors cursor-pointer",
-                              selectedUserIds.has(user.uid) && "bg-blue-50/50 dark:bg-blue-500/5"
-                            )}
-                            onClick={(e) => {
-                              if (e.shiftKey) {
-                                const lastSelected = Array.from(selectedUserIds).pop();
-                                const lastIdx = filteredUsers.findIndex(u => u.uid === lastSelected);
-                                const currIdx = filteredUsers.findIndex(u => u.uid === user.uid);
-                                const start = Math.min(lastIdx, currIdx);
-                                const end = Math.max(lastIdx, currIdx);
-                                const toSelect = filteredUsers.slice(start, end + 1).map(u => u.uid);
-                                setSelectedUserIds(prev => new Set([...Array.from(prev), ...toSelect]));
-                              } else if (e.metaKey || e.ctrlKey) {
-                                const newSelected = new Set(selectedUserIds);
-                                if (newSelected.has(user.uid)) newSelected.delete(user.uid);
-                                else newSelected.add(user.uid);
-                                setSelectedUserIds(newSelected);
-                              } else {
-                                setSelectedUserIds(new Set([user.uid]));
-                              }
-                            }}
-                            onContextMenu={(e) => {
-                              e.preventDefault();
-                              setContextMenu({ x: e.clientX, y: e.clientY, type: 'user', id: user.uid });
-                            }}
-                          >
-                            <td className="p-2">
-                              <input 
-                                type="checkbox"
-                                checked={selectedUserIds.has(user.uid)}
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  const newSelected = new Set(selectedUserIds);
-                                  if (e.target.checked) newSelected.add(user.uid);
-                                  else newSelected.delete(user.uid);
-                                  setSelectedUserIds(newSelected);
-                                }}
-                                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                              />
-                            </td>
-                            {visibleColumns.users.includes('photo') && (
-                              <td className={cn(
-                                "p-2",
-                                isFrozen.users && "sticky left-0 z-10 bg-inherit border-r border-gray-100 dark:border-white/5"
-                              )}>
-                                <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center overflow-hidden">
-                                  {user.photoURL ? (
-                                    <img src={user.photoURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  ) : (
-                                    <Users className="w-4 h-4 text-gray-400" />
-                                  )}
-                                </div>
-                              </td>
-                            )}
-                            {visibleColumns.users.includes('name') && (
-                              <td className={cn(
-                                "p-2",
-                                isFrozen.users && "sticky left-12 z-10 bg-inherit border-r border-gray-100 dark:border-white/5"
-                              )}>
-                                <div className="flex flex-col">
-                                  <span className="text-xs font-medium dark:text-white">{user.displayName || user.name || 'Anonymous'}</span>
-                                  <span className="text-[10px] text-gray-400">ID: {user.uid.slice(0, 8)}...</span>
-                                </div>
-                              </td>
-                            )}
-                            {visibleColumns.users.includes('email') && (
-                              <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{user.email}</td>
-                            )}
-                            {visibleColumns.users.includes('joined') && (
-                              <td className="p-2 text-xs text-gray-500 dark:text-gray-400">
-                                {user.joinedAt ? new Date(user.joinedAt).toLocaleDateString() : 'N/A'}
-                              </td>
-                            )}
-                            {visibleColumns.users.includes('access') && (
-                              <td className="p-2">
-                                <Badge variant="outline" className={cn(
-                                  "text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5",
-                                  user.role === 'Enterprise System Admin' ? "border-blue-200 text-blue-600 bg-blue-50 dark:bg-blue-500/10 dark:border-blue-500/20" : "border-gray-200 text-gray-500 dark:border-white/10 dark:text-gray-400"
-                                )}>
-                                  {user.role}
-                                </Badge>
-                              </td>
-                            )}
-                            <td className="p-2 text-right">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setContextMenu({ x: e.clientX, y: e.clientY, type: 'user', id: user.uid });
-                                }}
-                                className="p-1 text-gray-400 hover:text-black dark:hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                              >
-                                <MoreVertical className="w-4 h-4" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <DataGridModule
+                  title="Enterprise Users"
+                  description="Manage users and their access levels within the enterprise."
+                  onAdd={() => setInviteModal(true)}
+                  searchPlaceholder="Search users..."
+                  quickFilterText={userSearch}
+                  onQuickFilterChange={setUserSearch}
+                  rowData={filteredUsers}
+                  columnDefs={userColumnDefs}
+                  theme={document.documentElement.classList.contains('dark') ? 'dark' : 'light'}
+                  onCellValueChanged={async (event) => {
+                    const { data, colDef, newValue } = event;
+                    if (!data.uid) return;
+                    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+                      [`users.${data.uid}.${colDef.field}`]: newValue
+                    });
+                  }}
+                  gridProps={{
+                    rowSelection: 'multiple',
+                    onSelectionChanged: (params: any) => {
+                      const selectedNodes = params.api.getSelectedNodes();
+                      setSelectedUserIds(new Set(selectedNodes.map((node: any) => node.data.uid)));
+                    }
+                  }}
+                  selectedCount={selectedUserIds.size}
+                  onBulkDelete={() => setDeleteConfirm({ type: 'user', count: selectedUserIds.size })}
+                />
               </motion.div>
-          )}
+            )}
 
           {activeTab === 'projects' && (
             <motion.div 
@@ -1733,317 +1777,42 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               exit={{ opacity: 0, y: -20 }}
               className="flex-1 flex flex-col min-h-0"
             >
-              <div className="mb-4 flex justify-between items-center gap-4 shrink-0">
-                <div className="relative flex-1 max-w-md">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input 
-                    type="text"
-                    placeholder="Search projects by name or code..."
-                    value={projectSearch}
-                    onChange={e => setProjectSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" className="gap-2" onClick={() => setIsCreateProjectModalOpen(true)}>
-                    <Plus className="w-4 h-4" />
-                    Create Project
-                  </Button>
-                  <button onClick={exportProjects} className="p-2 text-gray-400 hover:text-black dark:hover:text-white" title="Export"><Download className="w-4 h-4" /></button>
-                  <button 
-                    onClick={() => clearAllFilters('projects')}
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                    title="Clear All Filters"
-                  >
-                    <Filter className="w-4 h-4" /> Clear Filters
-                  </button>
-                  <div className="relative">
-                    <button 
-                      onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'projects' ? null : 'projects')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
-                    >
-                      <Layout className="w-4 h-4" /> Views
-                    </button>
-                    <AnimatePresence>
-                      {isSavedViewMenuOpen === 'projects' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                        >
-                          <div className="mb-3">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                            <div className="flex gap-2">
-                              <input 
-                                type="text"
-                                placeholder="View name..."
-                                value={newViewName}
-                                onChange={e => setNewViewName(e.target.value)}
-                                className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                              />
-                              <button 
-                                onClick={() => saveView('projects', newViewName)}
-                                className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-1 max-h-48 overflow-y-auto">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                            {savedViews.filter(v => v.tableId === 'projects').map(view => (
-                              <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
-                            {savedViews.filter(v => v.tableId === 'projects').length === 0 && (
-                              <p className="text-[10px] text-gray-400 italic p-2">No saved views</p>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <div className="relative">
-                    <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'projects' ? null : 'projects')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
-                      <Eye className="w-4 h-4" /> Columns
-                    </button>
-                    <AnimatePresence>
-                      {isColumnMenuOpen === 'projects' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                        >
-                          {['photo', 'name', 'code', 'created', 'users', 'sheets'].map(col => (
-                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                              <input 
-                                type="checkbox"
-                                checked={visibleColumns.projects.includes(col)}
-                                onChange={() => setVisibleColumns(prev => ({
-                                  ...prev,
-                                  projects: prev.projects.includes(col) ? prev.projects.filter(c => c !== col) : [...prev.projects, col]
-                                }))}
-                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                              />
-                              <span className="text-xs dark:text-white capitalize">{col}</span>
-                            </label>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                  <button onClick={() => setIsFrozen(prev => ({ ...prev, projects: !prev.projects }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen.projects ? 'text-blue-600' : 'text-gray-400'}`}>
-                    {isFrozen.projects ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.projects ? 'Frozen' : 'Freeze'}
-                  </button>
-                  {selectedProjectIds.size > 0 && (
-                    <button 
-                      onClick={() => setDeleteConfirm({ type: 'bulk-project', count: selectedProjectIds.size })}
-                      className="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-red-700 transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Delete ({selectedProjectIds.size})
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-auto border border-gray-200 dark:border-white/10 rounded-xl">
-                <table className="w-full text-left border-collapse min-w-[1000px]">
-                  <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
-                    <tr>
-                      <th className={`p-2 w-10 ${isFrozen.projects ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>
-                        <input 
-                          type="checkbox"
-                          className="rounded border-gray-300 dark:border-white/20"
-                          checked={filteredProjects.length > 0 && filteredProjects.every(p => selectedProjectIds.has(p.id))}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedProjectIds(new Set(filteredProjects.map(p => p.id)));
-                            else setSelectedProjectIds(new Set());
-                          }}
-                        />
-                      </th>
-                      {visibleColumns.projects.includes('photo') && <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Photo</th>}
-                      {visibleColumns.projects.includes('name') && <th onClick={() => handleProjectSort('projectName')} className={`p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.projects ? 'sticky left-10 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>Name {projectSort.field === 'projectName' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.projects.includes('code') && <th onClick={() => handleProjectSort('projectCode')} className="p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Code {projectSort.field === 'projectCode' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      <th onClick={() => handleProjectSort('status' as any)} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Status {projectSort.field === 'status' as any && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>
-                      {visibleColumns.projects.includes('created') && <th onClick={() => handleProjectSort('dateCreated')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Created {projectSort.field === 'dateCreated' && (projectSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.projects.includes('users') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Users</th>}
-                      {visibleColumns.projects.includes('sheets') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">Sheets</th>}
-                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-center">...</th>
-                    </tr>
-                    <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
-                      <th className={`p-2 ${isFrozen.projects ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
-                      {visibleColumns.projects.includes('photo') && <th className="p-2"></th>}
-                      {visibleColumns.projects.includes('name') && (
-                        <th className={`p-2 ${isFrozen.projects ? 'sticky left-10 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="text"
-                            placeholder="Filter Name..."
-                            value={columnFilters.projects.name || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, projects: { ...prev.projects, name: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.projects.includes('code') && (
-                        <th className="p-2 w-32">
-                          <input 
-                            type="text"
-                            placeholder="Filter Code..."
-                            value={columnFilters.projects.code || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, projects: { ...prev.projects, code: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      <th className="p-2">
-                        <input 
-                          type="text"
-                          placeholder="Filter Status..."
-                          value={columnFilters.projects.status || ''}
-                          onChange={(e) => setColumnFilters(prev => ({ ...prev, projects: { ...prev.projects, status: e.target.value } }))}
-                          className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                        />
-                      </th>
-                      {visibleColumns.projects.includes('created') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Created..."
-                            value={columnFilters.projects.dateCreated || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, projects: { ...prev.projects, dateCreated: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.projects.includes('users') && <th className="p-2"></th>}
-                      {visibleColumns.projects.includes('sheets') && <th className="p-2"></th>}
-                      <th className="p-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                    {filteredProjects.map(project => (
-                      <tr key={project.id} onClick={() => setSelectedProjectId(project.id)} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer group ${selectedProjectId === project.id ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                        <td className={`p-2 ${isFrozen.projects ? 'sticky left-0 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="checkbox"
-                            className="rounded border-gray-300 dark:border-white/20"
-                            checked={selectedProjectIds.has(project.id)}
-                            onChange={(e) => {
-                              e.stopPropagation();
-                              toggleProjectSelection(project.id);
-                            }}
-                          />
-                        </td>
-                        {visibleColumns.projects.includes('photo') && (
-                          <td className="p-2">
-                            <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-100 dark:bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10">
-                              {project.photoURL ? <img src={project.photoURL} alt="" className="w-full h-full object-cover" /> : <Briefcase className="w-4 h-4 text-gray-400" />}
-                            </div>
-                          </td>
-                        )}
-                        {visibleColumns.projects.includes('name') && (
-                          <td className={`p-2 text-xs font-bold ${selectedProjectId === project.id ? 'text-blue-600 dark:text-blue-400' : 'dark:text-white'} ${isFrozen.projects ? 'sticky left-10 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                            {project.projectName}
-                          </td>
-                        )}
-                        {visibleColumns.projects.includes('code') && <td className="p-2 text-[10px] font-mono text-gray-500 dark:text-gray-400">{project.projectCode}</td>}
-                        <td className="p-2">
-                          <select 
-                            value={project.status || 'Active'}
-                            onChange={(e) => handleUpdateProjectStatus(project.id, e.target.value)}
-                            className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-white/5 border-none rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <option value="Active">Active</option>
-                            <option value="On Hold">On Hold</option>
-                            <option value="Closed">Closed</option>
-                            <option value="Archived">Archived</option>
-                          </select>
-                        </td>
-                        {visibleColumns.projects.includes('created') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{project.dateCreated ? new Date(project.dateCreated).toLocaleDateString() : 'N/A'}</td>}
-                        {visibleColumns.projects.includes('users') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{Object.keys(project.users || {}).length}</td>}
-                        {visibleColumns.projects.includes('sheets') && <td className="p-2 text-[10px] text-gray-500 dark:text-gray-400">{sheets.filter(s => s.projectId === project.id).length}</td>}
-                        <td className="p-2 text-right">
-                          <div className="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
-                            <div className="relative">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMenuId(activeMenuId === `project-${project.id}` ? null : `project-${project.id}`);
-                                }}
-                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
-                              >
-                                <MoreVertical className="w-4 h-4" />
-                              </button>
-                              
-                              <AnimatePresence>
-                                {activeMenuId === `project-${project.id}` && (
-                                  <>
-                                    <div 
-                                      className="fixed inset-0 z-40" 
-                                      onClick={() => setActiveMenuId(null)}
-                                    />
-                                    <motion.div 
-                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      className={cn(
-                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
-                                        filteredProjects.indexOf(project) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                                      )}
-                                    >
-                                      <button 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setProjectToReplace(project);
-                                          setNewProjectCode('');
-                                          setReplaceError('');
-                                          setIsReplaceIdModalOpen(true);
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <RefreshCw className="w-3.5 h-3.5" /> Replace Project ID
-                                      </button>
-                                      <button 
-                                        onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <ExternalLink className="w-3.5 h-3.5" /> View Project
-                                      </button>
-                                      <button 
-                                        onClick={(e) => { 
-                                          e.stopPropagation(); 
-                                          setDeleteConfirm({ type: 'project', id: project.id, name: project.projectName }); 
-                                          setActiveMenuId(null);
-                                        }} 
-                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" /> Delete
-                                      </button>
-                                    </motion.div>
-                                  </>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataGridModule
+                title="Enterprise Projects"
+                description="Manage projects and their settings within the enterprise."
+                onAdd={() => setIsCreateProjectModalOpen(true)}
+                onExport={exportProjects}
+                searchPlaceholder="Search projects..."
+                quickFilterText={projectSearch}
+                onQuickFilterChange={setProjectSearch}
+                rowData={sortedProjects}
+                columnDefs={projectColumnDefs}
+                theme={document.documentElement.classList.contains('dark') ? 'dark' : 'light'}
+                onCellValueChanged={async (event) => {
+                  const { data, colDef, newValue } = event;
+                  if (!data.id) return;
+                  await updateDoc(doc(db, 'projects', data.id), {
+                    [colDef.field!]: newValue,
+                    dateLastModified: new Date().toISOString()
+                  });
+                }}
+                gridProps={{
+                  rowSelection: 'multiple',
+                  onSelectionChanged: (params: any) => {
+                    const selectedNodes = params.api.getSelectedNodes();
+                    setSelectedProjectIds(new Set(selectedNodes.map((node: any) => node.data.id)));
+                  }
+                }}
+                selectedCount={selectedProjectIds.size}
+                onBulkUpdate={() => {
+                  setIsBulkUpdateModalOpen({ type: 'project', count: selectedProjectIds.size });
+                }}
+                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-project', count: selectedProjectIds.size })}
+              />
             </motion.div>
           )}
 
-          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes' || activeTab === 'costCodeAttributes') && (
+          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes' || activeTab === 'costCodeAttributes' || activeTab === 'subcontractAttributes' || activeTab === 'changeAttributes') && (
             <motion.div 
               key="attributes"
               initial={{ opacity: 0, y: 20 }}
@@ -2074,7 +1843,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                      {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).filter(a => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
+                      {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).filter((a: any) => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
                         <tr 
                           key={attr.id}
                           onClick={() => setSelectedAttrId(attr.id)}
@@ -2082,13 +1851,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                         >
                           <td className="p-2 text-xs font-bold text-black dark:text-white text-center">{attr.id}</td>
                           <td className="p-2">
-                            <input 
-                              type="text"
-                              value={attr.title}
-                              onChange={(e) => updateAttributeTitle(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attr.id, e.target.value)}
-                              placeholder="Assign Title..."
-                              className="w-full bg-transparent border-none p-0 text-sm font-medium focus:ring-0 dark:text-white placeholder:text-gray-300 dark:placeholder:text-gray-600"
-                              onClick={(e) => e.stopPropagation()}
+                            <AttributeTitleInput 
+                              attr={attr} 
+                              type={activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem'} 
+                              onSave={updateAttributeTitle} 
                             />
                           </td>
                         </tr>
@@ -2109,380 +1875,48 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       exit={{ opacity: 0, x: -20 }}
                       className="flex-1 flex flex-col min-h-0"
                     >
-                    <div className="p-4 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
-                      <div>
-                        <h3 className="text-lg font-bold dark:text-white">
-                          Attribute {selectedAttrId}: {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}
-                        </h3>
-                        <p className="text-xs text-gray-900 dark:text-gray-400">Manage the list of allowed values for this attribute.</p>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="relative">
-                          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input 
-                            type="text"
-                            placeholder="Search values..."
-                            value={valueSearch}
-                            onChange={e => setValueSearch(e.target.value)}
-                            className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-xs focus:outline-none dark:text-white w-48"
-                          />
-                        </div>
-                        <div className="flex gap-1">
-                          <input 
-                            type="file" 
-                            ref={fileInputRef} 
-                            className="hidden" 
-                            accept=".xlsx,.xls,.csv"
-                            onChange={(e) => {
+                      <DataGridModule
+                        title={`Attribute ${selectedAttrId}: ${(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}`}
+                        description="Manage the list of allowed values for this attribute."
+                        onAdd={() => {
+                          const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
+                          setValueFormData({ id: '', description: '', sortOrder: (currentAttr?.values?.length || 0) + 1 });
+                          setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', attrId: selectedAttrId, valueId: null });
+                        }}
+                        onExport={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', selectedAttrId)}
+                        onImport={() => {
+                          const type = activeTab === 'projectAttributes' ? 'projectAttributes' : activeTab === 'costCodeAttributes' ? 'costCodeAttributes' : activeTab === 'subcontractAttributes' ? 'subcontractAttributes' : activeTab === 'changeAttributes' ? 'changeAttributes' : 'lineItemAttributes';
+                          fileInputRef.current?.click();
+                          // Override the onchange for this specific context
+                          if (fileInputRef.current) {
+                            fileInputRef.current.onchange = (e: any) => {
                               const file = e.target.files?.[0];
-                              if (file) handleImport(activeTab as any, file, selectedAttrId);
-                            }}
-                          />
-                          <button 
-                            onClick={() => fileInputRef.current?.click()}
-                            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                            title="Import"
-                          >
-                            <Upload className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId)}
-                            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                            title="Export"
-                          >
-                            <Download className="w-4 h-4" />
-                          </button>
-                          <button 
-                            onClick={() => clearAllFilters(activeTab)}
-                            className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                            title="Clear All Filters"
-                          >
-                            <Filter className="w-4 h-4" /> Clear Filters
-                          </button>
-                        </div>
-                        <div className="flex gap-1 border-l border-gray-200 dark:border-white/10 pl-4">
-                          <div className="relative">
-                            <button 
-                              onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === activeTab ? null : activeTab)}
-                              className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
-                            >
-                              <Layout className="w-4 h-4" /> Views
-                            </button>
-                            <AnimatePresence>
-                              {isSavedViewMenuOpen === activeTab && (
-                                <motion.div 
-                                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                  className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                                >
-                                  <div className="mb-3">
-                                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                                    <div className="flex gap-2">
-                                      <input 
-                                        type="text"
-                                        placeholder="View name..."
-                                        value={newViewName}
-                                        onChange={e => setNewViewName(e.target.value)}
-                                        className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                                      />
-                                      <button 
-                                        onClick={() => saveView(activeTab, newViewName)}
-                                        className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                                      >
-                                        Save
-                                      </button>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                                    <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                                    {savedViews.filter(v => v.tableId === activeTab).map(view => (
-                                      <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                        <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                        <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-40 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                          <Trash2 className="w-3 h-3" />
-                                        </button>
-                                      </div>
-                                    ))}
-                                    {savedViews.filter(v => v.tableId === activeTab).length === 0 && (
-                                      <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
-                                    )}
-                                  </div>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </div>
-                          <div className="relative">
-                            <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === activeTab ? null : activeTab)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
-                              <Eye className="w-4 h-4" /> Columns
-                            </button>
-                            <AnimatePresence>
-                              {isColumnMenuOpen === activeTab && (
-                              <motion.div 
-                                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                                className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                              >
-                                {['id', 'description', 'sortOrder'].map(col => (
-                                  <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                    <input 
-                                      type="checkbox"
-                                      checked={visibleColumns[activeTab].includes(col)}
-                                      onChange={() => setVisibleColumns(prev => ({
-                                        ...prev,
-                                        [activeTab]: prev[activeTab].includes(col) ? prev[activeTab].filter(c => c !== col) : [...prev[activeTab], col]
-                                      }))}
-                                      className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                                    />
-                                    <span className="text-xs dark:text-white uppercase tracking-widest font-bold">
-                                      {col === 'id' ? 'ID' : col === 'sortOrder' ? 'Sort Order' : 'Description'}
-                                    </span>
-                                  </label>
-                                ))}
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
-                        </div>
-                      </div>
-                        <button onClick={() => setIsFrozen(prev => ({ ...prev, [activeTab]: !prev[activeTab] }))} className={`p-2 flex items-center gap-1 text-xs font-medium ${isFrozen[activeTab] ? 'text-blue-600' : 'text-gray-400'}`}>
-                          {isFrozen[activeTab] ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen[activeTab] ? 'Frozen' : 'Freeze'}
-                        </button>
-                        {selectedAttrValueIds.size > 0 && (
-                          <button 
-                            onClick={() => setDeleteConfirm({ type: 'bulk-attr-value', count: selectedAttrValueIds.size })}
-                            className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Delete ({selectedAttrValueIds.size})
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => {
-                            const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
-                            setValueFormData({ id: '', description: '', sortOrder: (currentAttr?.values?.length || 0) + 1 });
-                            setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: null });
-                          }}
-                          className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Add
-                        </button>
-                      </div>
-                    </div>
-                      
-                      <div className="flex-1 overflow-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
-                          <tr className="border-b border-white/10 dark:border-black/10">
-                            <th className={`p-2 w-12 ${isFrozen[activeTab] ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>
-                              <input 
-                                type="checkbox" 
-                                className="rounded border-gray-300 dark:border-black/20 bg-transparent"
-                                checked={
-                                  ((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length > 0 &&
-                                  ((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).every((v: any) => selectedAttrValueIds.has(v.id))
-                                }
-                                onChange={(e) => {
-                                  const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
-                                  if (e.target.checked) {
-                                    setSelectedAttrValueIds(new Set(values.map((v: any) => v.id)));
-                                  } else {
-                                    setSelectedAttrValueIds(new Set());
-                                  }
-                                }}
-                              />
-                            </th>
-                            {visibleColumns[activeTab].includes('id') && <th onClick={() => handleAttrSort('id')} className={`p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen[activeTab] ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>ID {attrSort.field === 'id' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                            {visibleColumns[activeTab].includes('description') && <th onClick={() => handleAttrSort('description')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Description {attrSort.field === 'description' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                            {visibleColumns[activeTab].includes('sortOrder') && <th onClick={() => handleAttrSort('sortOrder')} className="p-2 w-24 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Sort Order {attrSort.field === 'sortOrder' && (attrSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                            <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black text-center sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10">...</th>
-                          </tr>
-                          <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
-                            <th className={`p-2 ${isFrozen[activeTab] ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
-                            {visibleColumns[activeTab].includes('id') && (
-                              <th className={`p-2 w-32 ${isFrozen[activeTab] ? 'sticky left-12 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
-                                <input 
-                                  type="text"
-                                  placeholder="Filter ID..."
-                                  value={columnFilters[activeTab]?.id || ''}
-                                  onChange={(e) => setColumnFilters(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], id: e.target.value } }))}
-                                  className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                                />
-                              </th>
-                            )}
-                            {visibleColumns[activeTab].includes('description') && (
-                              <th className="p-2">
-                                <input 
-                                  type="text"
-                                  placeholder="Filter Description..."
-                                  value={columnFilters[activeTab]?.description || ''}
-                                  onChange={(e) => setColumnFilters(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], description: e.target.value } }))}
-                                  className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                                />
-                              </th>
-                            )}
-                            {visibleColumns[activeTab].includes('sortOrder') && (
-                              <th className="p-2 w-24">
-                                <input 
-                                  type="text"
-                                  placeholder="Filter Sort..."
-                                  value={columnFilters[activeTab]?.sortOrder || ''}
-                                  onChange={(e) => setColumnFilters(prev => ({ ...prev, [activeTab]: { ...prev[activeTab], sortOrder: e.target.value } }))}
-                                  className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                                />
-                              </th>
-                            )}
-                            <th className="p-2"></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                          {sortedAttrValues.map((val: any) => (
-                            <tr key={val.id} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group ${selectedAttrValueIds.has(val.id) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                              <td className={`p-2 ${isFrozen[activeTab] ? 'sticky left-0 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                                <input 
-                                  type="checkbox" 
-                                  className="rounded border-gray-300 dark:border-white/20 bg-transparent"
-                                  checked={selectedAttrValueIds.has(val.id)}
-                                  onChange={() => {
-                                    const newSelected = new Set(selectedAttrValueIds);
-                                    if (newSelected.has(val.id)) {
-                                      newSelected.delete(val.id);
-                                    } else {
-                                      newSelected.add(val.id);
-                                    }
-                                    setSelectedAttrValueIds(newSelected);
-                                  }}
-                                />
-                              </td>
-                              {visibleColumns[activeTab].includes('id') && <td className={`p-2 text-xs font-mono dark:text-white ${isFrozen[activeTab] ? 'sticky left-12 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>{val.id}</td>}
-                              {visibleColumns[activeTab].includes('description') && (
-                                <td 
-                                  className="p-2 text-xs dark:text-white cursor-pointer hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors"
-                                  onClick={() => {
-                                    setEditingValueId(val.id);
-                                    setEditingField('description');
-                                  }}
-                                >
-                                  {editingValueId === val.id && editingField === 'description' ? (
-                                    <input 
-                                      autoFocus
-                                      type="text"
-                                      defaultValue={val.description}
-                                      onBlur={(e) => handleInlineUpdate(val.id, 'description', e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleInlineUpdate(val.id, 'description', e.currentTarget.value);
-                                        if (e.key === 'Escape') { setEditingValueId(null); setEditingField(null); }
-                                      }}
-                                      className="w-full px-2 py-1 text-xs bg-white dark:bg-[#1a1a1a] border border-blue-500 rounded outline-none dark:text-white"
-                                    />
-                                  ) : (
-                                    val.description
-                                  )}
-                                </td>
-                              )}
-                              {visibleColumns[activeTab].includes('sortOrder') && (
-                                <td 
-                                  className="p-2 text-xs dark:text-white cursor-pointer hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors"
-                                  onClick={() => {
-                                    setEditingValueId(val.id);
-                                    setEditingField('sortOrder');
-                                  }}
-                                >
-                                  {editingValueId === val.id && editingField === 'sortOrder' ? (
-                                    <input 
-                                      autoFocus
-                                      type="number"
-                                      defaultValue={val.sortOrder}
-                                      onBlur={(e) => handleInlineUpdate(val.id, 'sortOrder', e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') handleInlineUpdate(val.id, 'sortOrder', e.currentTarget.value);
-                                        if (e.key === 'Escape') { setEditingValueId(null); setEditingField(null); }
-                                      }}
-                                      className="w-20 px-2 py-1 text-xs bg-white dark:bg-[#1a1a1a] border border-blue-500 rounded outline-none dark:text-white"
-                                    />
-                                  ) : (
-                                    val.sortOrder?.toString().padStart(2, '0')
-                                  )}
-                                </td>
-                              )}
-                              <td className="p-2 text-right">
-                                <div className="flex items-center justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
-                                  <div className="relative">
-                                    <button 
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setActiveMenuId(activeMenuId === `attr-val-${val.id}` ? null : `attr-val-${val.id}`);
-                                      }}
-                                      className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
-                                    >
-                                      <MoreVertical className="w-4 h-4" />
-                                    </button>
-                                    
-                                    <AnimatePresence>
-                                      {activeMenuId === `attr-val-${val.id}` && (
-                                        <>
-                                          <div 
-                                            className="fixed inset-0 z-40" 
-                                            onClick={() => setActiveMenuId(null)}
-                                          />
-                                          <motion.div 
-                                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                            className={cn(
-                                              "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
-                                              sortedAttrValues.indexOf(val) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                                            )}
-                                          >
-                                            <button 
-                                              onClick={() => {
-                                                setValueFormData(val);
-                                                setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: val.id });
-                                                setActiveMenuId(null);
-                                              }}
-                                              className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                            >
-                                              <Edit2 className="w-3 h-3" /> Edit
-                                            </button>
-                                            <button 
-                                              onClick={() => {
-                                                removeAttributeValue(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId, val.id);
-                                                setActiveMenuId(null);
-                                              }}
-                                              className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                            >
-                                              <Trash2 className="w-3 h-3" /> Delete
-                                            </button>
-                                          </motion.div>
-                                        </>
-                                      )}
-                                    </AnimatePresence>
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        {((activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || []).length === 0 && (
-                            <tr>
-                              <td colSpan={5} className="p-12 text-center">
-                                <Tag className="w-12 h-12 text-gray-200 dark:text-white/10 mx-auto mb-4" />
-                                <p className="text-gray-900 dark:text-gray-400 text-sm">No values defined for this attribute.</p>
-                                <button 
-                                  onClick={() => {
-                                    setValueFormData({ id: '', description: '', sortOrder: 1 });
-                                    setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', attrId: selectedAttrId, valueId: null });
-                                  }}
-                                  className="mt-4 text-blue-600 dark:text-blue-400 text-xs font-bold hover:underline"
-                                >
-                                  Add your first value
-                                </button>
-                              </td>
-                            </tr>
-                          )}
-                      </table>
-                    </div>
+                              if (file) handleImport(type as any, file, selectedAttrId);
+                              e.target.value = ''; // Reset for same file re-selection
+                            };
+                          }
+                        }}
+                        searchPlaceholder="Search values..."
+                        quickFilterText={valueSearch}
+                        onQuickFilterChange={setValueSearch}
+                        rowData={sortedAttrValues}
+                        columnDefs={attributeValueColumnDefs}
+                        theme={document.documentElement.classList.contains('dark') ? 'dark' : 'light'}
+                        onCellValueChanged={(event) => {
+                          const { data, colDef, newValue } = event;
+                          if (!data.id) return;
+                          handleInlineUpdate(data.id, colDef.field as any, newValue);
+                        }}
+                        gridProps={{
+                          rowSelection: 'multiple',
+                          onSelectionChanged: (params: any) => {
+                            const selectedNodes = params.api.getSelectedNodes();
+                            setSelectedAttrValueIds(new Set(selectedNodes.map((node: any) => node.data.id)));
+                          }
+                        }}
+                        selectedCount={selectedAttrValueIds.size}
+                        onBulkDelete={() => setDeleteConfirm({ type: 'bulk-attr-value', count: selectedAttrValueIds.size })}
+                      />
                     </motion.div>
                   ) : (
                     <motion.div
@@ -2500,820 +1934,49 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     </motion.div>
                   )}
                 </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
-
-        {activeTab === 'costElements' && (
-          <motion.div 
-            key="costElements"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
-          >
-              <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
-                <div>
-                  <h3 className="text-xl font-bold dark:text-white">Enterprise Cost Elements</h3>
-                  <p className="text-sm text-gray-900 dark:text-gray-400">Define standard cost elements for enterprise-wide financial tracking.</p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="relative">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input 
-                      type="text" 
-                      placeholder="Search cost elements..."
-                      value={costElementSearch}
-                      onChange={(e) => setCostElementSearch(e.target.value)}
-                      className="pl-10 pr-4 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl text-xs focus:outline-none w-64 dark:text-white"
-                    />
-                  </div>
-                  <div className="flex gap-1">
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      className="hidden" 
-                      accept=".xlsx,.xls,.csv"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleImport('costElements', file);
-                      }}
-                    />
-                    <button 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                      title="Import"
-                    >
-                      <Upload className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleExport('costElements')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                      title="Export"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => clearAllFilters('costElements')}
-                      className="p-2 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-1 text-xs font-medium"
-                      title="Clear All Filters"
-                    >
-                      <Filter className="w-4 h-4" /> Clear Filters
-                    </button>
-                  </div>
-                  <div className="flex gap-1 border-l border-gray-200 dark:border-white/10 pl-4">
-                    <div className="relative">
-                      <button 
-                        onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'costElements' ? null : 'costElements')}
-                        className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium"
-                      >
-                        <Layout className="w-4 h-4" /> Views
-                      </button>
-                      <AnimatePresence>
-                        {isSavedViewMenuOpen === 'costElements' && (
-                          <motion.div 
-                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                          >
-                            <div className="mb-3">
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                              <div className="flex gap-2">
-                                <input 
-                                  type="text"
-                                  placeholder="View name..."
-                                  value={newViewName}
-                                  onChange={e => setNewViewName(e.target.value)}
-                                  className="flex-1 px-2 py-1 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded outline-none dark:text-white"
-                                />
-                                <button 
-                                  onClick={() => saveView('costElements', newViewName)}
-                                  className="px-2 py-1 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded"
-                                >
-                                  Save
-                                </button>
-                              </div>
-                            </div>
-                            <div className="space-y-1 max-h-48 overflow-y-auto custom-scrollbar">
-                              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                              {savedViews.filter(v => v.tableId === 'costElements').map(view => (
-                                <div key={view.id} className="flex items-center justify-between group p-1.5 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                  <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                  <button onClick={(e) => { e.stopPropagation(); deleteView(view.id); }} className="opacity-40 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-opacity">
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                </div>
-                              ))}
-                              {savedViews.filter(v => v.tableId === 'costElements').length === 0 && (
-                                <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                    <div className="relative">
-                      <button onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'costElements' ? null : 'costElements')} className="p-2 text-gray-400 hover:text-black dark:hover:text-white flex items-center gap-1 text-xs font-medium">
-                        <Eye className="w-4 h-4" /> Columns
-                      </button>
-                      <AnimatePresence>
-                        {isColumnMenuOpen === 'costElements' && (
-                          <motion.div 
-                            initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                            exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                            className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                          >
-                            {['id', 'description', 'sortCode'].map(col => (
-                              <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer">
-                                <input 
-                                  type="checkbox"
-                                  checked={visibleColumns.costElements.includes(col)}
-                                  onChange={() => setVisibleColumns(prev => ({
-                                    ...prev,
-                                    costElements: prev.costElements.includes(col) ? prev.costElements.filter(c => c !== col) : [...prev.costElements, col]
-                                  }))}
-                                  className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                                />
-                                <span className="text-[10px] font-bold uppercase tracking-widest dark:text-white">{col}</span>
-                              </label>
-                            ))}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                    <button onClick={() => setIsFrozen(prev => ({ ...prev, costElements: !prev.costElements }))} className={cn("p-2 flex items-center gap-1 text-xs font-medium transition-colors", isFrozen.costElements ? "text-blue-600" : "text-gray-400 hover:text-black dark:hover:text-white")}>
-                      {isFrozen.costElements ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />} {isFrozen.costElements ? 'Frozen' : 'Freeze'}
-                    </button>
-                  </div>
-                  {selectedCostElementIds.size > 0 && (
-                    <button 
-                      onClick={() => setDeleteConfirm({ type: 'bulk-costElement', count: selectedCostElementIds.size })}
-                      className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      Delete ({selectedCostElementIds.size})
-                    </button>
-                  )}
-                  <button 
-                    onClick={() => {
-                      setCostElementFormData({ id: '', description: '', sortCode: '' });
-                      setIsEditingCostElement({ id: null });
-                    }}
-                    className="flex items-center gap-2 bg-black dark:bg-white text-white dark:text-black px-4 py-2 rounded-lg text-sm font-medium hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
-                    <tr className="border-b border-white/10 dark:border-black/10">
-                      <th className={`p-2 w-12 ${isFrozen.costElements ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>
-                        <input 
-                          type="checkbox" 
-                          className="rounded border-gray-300 dark:border-black/20 bg-transparent"
-                          checked={(enterprise.costElements || []).length > 0 && (enterprise.costElements || []).every(e => selectedCostElementIds.has(e.id))}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedCostElementIds(new Set((enterprise.costElements || []).map(e => e.id)));
-                            } else {
-                              setSelectedCostElementIds(new Set());
-                            }
-                          }}
-                        />
-                      </th>
-                      {visibleColumns.costElements.includes('id') && (
-                        <th 
-                          onClick={() => setCostElementSort(prev => ({ field: 'id', direction: prev.field === 'id' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
-                          className={`p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.costElements ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}
-                        >
-                          ID {costElementSort.field === 'id' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
-                        </th>
-                      )}
-                      {visibleColumns.costElements.includes('description') && (
-                        <th 
-                          className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600"
-                          onClick={() => setCostElementSort(prev => ({ field: 'description', direction: prev.field === 'description' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
-                        >
-                          Description {costElementSort.field === 'description' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
-                        </th>
-                      )}
-                      {visibleColumns.costElements.includes('sortCode') && (
-                        <th 
-                          className="p-2 w-20 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600"
-                          onClick={() => setCostElementSort(prev => ({ field: 'sortCode', direction: prev.field === 'sortCode' && prev.direction === 'asc' ? 'desc' : 'asc' }))}
-                        >
-                          Sort {costElementSort.field === 'sortCode' && (costElementSort.direction === 'asc' ? '↑' : '↓')}
-                        </th>
-                      )}
-                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10 text-center">...</th>
-                    </tr>
-                    <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
-                      <th className={`p-2 ${isFrozen.costElements ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
-                      {visibleColumns.costElements.includes('id') && (
-                        <th className={`p-2 w-32 ${isFrozen.costElements ? 'sticky left-12 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="text"
-                            placeholder="Filter ID..."
-                            value={columnFilters.costElements?.id || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, id: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.costElements.includes('description') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Description..."
-                            value={columnFilters.costElements?.description || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, description: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.costElements.includes('sortCode') && (
-                        <th className="p-2 w-20">
-                          <input 
-                            type="text"
-                            placeholder="Filter Sort Code..."
-                            value={columnFilters.costElements?.sortCode || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, costElements: { ...prev.costElements, sortCode: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      <th className="p-2 sticky right-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-l border-gray-200 dark:border-white/10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                    {filteredCostElements.map((element, index) => (
-                      <tr key={element.id} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group ${selectedCostElementIds.has(element.id) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                        <td className={`p-2 ${isFrozen.costElements ? 'sticky left-0 z-10 bg-inherit border-r border-gray-100 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="checkbox" 
-                            className="rounded border-gray-300 dark:border-white/20 bg-transparent"
-                            checked={selectedCostElementIds.has(element.id)}
-                            onChange={() => {
-                              const newSelected = new Set(selectedCostElementIds);
-                              if (newSelected.has(element.id)) {
-                                newSelected.delete(element.id);
-                              } else {
-                                newSelected.add(element.id);
-                              }
-                              setSelectedCostElementIds(newSelected);
-                            }}
-                          />
-                        </td>
-                        {visibleColumns.costElements.includes('id') && <td className={`p-2 w-32 text-xs font-mono dark:text-white ${isFrozen.costElements ? 'sticky left-12 z-10 bg-inherit border-r border-gray-100 dark:border-white/10' : ''}`}>{element.id}</td>}
-                        {visibleColumns.costElements.includes('description') && <td className="p-2 text-xs font-bold dark:text-white truncate max-w-[400px]" title={element.description}>{element.description}</td>}
-                        {visibleColumns.costElements.includes('sortCode') && <td className="p-2 w-20 text-xs text-gray-500 dark:text-gray-400">{element.sortCode}</td>}
-                        <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
-                            <div className="relative">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMenuId(activeMenuId === `ce-${element.id}` ? null : `ce-${element.id}`);
-                                }}
-                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
-                              >
-                                <MoreVertical className="w-4 h-4" />
-                              </button>
-                              
-                              <AnimatePresence>
-                                {activeMenuId === `ce-${element.id}` && (
-                                  <>
-                                    <div 
-                                      className="fixed inset-0 z-40" 
-                                      onClick={() => setActiveMenuId(null)}
-                                    />
-                                    <motion.div 
-                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      className={cn(
-                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
-                                        filteredCostElements.indexOf(element) < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                                      )}
-                                    >
-                                      <button 
-                                        onClick={() => {
-                                          const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
-                                          setCostElementFormData({ id: '', description: '', sortCode: '' });
-                                          setIsEditingCostElement({ id: null, insertIndex: index });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Plus className="w-3 h-3" /> Insert Above
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          const index = (enterprise.costElements || []).findIndex(e => e.id === element.id);
-                                          setCostElementFormData({ id: '', description: '', sortCode: '' });
-                                          setIsEditingCostElement({ id: null, insertIndex: index + 1 });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Plus className="w-3 h-3" /> Insert Below
-                                      </button>
-                                      <hr className="my-1 border-gray-100 dark:border-white/10" />
-                                      <button 
-                                        onClick={() => {
-                                          setCostElementFormData({ 
-                                            id: element.id, 
-                                            description: element.description, 
-                                            sortCode: element.sortCode
-                                          });
-                                          setIsEditingCostElement({ id: element.id });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Edit2 className="w-3 h-3" /> Edit
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          setDeleteConfirm({ type: 'costElement', id: element.id, name: element.description });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Trash2 className="w-3 h-3" /> Delete
-                                      </button>
-                                    </motion.div>
-                                  </>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredCostElements.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="p-12 text-center">
-                          <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <PieChart className="w-8 h-8 text-gray-300" />
-                          </div>
-                          <p className="text-gray-900 dark:text-gray-400 text-sm">No cost elements found matching your search.</p>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
               </div>
             </motion.div>
           )}
-
-          {activeTab === 'resourceRates' && (
+        {activeTab === 'resourceRates' && (
             <motion.div 
               key="resourceRates"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+              className="flex-1 flex flex-col min-h-0"
             >
-              <div className="p-4 border-b border-gray-100 dark:border-white/10 flex flex-wrap gap-4 items-center justify-between bg-white dark:bg-[#141414] shrink-0">
-                <div className="flex items-center gap-4 flex-1 min-w-[300px]">
-                  <div className="relative flex-1 max-w-md">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input 
-                      type="text" 
-                      placeholder="Search resources..."
-                      value={resourceSearch}
-                      onChange={(e) => setResourceSearch(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all dark:text-white"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <input 
-                      type="file" 
-                      ref={fileInputRef} 
-                      className="hidden" 
-                      accept=".xlsx,.xls,.csv"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleImport('resourceRates', file);
-                      }}
-                    />
-                    <button 
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"
-                      title="Import"
-                    >
-                      <Upload className="w-4 h-4" />
-                    </button>
-                    <button 
-                      onClick={() => handleExport('resourceRates')}
-                      className="p-2 text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"
-                      title="Export"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => clearAllFilters('resourceRates')}
-                    className="h-9 px-3 text-gray-400 hover:text-red-600 transition-colors flex items-center gap-2 text-xs font-medium hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg"
-                  >
-                    <Filter className="w-3.5 h-3.5" /> Clear Filters
-                  </button>
-
-                  <div className="h-4 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
-
-                  <div className="relative">
-                    <button 
-                      onClick={() => setIsSavedViewMenuOpen(isSavedViewMenuOpen === 'resourceRates' ? null : 'resourceRates')}
-                      className={cn(
-                        "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
-                        isSavedViewMenuOpen === 'resourceRates' 
-                          ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                          : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
-                      )}
-                    >
-                      <Layout className="w-3.5 h-3.5" /> Views
-                    </button>
-                    <AnimatePresence>
-                      {isSavedViewMenuOpen === 'resourceRates' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-64 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-3"
-                        >
-                          <div className="mb-3">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Save Current View</p>
-                            <div className="flex gap-2">
-                              <input 
-                                type="text"
-                                placeholder="View name..."
-                                value={newViewName}
-                                onChange={e => setNewViewName(e.target.value)}
-                                className="flex-1 px-2 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg outline-none dark:text-white focus:ring-1 focus:ring-blue-500"
-                              />
-                              <button 
-                                onClick={() => saveView('resourceRates', newViewName)}
-                                className="px-3 py-1.5 bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold rounded-lg hover:opacity-90 transition-opacity"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                          <div className="space-y-1 max-h-48 overflow-y-auto">
-                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Saved Views</p>
-                            {savedViews.filter(v => v.tableId === 'resourceRates').map(view => (
-                              <div key={view.id} className="flex items-center justify-between group p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
-                                <span onClick={() => applyView(view)} className="text-xs dark:text-white flex-1">{view.name}</span>
-                                <button onClick={() => deleteView(view.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-600 transition-all">
-                                  <Trash2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
-                            {savedViews.filter(v => v.tableId === 'resourceRates').length === 0 && (
-                              <p className="text-[10px] text-gray-400 italic p-2 text-center">No saved views</p>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-
-                  <div className="relative">
-                    <button 
-                      onClick={() => setIsColumnMenuOpen(isColumnMenuOpen === 'resourceRates' ? null : 'resourceRates')}
-                      className={cn(
-                        "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
-                        isColumnMenuOpen === 'resourceRates' 
-                          ? "bg-gray-100 dark:bg-white/10 text-black dark:text-white" 
-                          : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
-                      )}
-                    >
-                      <Eye className="w-3.5 h-3.5" /> Columns
-                    </button>
-                    <AnimatePresence>
-                      {isColumnMenuOpen === 'resourceRates' && (
-                        <motion.div 
-                          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                          animate={{ opacity: 1, scale: 1, y: 0 }}
-                          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                          className="absolute right-0 mt-2 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2"
-                        >
-                          {['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'].map(col => (
-                            <label key={col} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg cursor-pointer transition-colors">
-                              <input 
-                                type="checkbox"
-                                checked={visibleColumns.resourceRates.includes(col)}
-                                onChange={() => setVisibleColumns(prev => ({
-                                  ...prev,
-                                  resourceRates: prev.resourceRates.includes(col) ? prev.resourceRates.filter(c => c !== col) : [...prev.resourceRates, col]
-                                }))}
-                                className="rounded border-gray-300 dark:border-white/10 text-black focus:ring-black"
-                              />
-                              <span className="text-xs dark:text-white uppercase tracking-tighter">{col}</span>
-                            </label>
-                          ))}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-
-                  <button 
-                    onClick={() => setIsFrozen(prev => ({ ...prev, resourceRates: !prev.resourceRates }))} 
-                    className={cn(
-                      "h-9 px-3 flex items-center gap-2 text-xs font-medium rounded-lg transition-colors",
-                      isFrozen.resourceRates 
-                        ? "bg-blue-50 dark:bg-blue-500/10 text-blue-600" 
-                        : "text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5"
-                    )}
-                  >
-                    {isFrozen.resourceRates ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />} 
-                    {isFrozen.resourceRates ? 'Frozen' : 'Freeze'}
-                  </button>
-
-                  <div className="h-4 w-[1px] bg-gray-200 dark:bg-white/10 mx-1" />
-
-                  {selectedRateIds.size > 0 && (
-                    <button 
-                      onClick={() => setDeleteConfirm({ type: 'bulk-rate', count: selectedRateIds.size })}
-                      className="h-9 px-4 bg-red-600 text-white rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-red-700 transition-all shadow-sm"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      Delete ({selectedRateIds.size})
-                    </button>
-                  )}
-                  <button 
-                    onClick={() => {
-                      setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
-                      setIsEditingResource({ id: null });
-                    }}
-                    className="h-9 px-4 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold flex items-center gap-2 hover:opacity-90 transition-all shadow-sm"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add Resource
-                  </button>
-                </div>
-              </div>
-              
-              <div className="flex-1 overflow-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-black dark:bg-gray-100 sticky top-0 z-20">
-                    <tr className="border-b border-white/10 dark:border-black/10">
-                      <th className={`p-2 w-12 ${isFrozen.resourceRates ? 'sticky left-0 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>
-                        <input 
-                          type="checkbox" 
-                          className="rounded border-gray-300 dark:border-black/20 bg-transparent"
-                          checked={(enterprise.resourceRates || []).length > 0 && (enterprise.resourceRates || []).every(r => selectedRateIds.has(r.id))}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedRateIds(new Set((enterprise.resourceRates || []).map(r => r.id)));
-                            } else {
-                              setSelectedRateIds(new Set());
-                            }
-                          }}
-                        />
-                      </th>
-                      {visibleColumns.resourceRates.includes('id') && <th onClick={() => handleResourceSort('id')} className={`p-2 w-32 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 ${isFrozen.resourceRates ? 'sticky left-12 z-30 bg-black dark:bg-gray-100 border-r border-white/10 dark:border-black/10' : ''}`}>ID {resourceSort.field === 'id' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('name') && <th onClick={() => handleResourceSort('name')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Resource Name {resourceSort.field === 'name' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('category') && <th onClick={() => handleResourceSort('category')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Category {resourceSort.field === 'category' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('unit') && <th onClick={() => handleResourceSort('unit')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600">Unit {resourceSort.field === 'unit' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('rate') && <th onClick={() => handleResourceSort('rate')} className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black cursor-pointer hover:text-gray-300 dark:hover:text-gray-600 text-right pr-4">Rate {resourceSort.field === 'rate' && (resourceSort.direction === 'asc' ? '↑' : '↓')}</th>}
-                      {visibleColumns.resourceRates.includes('udf1') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 1</th>}
-                      {visibleColumns.resourceRates.includes('udf2') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 2</th>}
-                      {visibleColumns.resourceRates.includes('udf3') && <th className="p-2 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black">UDF 3</th>}
-                      <th className="p-2 w-12 text-[10px] font-bold uppercase tracking-widest text-white dark:text-black sticky right-0 z-30 bg-black dark:bg-gray-100 border-l border-white/10 dark:border-black/10 text-center">...</th>
-                    </tr>
-                    <tr className="bg-gray-100/50 dark:bg-white/2 border-b border-gray-200 dark:border-white/10">
-                      <th className={`p-2 ${isFrozen.resourceRates ? 'sticky left-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}></th>
-                      {visibleColumns.resourceRates.includes('id') && (
-                        <th className={`p-2 w-32 ${isFrozen.resourceRates ? 'sticky left-12 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="text"
-                            placeholder="Filter ID..."
-                            value={columnFilters.resourceRates.id || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, id: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('name') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Name..."
-                            value={columnFilters.resourceRates.name || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, name: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('category') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Category..."
-                            value={columnFilters.resourceRates.category || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, category: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('unit') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Unit..."
-                            value={columnFilters.resourceRates.unit || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, unit: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('rate') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter Rate..."
-                            value={columnFilters.resourceRates.rate || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, rate: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('udf1') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter UDF 1..."
-                            value={columnFilters.resourceRates.udf1 || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, udf1: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('udf2') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter UDF 2..."
-                            value={columnFilters.resourceRates.udf2 || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, udf2: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      {visibleColumns.resourceRates.includes('udf3') && (
-                        <th className="p-2">
-                          <input 
-                            type="text"
-                            placeholder="Filter UDF 3..."
-                            value={columnFilters.resourceRates.udf3 || ''}
-                            onChange={(e) => setColumnFilters(prev => ({ ...prev, resourceRates: { ...prev.resourceRates, udf3: e.target.value } }))}
-                            className="w-full px-2 py-1 text-[10px] bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded focus:ring-1 focus:ring-blue-500 outline-none dark:text-white"
-                          />
-                        </th>
-                      )}
-                      <th className="p-2 sticky right-0 z-30 bg-gray-100/50 dark:bg-[#1a1a1a] border-l border-gray-200 dark:border-white/10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                    {filteredResources.map((resource, index) => (
-                      <tr key={resource.id} className={`hover:bg-gray-50 dark:hover:bg-white/5 transition-colors group ${selectedRateIds.has(resource.id) ? 'bg-blue-50/50 dark:bg-blue-500/5' : ''}`}>
-                        <td className={`p-2 ${isFrozen.resourceRates ? 'sticky left-0 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>
-                          <input 
-                            type="checkbox" 
-                            className="rounded border-gray-300 dark:border-white/20 bg-transparent"
-                            checked={selectedRateIds.has(resource.id)}
-                            onChange={() => {
-                              const newSelected = new Set(selectedRateIds);
-                              if (newSelected.has(resource.id)) {
-                                newSelected.delete(resource.id);
-                              } else {
-                                newSelected.add(resource.id);
-                              }
-                              setSelectedRateIds(newSelected);
-                            }}
-                          />
-                        </td>
-                        {visibleColumns.resourceRates.includes('id') && <td className={`p-2 text-xs font-mono dark:text-white ${isFrozen.resourceRates ? 'sticky left-12 z-10 bg-inherit border-r border-gray-200 dark:border-white/10' : ''}`}>{resource.id}</td>}
-                        {visibleColumns.resourceRates.includes('name') && <td className="p-2 text-xs font-bold dark:text-white">{resource.name}</td>}
-                        {visibleColumns.resourceRates.includes('category') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.category || 'Uncategorized'}</td>}
-                        {visibleColumns.resourceRates.includes('unit') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.unit}</td>}
-                        {visibleColumns.resourceRates.includes('rate') && <td className="p-2 text-xs text-right pr-4 font-mono dark:text-white">{resource.rate ? `$${resource.rate.toLocaleString()}` : '-'}</td>}
-                        {visibleColumns.resourceRates.includes('udf1') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf1 || '-'}</td>}
-                        {visibleColumns.resourceRates.includes('udf2') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf2 || '-'}</td>}
-                        {visibleColumns.resourceRates.includes('udf3') && <td className="p-2 text-xs text-gray-500 dark:text-gray-400">{resource.udf3 || '-'}</td>}
-                        <td className="p-2 sticky right-0 z-10 bg-inherit border-l border-gray-100 dark:border-white/10">
-                          <div className="flex justify-end gap-1 opacity-40 group-hover:opacity-100 transition-opacity">
-                            <div className="relative">
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMenuId(activeMenuId === `rr-${resource.id}` ? null : `rr-${resource.id}`);
-                                }}
-                                className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white rounded-lg hover:bg-gray-100 dark:hover:bg-white/5"
-                              >
-                                <MoreVertical className="w-4 h-4" />
-                              </button>
-                              
-                              <AnimatePresence>
-                                {activeMenuId === `rr-${resource.id}` && (
-                                  <>
-                                    <div 
-                                      className="fixed inset-0 z-40" 
-                                      onClick={() => setActiveMenuId(null)}
-                                    />
-                                    <motion.div 
-                                      initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                                      exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                                      className={cn(
-                                        "absolute right-0 w-48 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-xl shadow-xl z-50 p-2",
-                                        index < 3 ? "top-full mt-2" : "bottom-full mb-2"
-                                      )}
-                                    >
-                                      <button 
-                                        onClick={() => {
-                                          const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
-                                          setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
-                                          setIsEditingResource({ id: null, insertIndex: index });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Plus className="w-3 h-3" /> Insert Above
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          const index = (enterprise.resourceRates || []).findIndex(r => r.id === resource.id);
-                                          setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
-                                          setIsEditingResource({ id: null, insertIndex: index + 1 });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Plus className="w-3 h-3" /> Insert Below
-                                      </button>
-                                      <hr className="my-1 border-gray-100 dark:border-white/10" />
-                                      <button 
-                                        onClick={() => {
-                                          setResourceFormData({ 
-                                            id: resource.id, 
-                                            name: resource.name, 
-                                            unit: resource.unit, 
-                                            rate: resource.rate || 0, 
-                                            category: resource.category || '', 
-                                            udf1: resource.udf1 || '', 
-                                            udf2: resource.udf2 || '', 
-                                            udf3: resource.udf3 || '' 
-                                          });
-                                          setIsEditingResource({ id: resource.id });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Edit2 className="w-3 h-3" /> Edit
-                                      </button>
-                                      <button 
-                                        onClick={() => {
-                                          setDeleteConfirm({ type: 'rate', id: resource.id, name: resource.name });
-                                          setActiveMenuId(null);
-                                        }}
-                                        className="w-full text-left p-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg flex items-center gap-2"
-                                      >
-                                        <Trash2 className="w-3 h-3" /> Delete
-                                      </button>
-                                    </motion.div>
-                                  </>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {filteredResources.length === 0 && (
-                      <tr>
-                        <td colSpan={10} className="p-12 text-center">
-                          <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Settings className="w-8 h-8 text-gray-300" />
-                          </div>
-                          <p className="text-gray-900 dark:text-gray-400 text-sm">No resources found matching your search.</p>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              <DataGridModule
+                title="Resource Rates"
+                description="Manage global resource rates and unit costs."
+                onAdd={() => {
+                  setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
+                  setIsEditingResource({ id: null });
+                }}
+                onExport={() => handleExport('resourceRates')}
+                searchPlaceholder="Search resources..."
+                quickFilterText={resourceSearch}
+                onQuickFilterChange={setResourceSearch}
+                rowData={enterprise.resourceRates || []}
+                columnDefs={resourceRateColumnDefs}
+                theme={document.documentElement.classList.contains('dark') ? 'dark' : 'light'}
+                onCellValueChanged={(event) => {
+                  const { data, colDef, newValue } = event;
+                  if (!data.id) return;
+                  updateResourceRate(data.id, { [colDef.field!]: newValue });
+                }}
+                gridProps={{
+                  rowSelection: 'multiple',
+                  onSelectionChanged: (params: any) => {
+                    const selectedNodes = params.api.getSelectedNodes();
+                    setSelectedRateIds(new Set(selectedNodes.map((node: any) => node.data.id)));
+                  }
+                }}
+                selectedCount={selectedRateIds.size}
+                onBulkUpdate={() => {
+                  setIsBulkUpdateModalOpen({ type: 'rate', count: selectedRateIds.size });
+                }}
+                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-rate', count: selectedRateIds.size })}
+              />
             </motion.div>
           )}
 
@@ -3333,31 +1996,64 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
+          {activeTab === 'vendors' && (
+            <motion.div 
+              key="vendors"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <DataGridModule
+                title="Vendors"
+                description="Manage enterprise vendors and contact information."
+                onAdd={() => {
+                  setVendorFormData({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
+                  setIsEditingVendor({ id: null });
+                }}
+                onQuickFilterChange={setVendorSearch}
+                quickFilterText={vendorSearch}
+                rowData={filteredVendors}
+                selectedCount={selectedVendorIds.size}
+                onCellValueChanged={(event) => {
+                  const { data, colDef, newValue } = event;
+                  if (!data.id) return;
+                  updateVendor(data.id, { [colDef.field!]: newValue });
+                }}
+                onBulkUpdate={() => {
+                  setIsBulkUpdateModalOpen({ type: 'vendor', count: selectedVendorIds.size });
+                }}
+                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-vendor', count: selectedVendorIds.size })}
+                columnDefs={vendorColumnDefs}
+                gridProps={{
+                  rowSelection: 'multiple',
+                  onSelectionChanged: (params: any) => {
+                    const selectedNodes = params.api.getSelectedNodes();
+                    setSelectedVendorIds(new Set(selectedNodes.map((node: any) => node.data.id)));
+                  }
+                }}
+              />
+            </motion.div>
+          )}
+
           {activeTab === 'changeMgmt' && (
             <motion.div 
               key="change-mgmt"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex flex-col p-8 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden"
+              className="flex-1 flex flex-col min-h-0"
             >
-              <div className="flex items-center justify-between mb-8">
-                <div>
-                  <h3 className="text-lg font-bold dark:text-white">Change Management Settings</h3>
-                  <p className="text-sm text-gray-500">Configure global change types for the enterprise.</p>
-                </div>
-                <RefreshCw className="w-8 h-8 text-gray-300" />
-              </div>
-
-              <div className="space-y-6">
-                <div className="bg-gray-50 dark:bg-white/5 p-6 rounded-2xl border border-gray-100 dark:border-white/5">
-                  <h4 className="text-sm font-bold dark:text-white mb-4">Change Types</h4>
-                  <div className="flex gap-2 mb-4">
+              <DataGridModule
+                title="Change Management Settings"
+                description="Configure global change types for the enterprise."
+                extraToolbarActions={
+                  <div className="flex gap-2">
                     <Input 
-                      placeholder="Enter new change type (e.g. Client Change, Internal Error...)"
+                      placeholder="New change type..."
                       value={newChangeType}
                       onChange={(e) => setNewChangeType(e.target.value)}
-                      className="flex-1"
+                      className="w-64"
                     />
                     <Button 
                       onClick={async () => {
@@ -3375,31 +2071,58 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       className="bg-black dark:bg-white text-white dark:text-black"
                     >
                       <Plus className="w-4 h-4 mr-2" />
-                      Add Type
+                      Add
                     </Button>
                   </div>
-
-                  <div className="space-y-2">
-                    {(enterprise.changeTypes || []).map((type, i) => (
-                      <div key={i} className="flex items-center justify-between p-3 bg-white dark:bg-[#1a1a1a] rounded-xl border border-gray-100 dark:border-white/5 group">
-                        <span className="text-sm dark:text-white">{type}</span>
-                        <button 
-                          onClick={async () => {
-                            const newTypes = (enterprise.changeTypes || []).filter(t => t !== type);
-                            await handleUpdateEnterprise({ changeTypes: newTypes });
-                          }}
-                          className="p-2 text-gray-400 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                    {(enterprise.changeTypes || []).length === 0 && (
-                      <p className="text-xs text-gray-500 italic text-center py-4">No change types defined yet.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
+                }
+                rowData={(enterprise.changeTypes || []).map(type => ({ type }))}
+                onCellValueChanged={async (event) => {
+                  const { oldValue, newValue } = event;
+                  if (!newValue || oldValue === newValue) return;
+                  const currentTypes = enterprise.changeTypes || [];
+                  const newTypes = currentTypes.map(t => t === oldValue ? newValue : t);
+                  await handleUpdateEnterprise({ changeTypes: newTypes });
+                }}
+                columnDefs={[
+                  { 
+                    field: 'type', 
+                    headerName: 'Change Type', 
+                    flex: 1, 
+                    editable: true,
+                    cellClass: 'font-bold text-sm' 
+                  },
+                  {
+                    headerName: '',
+                    width: 80,
+                    pinned: 'right',
+                    cellRenderer: (params: any) => {
+                      if (params.data.isSubtotal) return null;
+                      return (
+                        <div className="flex justify-end py-1">
+                          <button 
+                            onClick={async () => {
+                              const newTypes = (enterprise.changeTypes || []).filter(t => t !== params.data.type);
+                              await handleUpdateEnterprise({ changeTypes: newTypes });
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    }
+                  }
+                ]}
+                gridProps={{
+                  rowSelection: 'multiple',
+                  onSelectionChanged: (params: any) => {
+                    const selectedNodes = params.api.getSelectedNodes();
+                    setSelectedChangeTypeIds(new Set(selectedNodes.map((node: any) => node.data.type)));
+                  }
+                }}
+                selectedCount={selectedChangeTypeIds.size}
+                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-changeType', count: selectedChangeTypeIds.size })}
+              />
             </motion.div>
           )}
 
@@ -3806,8 +2529,12 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                deleteConfirm.type === 'bulk-attr-value' ? 'Delete Attribute Values?' :
                deleteConfirm.type === 'bulk-rate' ? 'Delete Resource Rates?' :
                deleteConfirm.type === 'bulk-costElement' ? 'Delete Cost Elements?' :
+               deleteConfirm.type === 'bulk-vendor' ? 'Delete Vendors?' :
+               deleteConfirm.type === 'bulk-user' ? 'Delete Users?' :
+               deleteConfirm.type === 'bulk-changeType' ? 'Delete Change Types?' :
                deleteConfirm.type === 'rate' ? 'Delete Resource Rate?' :
                deleteConfirm.type === 'costElement' ? 'Delete Cost Element?' :
+               deleteConfirm.type === 'vendor' ? 'Delete Vendor?' :
                'Delete User?'}
             </h2>
             <p className="text-gray-900 dark:text-gray-400 text-center mb-8">
@@ -3819,6 +2546,12 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> resource rates. This action cannot be undone.</>
               ) : deleteConfirm.type === 'bulk-costElement' ? (
                 <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> cost elements. This action cannot be undone.</>
+              ) : deleteConfirm.type === 'bulk-vendor' ? (
+                <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> vendors. This action cannot be undone.</>
+              ) : deleteConfirm.type === 'bulk-user' ? (
+                <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> users. This action cannot be undone.</>
+              ) : deleteConfirm.type === 'bulk-changeType' ? (
+                <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> change types. This action cannot be undone.</>
               ) : (
                 <>You are about to remove <span className="font-bold text-black dark:text-white">{deleteConfirm.name}</span> from the enterprise.</>
               )}
@@ -3833,13 +2566,15 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               <button 
                 onClick={() => {
                   if (deleteConfirm.type === 'user') deleteUser(deleteConfirm.id!);
+                  else if (deleteConfirm.type === 'bulk-user') bulkDeleteUsers();
                   else if (deleteConfirm.type === 'project') deleteProject(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-project') bulkDeleteProjects();
-                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : 'lineItem', selectedAttrId);
+                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', selectedAttrId);
                   else if (deleteConfirm.type === 'rate') deleteResourceRate(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-rate') bulkDeleteResourceRates();
-                  else if (deleteConfirm.type === 'costElement') deleteCostElement(deleteConfirm.id!);
-                  else if (deleteConfirm.type === 'bulk-costElement') bulkDeleteCostElements();
+                  else if (deleteConfirm.type === 'vendor') deleteVendor(deleteConfirm.id!);
+                  else if (deleteConfirm.type === 'bulk-vendor') bulkDeleteVendors();
+                  else if (deleteConfirm.type === 'bulk-changeType') bulkDeleteChangeTypes();
                   setDeleteConfirm(null);
                 }}
                 className="flex-1 py-4 bg-red-600 text-white rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
@@ -3853,98 +2588,63 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {isEditingCostElement && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-lg shadow-2xl border border-gray-200 dark:border-white/10"
-            >
-            <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingCostElement.id ? 'Edit' : 'Add'} Cost Element</h2>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (isEditingCostElement.id) {
-                updateCostElement(isEditingCostElement.id, costElementFormData);
-              } else {
-                addCostElement(costElementFormData, isEditingCostElement.insertIndex);
-              }
-              setIsEditingCostElement(null);
-            }} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">
-                  Element ID <span className="text-red-500">*</span>
-                </label>
-                <input 
+        {isEditingVendor && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6"
+          >
+            <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingVendor.id ? 'Edit' : 'Add'} Vendor</h2>
+            <form onSubmit={saveVendor} className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor Name</label>
+                <Input 
+                  value={vendorFormData.name}
+                  onChange={e => setVendorFormData({ ...vendorFormData, name: e.target.value })}
+                  placeholder="e.g. Acme Corp"
                   required
-                  disabled={!!isEditingCostElement.id}
-                  type="text"
-                  maxLength={10}
-                  value={costElementFormData.id}
-                  onChange={e => setCostElementFormData({ ...costElementFormData, id: e.target.value })}
-                  className={cn(
-                    "w-full p-4 bg-gray-50 dark:bg-white/5 border rounded-2xl text-sm focus:outline-none focus:ring-2 dark:text-white disabled:opacity-50 transition-all",
-                    costElementIdExists 
-                      ? "border-red-500 focus:ring-red-500/20" 
-                      : "border-gray-200 dark:border-white/10 focus:ring-black/5"
-                  )}
-                />
-                {costElementIdExists && (
-                  <p className="text-[10px] text-red-500 mt-1 font-bold uppercase tracking-widest">This ID already Exists!</p>
-                )}
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Description</label>
-                <input 
-                  type="text"
-                  maxLength={40}
-                  value={costElementFormData.description}
-                  onChange={e => setCostElementFormData({ ...costElementFormData, description: e.target.value })}
-                  placeholder="e.g. Labor Costs"
-                  className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
                 />
               </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Sort Code</label>
-                <input 
-                  type="text"
-                  value={costElementFormData.sortCode}
-                  onChange={e => {
-                    let val = e.target.value;
-                    // If it's a number, pad it
-                    if (/^\d+$/.test(val)) {
-                      val = val.padStart(2, '0');
-                    }
-                    setCostElementFormData({ ...costElementFormData, sortCode: val });
-                  }}
-                  placeholder="e.g. 01"
-                  className="w-full p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl text-sm focus:outline-none focus:ring-2 focus:ring-black/5 dark:text-white"
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor ID / Code</label>
+                  <Input 
+                    value={vendorFormData.code}
+                    onChange={e => setVendorFormData({ ...vendorFormData, code: e.target.value })}
+                    placeholder="e.g. V-001"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Contact Name</label>
+                  <Input 
+                    value={vendorFormData.contactName}
+                    onChange={e => setVendorFormData({ ...vendorFormData, contactName: e.target.value })}
+                    placeholder="John Doe"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Contact Email</label>
+                <Input 
+                  type="email"
+                  value={vendorFormData.contactEmail}
+                  onChange={e => setVendorFormData({ ...vendorFormData, contactEmail: e.target.value })}
+                  placeholder="john@acme.com"
                 />
               </div>
-              <div className="flex gap-4 pt-4">
-                <button 
-                  type="button"
-                  onClick={() => setIsEditingCostElement(null)}
-                  className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  disabled={!costElementFormData.id || costElementIdExists}
-                  className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-30 disabled:cursor-not-allowed"
-                >
-                  {isEditingCostElement.id ? 'Save Changes' : 'Add'}
-                </button>
+              <div className="flex justify-end gap-3 pt-4">
+                <Button type="button" variant="ghost" onClick={() => setIsEditingVendor(null)}>Cancel</Button>
+                <Button type="submit" disabled={isSubmitting} className="bg-black dark:bg-white text-white dark:text-black">
+                  {isEditingVendor.id ? 'Update' : 'Add'} Vendor
+                </Button>
               </div>
             </form>
           </motion.div>
         </div>
       )}
-      </AnimatePresence>
 
-      <AnimatePresence>
-        {isEditingResource && (
+      {isEditingResource && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[100] p-4">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -3986,7 +2686,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   )}
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Category</label>
+                  <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Resource Category</label>
                   <select 
                     value={resourceFormData.category}
                     onChange={e => setResourceFormData({ ...resourceFormData, category: e.target.value })}
@@ -4423,6 +3123,93 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         </div>
       )}
       </AnimatePresence>
+      
+      <Dialog open={!!isBulkUpdateModalOpen} onOpenChange={() => setIsBulkUpdateModalOpen(null)}>
+        <DialogContent className="sm:max-w-[425px] dark:bg-[#1a1a1a] dark:border-white/10">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Bulk Update {isBulkUpdateModalOpen?.type === 'rate' ? 'Resource Rates' : isBulkUpdateModalOpen?.type === 'project' ? 'Projects' : 'Vendors'}</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              Update {isBulkUpdateModalOpen?.count} selected items at once. Only fields you fill will be updated.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            {isBulkUpdateModalOpen?.type === 'rate' && (
+              <>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium dark:text-gray-300">Category</label>
+                  <select
+                    value={bulkUpdateFormData.category || ''}
+                    onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, category: e.target.value })}
+                    className="w-full bg-gray-100 dark:bg-white/5 border-none rounded-lg px-3 py-2 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="">Select Category...</option>
+                    {RESOURCE_CATEGORIES.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium dark:text-gray-300">Unit</label>
+                  <Input 
+                    value={bulkUpdateFormData.unit || ''} 
+                    onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, unit: e.target.value })}
+                    className="dark:bg-[#141414] dark:border-white/10 dark:text-white"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium dark:text-gray-300">Rate ($)</label>
+                  <Input 
+                    type="number"
+                    value={bulkUpdateFormData.rate || ''} 
+                    onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, rate: Number(e.target.value) })}
+                    className="dark:bg-[#141414] dark:border-white/10 dark:text-white"
+                  />
+                </div>
+              </>
+            )}
+            {isBulkUpdateModalOpen?.type === 'project' && (
+              <>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium dark:text-gray-300">Status</label>
+                  <select 
+                    value={bulkUpdateFormData.status || ''}
+                    onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, status: e.target.value })}
+                    className="w-full bg-gray-100 dark:bg-white/5 border-none rounded-lg px-3 py-2 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="">Select Status...</option>
+                    <option value="Active">Active</option>
+                    <option value="On Hold">On Hold</option>
+                    <option value="Closed">Closed</option>
+                    <option value="Archived">Archived</option>
+                  </select>
+                </div>
+              </>
+            )}
+            {isBulkUpdateModalOpen?.type === 'vendor' && (
+              <>
+                <div className="grid gap-2">
+                  <label className="text-sm font-medium dark:text-gray-300">Contact Name</label>
+                  <Input 
+                    value={bulkUpdateFormData.contactName || ''} 
+                    onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, contactName: e.target.value })}
+                    className="dark:bg-[#141414] dark:border-white/10 dark:text-white"
+                  />
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkUpdateModalOpen(null)} className="dark:border-white/10 dark:text-white">Cancel</Button>
+            <Button onClick={handleBulkUpdate} disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white">
+              {isSubmitting ? 'Updating...' : 'Update All'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Hidden File Inputs */}
+      <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx,.xls,.csv" />
+      <input type="file" ref={projectPhotoInputRef} className="hidden" accept="image/*" />
+      <input type="file" ref={enterpriseLogoInputRef} className="hidden" accept="image/*" />
     </div>
   );
 }

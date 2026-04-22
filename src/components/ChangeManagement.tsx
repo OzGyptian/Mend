@@ -53,6 +53,7 @@ import {
 import { AgGridReact } from 'ag-grid-react';
 import { 
   ColDef, 
+  ColGroupDef,
   GridApi, 
   GridReadyEvent, 
   CellValueChangedEvent,
@@ -149,6 +150,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   }
   console.error('Firestore Error: ', JSON.stringify(errInfo));
+  toast.error(`Database Error: ${errInfo.error}`);
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -169,6 +171,23 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
   const [isChartsVisible, setIsChartsVisible] = useState(false);
+  const [chartMetric, setChartMetric] = useState<'budget' | 'eac'>('budget');
+  const [isBulkRecordUpdateOpen, setIsBulkRecordUpdateOpen] = useState(false);
+  const [bulkRecordUpdateData, setBulkRecordUpdateData] = useState<{
+    costCodeId: string;
+    scope: string;
+    budgetAmount: string;
+    eacAmount: string;
+    enterpriseAttributes: Record<string, any>;
+    projectAttributes: Record<string, any>;
+  }>({
+    costCodeId: '',
+    scope: '',
+    budgetAmount: '',
+    eacAmount: '',
+    enterpriseAttributes: {},
+    projectAttributes: {}
+  });
   
   // Modal States
   const [isCreateChangeOpen, setIsCreateChangeOpen] = useState(false);
@@ -224,26 +243,35 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   const chartData = useMemo(() => {
     if (!project.reportingPeriods?.periods) return [];
 
-    const periodMap = project.reportingPeriods.periods.reduce((acc, p) => {
-      acc[p.id] = p.name;
-      return acc;
-    }, {} as Record<string, string>);
+    // Sort periods by start date to ensure correct chronological order
+    const periods = [...project.reportingPeriods.periods].sort((a, b) => 
+      new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+    );
+    
+    let cumulativeBudget = 0;
+    let cumulativeEac = 0;
 
-    const data = project.reportingPeriods.periods.map(p => ({
-      name: p.name,
-      budget: 0,
-      count: 0
-    }));
+    const data = periods.map((p, index) => {
+      const periodChanges = changes.filter(c => c.periodId === p.id);
+      const budget = periodChanges.reduce((sum, c) => sum + (c.budget || 0), 0);
+      const eac = periodChanges.reduce((sum, c) => sum + (c.eac || 0), 0);
+      
+      cumulativeBudget += budget;
+      cumulativeEac += eac;
 
-    changes.forEach(c => {
-      if (c.periodId) {
-        const periodName = periodMap[c.periodId];
-        const point = data.find(d => d.name === periodName);
-        if (point) {
-          point.budget += (c.budget || 0);
-          point.count += 1;
-        }
-      }
+      // Format date label (e.g., Aug'26)
+      const date = new Date(p.startDate);
+      const month = date.toLocaleString('en-US', { month: 'short' });
+      const year = date.getFullYear().toString().slice(-2);
+      const dateLabel = `${month}'${year}`;
+
+      return {
+        name: `P${index + 1} (${dateLabel})`,
+        budget,
+        eac,
+        cumulativeBudget,
+        cumulativeEac
+      };
     });
 
     return data;
@@ -259,12 +287,16 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   // Fetch Changes
   useEffect(() => {
     const q = query(collection(db, 'changes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Change));
       setChanges(data);
       setIsLoading(false);
+    }, (error) => {
+      console.error("ChangeManagement: changes fetch error:", error);
+      toast.error("Failed to load changes: " + error.message);
+      setIsLoading(false);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [project.id]);
 
   // Fetch Change Records for selected change
@@ -273,12 +305,19 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       setChangeRecords([]);
       return;
     }
-    const q = query(collection(db, 'changeRecords'), where('changeId', '==', selectedChangeId));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const q = query(
+      collection(db, 'changeRecords'), 
+      where('projectId', '==', project.id),
+      where('changeId', '==', selectedChangeId)
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChangeRecord));
       setChangeRecords(data);
+    }, (error) => {
+      console.error("ChangeManagement: change records fetch error:", error);
+      toast.error("Failed to load change records: " + error.message);
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, [selectedChangeId]);
 
   // Fetch Cost Codes for dropdown
@@ -323,6 +362,8 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         budget: 0,
         eac: 0,
         periodId: newChange.periodId,
+        enterpriseAttributes: {},
+        projectAttributes: {},
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
@@ -439,16 +480,34 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   }, [changes]);
 
   const handleExport = () => {
-    const exportData = changes.map(c => ({
-      'Change ID': c.changeId,
-      'Description': c.description,
-      'Type': c.type,
-      'Status': c.status,
-      'Initiator': c.initiator,
-      'Reference': c.reference,
-      'Budget': c.budget,
-      'EAC': c.eac
-    }));
+    const exportData = changes.map(c => {
+      const row: any = {
+        'Change ID': c.changeId,
+        'Description': c.description,
+        'Type': c.type,
+        'Status': c.status,
+        'Initiator': c.initiator,
+        'Reference': c.reference,
+        'Budget': c.budget,
+        'EAC': c.eac
+      };
+      
+      // Add Enterprise Change Attributes
+      enterprise.changeAttributes?.forEach(attr => {
+        const val = c.enterpriseAttributes?.[attr.id];
+        const v = attr.values.find(v => v.id === val);
+        row[`[E] ${attr.title}`] = v ? `${v.id} - ${v.description}` : val || '';
+      });
+      
+      // Add Project Change Attributes
+      project.changeAttributes?.forEach(attr => {
+        const val = c.projectAttributes?.[attr.id];
+        const v = attr.values.find(v => v.id === val);
+        row[`[P] ${attr.title}`] = v ? `${v.id} - ${v.description}` : val || '';
+      });
+      
+      return row;
+    });
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Changes");
@@ -483,6 +542,26 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             continue;
           }
 
+          const entAttrs: Record<string, string> = {};
+          enterprise.changeAttributes?.forEach(attr => {
+            const key = `[E] ${attr.title}`;
+            if (row[key]) {
+              const valString = String(row[key]);
+              const id = valString.split(' - ')[0]; // Handle formatted 'id - description'
+              entAttrs[attr.id] = id;
+            }
+          });
+
+          const prjAttrs: Record<string, string> = {};
+          project.changeAttributes?.forEach(attr => {
+            const key = `[P] ${attr.title}`;
+            if (row[key]) {
+              const valString = String(row[key]);
+              const id = valString.split(' - ')[0];
+              prjAttrs[attr.id] = id;
+            }
+          });
+
           const newChangeRef = doc(collection(db, 'changes'));
           batch.set(newChangeRef, {
             projectId: project.id,
@@ -494,6 +573,8 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             reference: String(row['Reference'] || '').slice(0, 50),
             budget: Number(row['Budget']) || 0,
             eac: Number(row['EAC']) || 0,
+            enterpriseAttributes: entAttrs,
+            projectAttributes: prjAttrs,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           });
@@ -516,10 +597,13 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   };
 
   const handleExportRecords = () => {
-    if (!selectedChangeId) return;
-    const change = changes.find(c => c.id === selectedChangeId);
+    if (changeRecords.length === 0) {
+      toast.error("No records to export");
+      return;
+    }
     const exportData = changeRecords.map(r => {
       const row: any = {
+        'Change ID': changes.find(c => c.id === r.changeId)?.changeId || 'Unknown',
         'Cost Code': r.costCodeId,
         'Scope': r.scope,
         'Budget Amount': r.budgetAmount,
@@ -537,7 +621,66 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Change Records");
-    XLSX.writeFile(wb, `ChangeRecords_${change?.changeId}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(wb, `${project.projectName}_Change_Records_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleBulkUpdateRecords = async () => {
+    if (selectedRecordIds.size === 0) return;
+
+    try {
+      const batch = writeBatch(db);
+      const updates: any = {
+        updatedAt: new Date().toISOString()
+      };
+
+      if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
+      if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope.slice(0, 100);
+      if (bulkRecordUpdateData.budgetAmount !== '') updates.budgetAmount = Number(bulkRecordUpdateData.budgetAmount);
+      if (bulkRecordUpdateData.eacAmount !== '') updates.eacAmount = Number(bulkRecordUpdateData.eacAmount);
+
+      // Add attributes to updates
+      Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => {
+        if (val !== undefined && val !== '') {
+          updates[`enterpriseAttributes.${id}`] = val;
+        }
+      });
+      Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => {
+        if (val !== undefined && val !== '') {
+          updates[`projectAttributes.${id}`] = val;
+        }
+      });
+
+      selectedRecordIds.forEach(id => {
+        batch.update(doc(db, 'changeRecords', id), updates);
+      });
+
+      await batch.commit();
+      
+      // Update parent totals for all affected changes
+      const affectedChangeIds = new Set<string>();
+      selectedRecordIds.forEach(id => {
+        const record = changeRecords.find(r => r.id === id);
+        if (record) affectedChangeIds.add(record.changeId);
+      });
+
+      for (const changeId of affectedChangeIds) {
+        await updateParentTotals(changeId);
+      }
+
+      toast.success(`Updated ${selectedRecordIds.size} records`);
+      setIsBulkRecordUpdateOpen(false);
+      setBulkRecordUpdateData({ 
+        costCodeId: '', 
+        scope: '', 
+        budgetAmount: '', 
+        eacAmount: '',
+        enterpriseAttributes: {},
+        projectAttributes: {}
+      });
+      setSelectedRecordIds(new Set());
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'changeRecords');
+    }
   };
 
   const handleImportRecords = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -556,10 +699,13 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
 
         const batch = writeBatch(db);
         let addedCount = 0;
+        const affectedChangeIds = new Set<string>();
 
         for (const row of data) {
           const costCode = String(row['Cost Code'] || '').trim();
           if (!costCode) continue;
+
+          const targetChangeId = selectedChangeId;
 
           const entAttrs: Record<string, string> = {};
           enterprise.lineItemAttributes?.forEach(a => {
@@ -573,7 +719,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
 
           const newRecordRef = doc(collection(db, 'changeRecords'));
           batch.set(newRecordRef, {
-            changeId: selectedChangeId,
+            changeId: targetChangeId,
             projectId: project.id,
             costCodeId: costCode,
             scope: String(row['Scope'] || '').slice(0, 100),
@@ -585,11 +731,14 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             updatedAt: new Date().toISOString()
           });
           addedCount++;
+          affectedChangeIds.add(targetChangeId);
         }
 
         if (addedCount > 0) {
           await batch.commit();
-          updateParentTotals(selectedChangeId);
+          for (const cid of affectedChangeIds) {
+            await updateParentTotals(cid);
+          }
           toast.success(`Imported ${addedCount} records`);
         }
       } catch (error) {
@@ -601,7 +750,11 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   };
 
   const handleAddRecord = async () => {
-    if (!selectedChangeId) return;
+    if (!selectedChangeId) {
+      toast.error("Please select a change first");
+      return;
+    }
+    const toastId = toast.loading("Adding new record...");
     try {
       const newRecord: Omit<ChangeRecord, 'id'> = {
         changeId: selectedChangeId,
@@ -616,21 +769,44 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         updatedAt: new Date().toISOString()
       };
       await addDoc(collection(db, 'changeRecords'), newRecord);
+      toast.success("Record added", { id: toastId });
     } catch (error) {
+      toast.dismiss(toastId);
       handleFirestoreError(error, OperationType.WRITE, 'changeRecords');
     }
   };
+
+  const enterpriseLineItemAttrs = useMemo(() => 
+    (enterprise.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0),
+    [enterprise.lineItemAttributes]
+  );
+
+  const projectLineItemAttrs = useMemo(() => 
+    (project.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0),
+    [project.lineItemAttributes]
+  );
 
   const onCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data, colDef } = params;
     if (!data.id) return;
 
     try {
-      const updates: any = {
+      let updates: any = {
         [colDef.field!]: params.newValue,
         updatedAt: new Date().toISOString()
       };
       
+      // Handle attribute updates
+      if (colDef.field?.startsWith('enterpriseAttributes.') || colDef.field?.startsWith('projectAttributes.')) {
+        const parts = colDef.field.split('.');
+        const attrField = parts[0];
+        const attrId = parts[1];
+        updates = {
+          [`${attrField}.${attrId}`]: params.newValue,
+          updatedAt: new Date().toISOString()
+        };
+      }
+
       // Enforce character limits
       if (colDef.field === 'initiator' || colDef.field === 'reference') {
         updates[colDef.field] = String(params.newValue).slice(0, 50);
@@ -653,10 +829,10 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       };
 
       // Handle attribute updates
-      if (colDef.field?.startsWith('ent_') || colDef.field?.startsWith('prj_')) {
-        const isEnterprise = colDef.field.startsWith('ent_');
-        const attrId = colDef.field.split('_')[1];
-        const attrField = isEnterprise ? 'enterpriseAttributes' : 'projectAttributes';
+      if (colDef.field?.startsWith('enterpriseAttributes.') || colDef.field?.startsWith('projectAttributes.')) {
+        const parts = colDef.field.split('.');
+        const attrField = parts[0];
+        const attrId = parts[1];
         updates = {
           [`${attrField}.${attrId}`]: params.newValue,
           updatedAt: new Date().toISOString()
@@ -697,11 +873,12 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     }
   };
 
-  const changeColumnDefs: ColDef[] = [
+  const changeColumnDefs: (ColDef | ColGroupDef)[] = [
     {
       headerName: '',
       headerCheckboxSelection: true,
       checkboxSelection: true,
+      headerCheckboxSelectionFilteredOnly: true,
       width: 50,
       pinned: 'left',
       sortable: false,
@@ -712,7 +889,18 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       field: 'changeId',
       pinned: 'left',
       width: 150,
-      cellStyle: { fontWeight: 'bold' },
+      sort: 'asc',
+      cellRenderer: (params: any) => {
+        if (params.node.rowPinned) return params.value;
+        return (
+          <button 
+            onClick={() => setSelectedChangeId(params.data.id)}
+            className="text-blue-600 hover:text-blue-800 hover:underline font-bold text-left transition-colors"
+          >
+            {params.value}
+          </button>
+        );
+      },
       enableRowGroup: true
     },
     {
@@ -801,28 +989,104 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       headerName: 'Actions',
       width: 100,
       pinned: 'right',
-      cellRenderer: (p: any) => (
-        <div className="flex items-center gap-2 h-full">
-          <button 
-            onClick={(e) => {
-              e.stopPropagation();
-              setChangeToDelete(p.data);
-              setIsDeleteChangeOpen(true);
-            }}
-            className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      )
+      cellRenderer: (p: any) => {
+        if (p.node.rowPinned) return null;
+        return (
+          <div className="flex items-center gap-2 h-full">
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setChangeToDelete(p.data);
+                setIsDeleteChangeOpen(true);
+              }}
+              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      }
     }
   ];
 
-  const recordColumnDefs: ColDef[] = [
+  // Dynamically add enterprise change attributes
+  const enterpriseChangeAttrs = (enterprise.changeAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
+  if (enterpriseChangeAttrs.length > 0) {
+    changeColumnDefs.splice(changeColumnDefs.length - 1, 0, {
+      headerName: 'Enterprise Change Attributes',
+      openByDefault: true,
+      children: enterpriseChangeAttrs.map((attr, index) => ({
+        headerName: attr.title,
+        field: `enterpriseAttributes.${attr.id}`,
+        width: 150,
+        columnGroupShow: index === 0 ? undefined : 'open',
+        editable: true,
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: attr.values.map(v => v.id),
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true
+        },
+        valueSetter: (params: any) => {
+          if (!params.data || params.newValue === undefined) return false;
+          if (!params.data.enterpriseAttributes) {
+            params.data.enterpriseAttributes = {};
+          }
+          params.data.enterpriseAttributes[attr.id] = params.newValue;
+          return true;
+        },
+        valueFormatter: (params: any) => {
+          const v = attr.values.find(v => v.id === params.value);
+          return v ? `${v.id} - ${v.description}` : params.value;
+        },
+        enableRowGroup: true
+      }))
+    });
+  }
+
+  // Dynamically add project change attributes
+  const projectChangeAttrs = (project.changeAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
+  if (projectChangeAttrs.length > 0) {
+    changeColumnDefs.splice(changeColumnDefs.length - 1, 0, {
+      headerName: 'Project Change Attributes',
+      openByDefault: true,
+      children: projectChangeAttrs.map((attr, index) => ({
+        headerName: attr.title,
+        field: `projectAttributes.${attr.id}`,
+        width: 150,
+        columnGroupShow: index === 0 ? undefined : 'open',
+        editable: true,
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: attr.values.map(v => v.id),
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true
+        },
+        valueSetter: (params: any) => {
+          if (!params.data || params.newValue === undefined) return false;
+          if (!params.data.projectAttributes) {
+            params.data.projectAttributes = {};
+          }
+          params.data.projectAttributes[attr.id] = params.newValue;
+          return true;
+        },
+        valueFormatter: (params: any) => {
+          const v = attr.values.find(v => v.id === params.value);
+          return v ? `${v.id} - ${v.description}` : params.value;
+        },
+        enableRowGroup: true
+      }))
+    });
+  }
+
+  const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => [
     {
       headerName: '',
       headerCheckboxSelection: true,
       checkboxSelection: true,
+      headerCheckboxSelectionFilteredOnly: true,
       width: 50,
       pinned: 'left',
       sortable: false,
@@ -833,9 +1097,12 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       field: 'costCodeId',
       editable: true,
       width: 200,
-      cellEditor: 'agSelectCellEditor',
+      cellEditor: 'agRichSelectCellEditor',
       cellEditorParams: {
-        values: costCodes.map(c => c.code)
+        values: costCodes.map(c => c.code),
+        searchType: 'match',
+        allowTyping: true,
+        filterList: true
       },
       enableRowGroup: true
     },
@@ -846,34 +1113,68 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       width: 250,
       enableRowGroup: true
     },
-    // Enterprise Attributes
-    ...(enterprise.lineItemAttributes || []).filter(a => a.title).map(a => ({
-      headerName: a.title,
-      field: `ent_${a.id}`,
-      headerClass: 'bg-blue-50/50 dark:bg-blue-900/10',
-      width: 150,
-      editable: true,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: a.values.map(v => v.description)
-      },
-      valueGetter: (p: any) => p.data.enterpriseAttributes?.[a.id] || '',
-      enableRowGroup: true
-    })),
-    // Project Attributes
-    ...(project.lineItemAttributes || []).filter(a => a.title).map(a => ({
-      headerName: a.title,
-      field: `prj_${a.id}`,
-      headerClass: 'bg-emerald-50/50 dark:bg-emerald-900/10',
-      width: 150,
-      editable: true,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: a.values.map(v => v.description)
-      },
-      valueGetter: (p: any) => p.data.projectAttributes?.[a.id] || '',
-      enableRowGroup: true
-    })),
+    {
+      headerName: 'Enterprise Line-Item Attributes',
+      openByDefault: true,
+      children: enterpriseLineItemAttrs.map((attr, index) => ({
+        headerName: attr.title,
+        field: `enterpriseAttributes.${attr.id}`,
+        width: 150,
+        columnGroupShow: index === 0 ? undefined : 'open',
+        editable: true,
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: attr.values.map(v => v.id),
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true
+        },
+        valueSetter: (params: any) => {
+          if (!params.data || params.newValue === undefined) return false;
+          if (!params.data.enterpriseAttributes) {
+            params.data.enterpriseAttributes = {};
+          }
+          params.data.enterpriseAttributes[attr.id] = params.newValue;
+          return true;
+        },
+        valueFormatter: (params: any) => {
+          const v = attr.values.find(v => v.id === params.value);
+          return v ? `${v.id} - ${v.description}` : params.value;
+        },
+        enableRowGroup: true
+      }))
+    },
+    {
+      headerName: 'Project Line-Item Attributes',
+      openByDefault: true,
+      children: projectLineItemAttrs.map((attr, index) => ({
+        headerName: attr.title,
+        field: `projectAttributes.${attr.id}`,
+        width: 150,
+        columnGroupShow: index === 0 ? undefined : 'open',
+        editable: true,
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: attr.values.map(v => v.id),
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true
+        },
+        valueSetter: (params: any) => {
+          if (!params.data || params.newValue === undefined) return false;
+          if (!params.data.projectAttributes) {
+            params.data.projectAttributes = {};
+          }
+          params.data.projectAttributes[attr.id] = params.newValue;
+          return true;
+        },
+        valueFormatter: (params: any) => {
+          const v = attr.values.find(v => v.id === params.value);
+          return v ? `${v.id} - ${v.description}` : params.value;
+        },
+        enableRowGroup: true
+      }))
+    },
     {
       headerName: 'Budget Amount',
       field: 'budgetAmount',
@@ -898,30 +1199,35 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       headerName: 'Actions',
       width: 100,
       pinned: 'right',
-      cellRenderer: (p: any) => (
-        <div className="flex items-center gap-2 h-full">
-          <button 
-            onClick={async (e) => {
-              e.stopPropagation();
-              await deleteDoc(doc(db, 'changeRecords', p.data.id));
-              updateParentTotals(p.data.changeId);
-            }}
-            className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        </div>
-      )
+      cellRenderer: (p: any) => {
+        if (p.node.rowPinned) return null;
+        return (
+          <div className="flex items-center gap-2 h-full">
+            <button 
+              onClick={async (e) => {
+                e.stopPropagation();
+                await deleteDoc(doc(db, 'changeRecords', p.data.id));
+                updateParentTotals(p.data.changeId);
+              }}
+              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        );
+      }
     }
-  ];
+  ], [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, changes]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
       {/* Header / Toolbar */}
       <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
-        <div>
-          <h3 className="text-xl font-bold dark:text-white">Change Management</h3>
-          <p className="text-sm text-gray-900 dark:text-gray-400">Manage project changes and their cost impacts.</p>
+        <div className="flex items-center gap-8">
+          <div>
+            <h3 className="text-xl font-bold dark:text-white">Change Management</h3>
+            <p className="text-sm text-gray-900 dark:text-gray-400">Manage project changes and their cost impacts.</p>
+          </div>
         </div>
         <div className="flex gap-2">
           <div className="relative">
@@ -1075,15 +1381,45 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             >
               <div className="p-6">
                 <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-sm font-bold dark:text-white uppercase tracking-widest text-gray-400">Budget Changes by Period</h3>
+                  <div className="flex items-center gap-4">
+                    <h3 className="text-sm font-bold dark:text-white uppercase tracking-widest text-gray-400">
+                      {chartMetric === 'budget' ? 'Budget' : 'EAC'} Changes by Period
+                    </h3>
+                    <div className="flex bg-gray-200 dark:bg-white/10 p-1 rounded-lg">
+                      <button
+                        onClick={() => setChartMetric('budget')}
+                        className={cn(
+                          "px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all",
+                          chartMetric === 'budget' 
+                            ? "bg-white dark:bg-[#141414] text-blue-600 shadow-sm" 
+                            : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                        )}
+                      >
+                        Budget
+                      </button>
+                      <button
+                        onClick={() => setChartMetric('eac')}
+                        className={cn(
+                          "px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-md transition-all",
+                          chartMetric === 'eac' 
+                            ? "bg-white dark:bg-[#141414] text-emerald-600 shadow-sm" 
+                            : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                        )}
+                      >
+                        EAC
+                      </button>
+                    </div>
+                  </div>
                   <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-500 rounded-sm" />
-                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Budget Amount</span>
+                      <div className={cn("w-3 h-3 rounded-sm", chartMetric === 'budget' ? "bg-blue-500" : "bg-emerald-500")} />
+                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                        {chartMetric === 'budget' ? 'Budget Amount' : 'EAC Amount'}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-0.5 bg-emerald-500" />
-                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Trend</span>
+                      <div className={cn("w-3 h-0.5", chartMetric === 'budget' ? "bg-blue-400" : "bg-emerald-400")} />
+                      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Cumulative</span>
                     </div>
                   </div>
                 </div>
@@ -1091,14 +1427,51 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? '#333' : '#eee'} />
-                      <XAxis dataKey="name" fontSize={10} tick={{ fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                      <YAxis fontSize={10} tick={{ fill: '#9ca3af' }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
+                      <XAxis 
+                        dataKey="name" 
+                        fontSize={10} 
+                        tick={{ fill: '#9ca3af' }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                      />
+                      <YAxis 
+                        yAxisId="left"
+                        fontSize={10} 
+                        tick={{ fill: '#9ca3af' }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`}
+                        domain={[0, 'auto']}
+                      />
+                      <YAxis 
+                        yAxisId="right"
+                        orientation="right"
+                        fontSize={10} 
+                        tick={{ fill: '#9ca3af' }} 
+                        axisLine={false} 
+                        tickLine={false} 
+                        tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`}
+                        domain={[0, 'auto']}
+                      />
                       <Tooltip 
                         contentStyle={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#fff', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
                         formatter={(v: number) => formatCurrency(v)}
                       />
-                      <Bar dataKey="budget" fill="#3B82F6" radius={[4, 4, 0, 0]} barSize={40} />
-                      <Line type="monotone" dataKey="budget" stroke="#10B981" strokeWidth={2} dot={{ fill: '#10B981', r: 4 }} />
+                      <Bar 
+                        yAxisId="left"
+                        dataKey={chartMetric} 
+                        fill={chartMetric === 'budget' ? "#3B82F6" : "#10B981"} 
+                        radius={[4, 4, 0, 0]} 
+                        barSize={40} 
+                      />
+                      <Line 
+                        yAxisId="right"
+                        type="monotone" 
+                        dataKey={chartMetric === 'budget' ? "cumulativeBudget" : "cumulativeEac"} 
+                        stroke={chartMetric === 'budget' ? "#60A5FA" : "#34D399"} 
+                        strokeWidth={2} 
+                        dot={{ fill: chartMetric === 'budget' ? "#60A5FA" : "#34D399", r: 4 }} 
+                      />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
@@ -1116,17 +1489,29 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
               ref={gridRef}
               rowData={changes}
               columnDefs={changeColumnDefs}
-              pinnedBottomRowData={changesPinnedBottomRowData}
+              pinnedTopRowData={changesPinnedBottomRowData}
+              groupDefaultExpanded={-1}
               getRowClass={(params) => {
-                if (params.node.rowPinned === 'bottom') return 'font-bold bg-gray-50 dark:bg-white/5';
+                if (params.node.rowPinned) return 'pinned-row-highlight';
                 return '';
               }}
               quickFilterText={quickFilterText}
               onCellValueChanged={onCellValueChanged}
-              onRowClicked={(p) => setSelectedChangeId(p.data.id)}
               onSelectionChanged={(p) => {
-                const selectedNodes = p.api.getSelectedNodes();
-                setSelectedIds(new Set(selectedNodes.map(node => node.data.id)));
+                const selectedRows = p.api.getSelectedRows();
+                const displayedSelected = selectedRows.filter(row => {
+                  const node = p.api.getRowNode(row.id);
+                  return node && node.displayed;
+                });
+                setSelectedIds(new Set(displayedSelected.map(r => r.id)));
+              }}
+              onFilterChanged={(p) => {
+                const selectedRows = p.api.getSelectedRows();
+                const displayedSelected = selectedRows.filter(row => {
+                  const node = p.api.getRowNode(row.id);
+                  return node && node.displayed;
+                });
+                setSelectedIds(new Set(displayedSelected.map(r => r.id)));
               }}
               getRowId={(params) => params.data.id}
               rowSelection="multiple"
@@ -1208,21 +1593,29 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                 <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
 
                 {selectedRecordIds.size > 0 && (
-                  <button 
-                    onClick={async () => {
-                      if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
-                        const batch = writeBatch(db);
-                        selectedRecordIds.forEach(id => batch.delete(doc(db, 'changeRecords', id)));
-                        await batch.commit();
-                        updateParentTotals(selectedChangeId);
-                        setSelectedRecordIds(new Set());
-                        toast.success(`Deleted ${selectedRecordIds.size} records`);
-                      }
-                    }}
-                    className="flex items-center gap-2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-all shadow-sm"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" /> Delete ({selectedRecordIds.size})
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => setIsBulkRecordUpdateOpen(true)}
+                      className="flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 transition-all shadow-sm"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Update ({selectedRecordIds.size})
+                    </button>
+                    <button 
+                      onClick={async () => {
+                        if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
+                          const batch = writeBatch(db);
+                          selectedRecordIds.forEach(id => batch.delete(doc(db, 'changeRecords', id)));
+                          await batch.commit();
+                          updateParentTotals(selectedChangeId);
+                          setSelectedRecordIds(new Set());
+                          toast.success(`Deleted ${selectedRecordIds.size} records`);
+                        }
+                      }}
+                      className="flex items-center gap-2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-all shadow-sm"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete ({selectedRecordIds.size})
+                    </button>
+                  </div>
                 )}
 
                 <button 
@@ -1250,18 +1643,30 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                   ref={recordsGridRef}
                   rowData={changeRecords}
                   columnDefs={recordColumnDefs}
-                  pinnedBottomRowData={recordPinnedBottomRowData}
+                  pinnedTopRowData={recordPinnedBottomRowData}
+                  getRowClass={(params) => {
+                    if (params.node.rowPinned) return 'pinned-row-highlight';
+                    return '';
+                  }}
                   quickFilterText={recordsQuickFilterText}
                   onCellValueChanged={onRecordCellValueChanged}
                   onSelectionChanged={(p) => {
-                    const selectedNodes = p.api.getSelectedNodes();
-                    setSelectedRecordIds(new Set(selectedNodes.map(node => node.data.id)));
+                    const selectedRows = p.api.getSelectedRows();
+                    const displayedSelected = selectedRows.filter(row => {
+                      const node = p.api.getRowNode(row.id);
+                      return node && node.displayed;
+                    });
+                    setSelectedRecordIds(new Set(displayedSelected.map(r => r.id)));
+                  }}
+                  onFilterChanged={(p) => {
+                    const selectedRows = p.api.getSelectedRows();
+                    const displayedSelected = selectedRows.filter(row => {
+                      const node = p.api.getRowNode(row.id);
+                      return node && node.displayed;
+                    });
+                    setSelectedRecordIds(new Set(displayedSelected.map(r => r.id)));
                   }}
                   getRowId={(params) => params.data.id}
-                  getRowClass={(params) => {
-                    if (params.node.rowPinned === 'bottom') return 'font-bold bg-gray-50 dark:bg-white/5';
-                    return '';
-                  }}
                   rowSelection="multiple"
                   suppressRowClickSelection={true}
                   sideBar={sideBar}
@@ -1412,6 +1817,127 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsBulkDeleteOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleBulkDelete}>Delete Selected</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {/* Bulk Update Records Modal */}
+      <Dialog open={isBulkRecordUpdateOpen} onOpenChange={setIsBulkRecordUpdateOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Bulk Update Records</DialogTitle>
+            <DialogDescription>
+              Update selected fields for {selectedRecordIds.size} records.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Cost Code</label>
+              <Select 
+                value={bulkRecordUpdateData.costCodeId} 
+                onValueChange={(v) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, costCodeId: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select Cost Code" />
+                </SelectTrigger>
+                <SelectContent>
+                  {costCodes.map(c => (
+                    <SelectItem key={c.id} value={c.code}>{c.code} - {c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Scope</label>
+              <Input 
+                value={bulkRecordUpdateData.scope}
+                onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, scope: e.target.value })}
+                placeholder="Enter scope..."
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Budget Amount</label>
+                <Input 
+                  type="number"
+                  value={bulkRecordUpdateData.budgetAmount}
+                  onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, budgetAmount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">EAC Amount</label>
+                <Input 
+                  type="number"
+                  value={bulkRecordUpdateData.eacAmount}
+                  onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, eacAmount: e.target.value })}
+                  placeholder="0.00"
+                />
+              </div>
+            </div>
+
+            {/* Enterprise Attributes */}
+            {enterprise.lineItemAttributes && enterprise.lineItemAttributes.length > 0 && (
+              <div className="space-y-4 pt-2 border-t border-gray-100 dark:border-white/10">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Enterprise Attributes</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {enterprise.lineItemAttributes.map(attr => (
+                    <div key={attr.id} className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{attr.title}</label>
+                      <Select 
+                        value={bulkRecordUpdateData.enterpriseAttributes[attr.id] || ''} 
+                        onValueChange={val => setBulkRecordUpdateData(prev => ({
+                          ...prev,
+                          enterpriseAttributes: { ...prev.enterpriseAttributes, [attr.id]: val }
+                        }))}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {attr.values.map(v => (
+                            <SelectItem key={v.id} value={v.id}>{v.id} - {v.description}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Project Attributes */}
+            {project.lineItemAttributes && project.lineItemAttributes.length > 0 && (
+              <div className="space-y-4 pt-2 border-t border-gray-100 dark:border-white/10">
+                <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Project Attributes</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  {project.lineItemAttributes.map(attr => (
+                    <div key={attr.id} className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{attr.title}</label>
+                      <Select 
+                        value={bulkRecordUpdateData.projectAttributes[attr.id] || ''} 
+                        onValueChange={val => setBulkRecordUpdateData(prev => ({
+                          ...prev,
+                          projectAttributes: { ...prev.projectAttributes, [attr.id]: val }
+                        }))}
+                      >
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Select..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {attr.values.map(v => (
+                            <SelectItem key={v.id} value={v.id}>{v.id} - {v.description}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsBulkRecordUpdateOpen(false)}>Cancel</Button>
+            <Button onClick={handleBulkUpdateRecords}>Update Records</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

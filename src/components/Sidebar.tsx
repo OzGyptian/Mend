@@ -19,7 +19,8 @@ import {
   ShoppingCart,
   Users as UsersIcon,
   Receipt,
-  PieChart
+  PieChart,
+  ClipboardList
 } from 'lucide-react';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
@@ -98,7 +99,7 @@ export default function Sidebar({
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
   const enterpriseItems = [
-    { id: 'enterprise', label: 'Enterprise Dashboard', icon: Layout, disabled: !enterprise },
+    { id: 'enterprise', label: 'Enterprise', icon: Layout, disabled: !enterprise },
   ];
 
   const projectModules = [
@@ -110,7 +111,6 @@ export default function Sidebar({
     { id: 'field', label: 'Field Management', icon: HardHat },
     { id: 'procurement', label: 'Procurement', icon: ShoppingCart },
     { id: 'subcontract', label: 'Sub-Contract Management', icon: UsersIcon },
-    { id: 'invoicing', label: 'Invoicing', icon: Receipt },
   ];
 
   const adminItems = [

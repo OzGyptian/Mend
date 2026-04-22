@@ -215,6 +215,87 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["projectId", "costCodeId", "type", "periodValues"]
+    },
+    "Subcontract": {
+      "title": "Subcontract",
+      "description": "Represents a subcontract agreement with a vendor.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "orderId": { "type": "string", "description": "User-defined Order ID (max 50)" },
+        "orderName": { "type": "string" },
+        "orderScope": { "type": "string" },
+        "status": { "type": "string", "enum": ["Active", "Complete", "On Hold"] },
+        "paymentType": { "type": "string", "enum": ["LumpSum", "Schedule of Rates", "Re-measurable"] },
+        "awardDate": { "type": "string", "format": "date" },
+        "vendorId": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "vendorUsers": { "type": "array", "items": { "type": "string" }, "description": "Emails of users with access" },
+        "totalAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "enterpriseId", "orderId", "orderName", "status", "vendorId", "createdAt"]
+    },
+    "SubcontractLineItem": {
+      "title": "Subcontract Line Item",
+      "description": "A single line item in a subcontract agreement.",
+      "type": "object",
+      "properties": {
+        "subcontractId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "itemNo": { "type": "string", "description": "Sequential ID (e.g., 001)" },
+        "description": { "type": "string" },
+        "qty": { "type": "number" },
+        "unit": { "type": "string" },
+        "rate": { "type": "number" },
+        "total": { "type": "number" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subcontractId", "projectId", "itemNo", "description", "qty", "rate", "total", "createdAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "A progress claim or invoice submitted against a subcontract.",
+      "type": "object",
+      "properties": {
+        "subcontractId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "invoiceId": { "type": "string", "description": "Sequential ID (e.g., 001)" },
+        "description": { "type": "string" },
+        "submittedDate": { "type": "string", "format": "date-time" },
+        "certifiedDate": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["Draft", "Submitted", "Certified", "Rejected"] },
+        "initiator": { "type": "string", "description": "Email of the user who submitted" },
+        "claimedAmount": { "type": "number" },
+        "certifiedAmount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["subcontractId", "projectId", "invoiceId", "status", "initiator", "createdAt"]
+    },
+    "InvoiceItem": {
+      "title": "Invoice Item",
+      "description": "A single line item in an invoice or progress claim.",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "subcontractItemId": { "type": "string" },
+        "itemNo": { "type": "string" },
+        "qtyClaimedOrPercentage": { "type": "number" },
+        "totalClaimed": { "type": "number" },
+        "qtyCertifiedOrPercentage": { "type": "number" },
+        "totalCertified": { "type": "number" },
+        "comment": { "type": "string" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["invoiceId", "subcontractItemId", "itemNo", "createdAt"]
     }
   },
   "firestore": {
@@ -269,6 +350,22 @@
     "/costPhasing/{phasingId}": {
       "schema": "CostPhasing",
       "description": "Time-phased budget or cost data"
+    },
+    "/subcontracts/{subcontractId}": {
+      "schema": "Subcontract",
+      "description": "Subcontract header documents"
+    },
+    "/subcontractLineItems/{itemId}": {
+      "schema": "SubcontractLineItem",
+      "description": "Subcontract line items"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": "Invoice",
+      "description": "Invoices and progress claims"
+    },
+    "/invoiceItems/{itemId}": {
+      "schema": "InvoiceItem",
+      "description": "Invoice line items"
     }
   }
 }

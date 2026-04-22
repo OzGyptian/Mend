@@ -1,49 +1,37 @@
-import React, { useState, useEffect } from 'react';
-import { Project, Sheet, Enterprise } from '../types';
-import { DollarSign, Tag, List, ChevronLeft, Menu, Settings, Hash, Database, Calendar, Target, ClipboardList } from 'lucide-react';
+import React, { useState } from 'react';
+import { Project, Enterprise } from '../types';
+import { Briefcase, Receipt, ChevronLeft, Menu, Settings, List } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { auth } from '../firebase';
-import ProjectCostCodeAttributes from './ProjectCostCodeAttributes';
-import ProjectLineItemAttributes from './ProjectLineItemAttributes';
-import ProjectResourceRates from './ProjectResourceRates';
-import CostReportingPeriod from './CostReportingPeriod';
-import CostDashboard from './CostDashboard';
-import CostTasks from './CostTasks';
-import CostForecasting from './CostForecasting';
-import CostCodes from './CostCodes';
-import ActualCost from './ActualCost';
-import BaselineBudget from './BaselineBudget';
-import GlobalTimephasing from './GlobalTimephasing';
-import BulkEtcDetails from './BulkEtcDetails';
+import Subcontracts from './Subcontracts';
+import Invoicing from './Invoicing';
+import BulkSubcontractLineItems from './BulkSubcontractLineItems';
+import BulkSubcontractInvoices from './BulkSubcontractInvoices';
+import BulkSubcontractInvoiceItems from './BulkSubcontractInvoiceItems';
 
-interface CostManagementProps {
+import SubcontractAttributes from './SubcontractAttributes';
+
+interface SubcontractManagementProps {
   project: Project;
   enterprise: Enterprise;
-  sheets?: Sheet[];
-  sheetStats?: Record<string, { eac: number, etc: number }>;
-  onSelectSheet?: (sheet: Sheet) => void;
-  onDeleteSheet?: (sheet: Sheet) => void;
-  onCreateSheet?: () => void;
+  user: any;
   setIsSidebarCollapsed?: (c: boolean) => void;
+  theme?: 'light' | 'dark';
 }
 
-type CostTab = 'costCodes' | 'timephasing' | 'actualCost' | 'baselineBudget' | 'etcDetails' | 'costElements' | 'costCodeAttributes' | 'lineItemAttributes' | 'reportingPeriod' | 'resourceRates';
+type SubcontractTab = 'subcontracts' | 'subcontracts-attributes' | 'subcontract-line-items' | 'subcontract-invoices' | 'subcontract-invoice-items' | 'invoicing';
 
-const CostManagement: React.FC<CostManagementProps> = ({ 
+const SubcontractManagement: React.FC<SubcontractManagementProps> = ({ 
   project, 
   enterprise,
-  sheets = [], 
-  sheetStats = {}, 
-  onSelectSheet, 
-  onDeleteSheet,
-  onCreateSheet,
-  setIsSidebarCollapsed
+  user,
+  setIsSidebarCollapsed,
+  theme = 'light'
 }) => {
   const navigate = useNavigate();
   const { projectId, subModuleId } = useParams();
-  const activeTab = (subModuleId as CostTab) || 'costCodes';
-  const [expandedSections, setExpandedSections] = useState<string[]>(['overview', 'settings']);
+  const activeTab = (subModuleId as SubcontractTab) || 'subcontracts';
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const userId = auth.currentUser?.uid;
@@ -52,61 +40,45 @@ const CostManagement: React.FC<CostManagementProps> = ({
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);
 
-  const toggleSection = (sectionId: string) => {
-    setExpandedSections(prev => 
-      prev.includes(sectionId) 
-        ? prev.filter(id => id !== sectionId) 
-        : [...prev, sectionId]
-    );
-  };
-
   const handleTabClick = (id: string) => {
-    window.location.href = `/project/${projectId}/cost/${id}`;
+    navigate(`/project/${projectId}/subcontract/${id}`);
   };
 
   const sections = [
     {
       id: 'overview',
-      label: 'Overview',
+      label: 'Procurement & Subcontracts',
       items: [
-        { id: 'costCodes', label: 'Cost Codes', icon: <List className="w-4 h-4" /> },
-        { id: 'timephasing', label: 'Timephasing', icon: <Calendar className="w-4 h-4" /> },
-      ]
-    },
-    {
-      id: 'settings',
-      label: 'Cost Module Settings',
-      visible: isProjectAdmin,
-      items: [
-        { id: 'reportingPeriod', label: 'Cost Reporting Period', icon: <Calendar className="w-4 h-4" /> },
-        { id: 'costCodeAttributes', label: 'Cost Code Attributes', icon: <Database className="w-4 h-4" /> },
-        { id: 'lineItemAttributes', label: 'Project Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
-        { id: 'resourceRates', label: 'Project Resource Rates', icon: <DollarSign className="w-4 h-4" /> },
-        { id: 'baselineBudget', label: 'Baseline Budget', icon: <Target className="w-4 h-4" /> },
-        { id: 'actualCost', label: 'Actual Cost', icon: <DollarSign className="w-4 h-4" /> },
-        { id: 'etcDetails', label: 'ETC Details', icon: <ClipboardList className="w-4 h-4" /> },
+        { id: 'subcontracts', label: 'Subcontracts', icon: <Briefcase className="w-4 h-4" /> }
       ]
     }
   ];
 
-  const filteredSections = sections.filter(s => s.visible !== false);
-
-  const isSettingsTab = ['baselineBudget', 'etcDetails', 'costElements', 'costCodeAttributes', 'lineItemAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
-
-  const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === project.reportingPeriods?.currentPeriodId);
+  if (isProjectAdmin) {
+    sections.push({
+      id: 'settings',
+      label: 'Subcontract Settings',
+      items: [
+        { id: 'subcontracts-attributes', label: 'Subcontract Attributes', icon: <Settings className="w-4 h-4" /> },
+        { id: 'subcontract-line-items', label: 'Subcontract Line-Items', icon: <List className="w-4 h-4" /> },
+        { id: 'subcontract-invoices', label: 'Subcontract Invoices', icon: <Receipt className="w-4 h-4" /> },
+        { id: 'subcontract-invoice-items', label: 'Invoice Items', icon: <List className="w-4 h-4" /> },
+      ]
+    });
+  }
 
   return (
-    <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300 overflow-hidden">
+    <div className="flex w-full h-full bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300 overflow-hidden">
       {/* Sidebar Navigation */}
       <div className={`${isSidebarOpen ? 'w-72' : 'w-16'} bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col h-full shrink-0 transition-all duration-300`}>
         <div className="p-6 border-b border-gray-200 dark:border-white/10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-black dark:bg-white rounded-xl flex items-center justify-center shadow-lg shadow-black/10 dark:shadow-white/10">
-              <Settings className="w-6 h-6 text-white dark:text-black" />
+              <Briefcase className="w-6 h-6 text-white dark:text-black" />
             </div>
             {isSidebarOpen && (
               <div className="min-w-0">
-                <h2 className="text-sm font-bold dark:text-white truncate">Cost Management</h2>
+                <h2 className="text-sm font-bold dark:text-white truncate">Sub-Contract Mgmt</h2>
                 <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Project Controls</p>
               </div>
             )}
@@ -135,7 +107,7 @@ const CostManagement: React.FC<CostManagementProps> = ({
             </button>
           </div>
 
-          {filteredSections.map(section => (
+          {sections.map(section => (
             <div key={section.id} className="space-y-1">
               {isSidebarOpen && (
                 <h3 className="px-5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">
@@ -163,51 +135,55 @@ const CostManagement: React.FC<CostManagementProps> = ({
             </div>
           ))}
         </nav>
-
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-auto">
         <div className="h-full flex flex-col min-h-0">
-          {activeTab === 'costCodes' && (
+          {activeTab === 'subcontracts' && (
             <div className="flex-1 flex flex-col overflow-hidden p-8">
-              <CostCodes 
+              <Subcontracts 
                 project={project} 
                 enterprise={enterprise}
+                user={user}
+                theme={theme}
               />
             </div>
           )}
-          {activeTab === 'timephasing' && (
+          {activeTab === 'invoicing' && (
             <div className="flex-1 flex flex-col overflow-hidden p-8">
-              <GlobalTimephasing 
+              <Invoicing 
                 project={project} 
                 enterprise={enterprise}
+                user={user}
+                theme={theme}
               />
             </div>
           )}
-          {activeTab === 'actualCost' && (
+          {activeTab === 'subcontracts-attributes' && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <ActualCost project={project} enterprise={enterprise} />
+              <SubcontractAttributes project={project} />
             </div>
           )}
-          {activeTab === 'baselineBudget' && (
+          {activeTab === 'subcontract-line-items' && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <BaselineBudget project={project} enterprise={enterprise} />
+              <BulkSubcontractLineItems project={project} enterprise={enterprise} />
             </div>
           )}
-          {activeTab === 'etcDetails' && (
+          {activeTab === 'subcontract-invoices' && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <BulkEtcDetails project={project} enterprise={enterprise} />
+              <BulkSubcontractInvoices project={project} enterprise={enterprise} />
             </div>
           )}
-          {activeTab === 'costCodeAttributes' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectCostCodeAttributes project={project} /></div>}
-          {activeTab === 'lineItemAttributes' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectLineItemAttributes project={project} /></div>}
-          {activeTab === 'resourceRates' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectResourceRates project={project} /></div>}
-          {activeTab === 'reportingPeriod' && <div className="flex-1 flex flex-col overflow-hidden"><CostReportingPeriod project={project} /></div>}
+          {activeTab === 'subcontract-invoice-items' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <BulkSubcontractInvoiceItems project={project} enterprise={enterprise} />
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 };
 
-export default CostManagement;
+export default SubcontractManagement;

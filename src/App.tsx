@@ -679,8 +679,10 @@ function ProjectView({ enterprise, user, theme, setIsSidebarCollapsed }: { enter
       enterprise={enterprise}
       currentModule={moduleId || 'dashboard'}
       subModuleId={subModuleId}
-      onSelectSheet={(sheet) => navigate(`/project/${project.id}/sheet/${sheet.id}`)}
+      onSelectSheet={(sheet) => window.location.href = `/project/${project.id}/sheet/${sheet.id}`}
       setIsSidebarCollapsed={setIsSidebarCollapsed}
+      user={user}
+      theme={theme}
     />
   );
 }

@@ -52,12 +52,126 @@ export interface Enterprise {
   projectAttributes?: ProjectAttribute[];
   lineItemAttributes?: ProjectAttribute[];
   costCodeAttributes?: ProjectAttribute[];
+  subcontractAttributes?: ProjectAttribute[];
+  changeAttributes?: ProjectAttribute[];
   changeTypes?: string[];
   resourceRates?: ResourceRate[];
   costElements?: CostElement[];
   categories?: string[];
   controlAccounts?: string[];
   orderNumbers?: string[];
+  vendors?: Vendor[];
+}
+
+export interface Vendor {
+  id: string;
+  name: string;
+  code?: string;
+  contactEmail?: string;
+  contactName?: string;
+}
+
+export interface Subcontract {
+  id: string;
+  projectId: string;
+  enterpriseId: string;
+  orderId: string; // Max 50
+  orderName: string;
+  orderScope: string;
+  status: 'Active' | 'Complete' | 'On Hold';
+  defaultCostCodeId?: string;
+  defaultPhasingSource?: 'Manual' | 'Auto';
+  defaultStartDate?: string;
+  defaultEndDate?: string;
+  defaultDistribution?: 'Even' | 'Bell Curve' | 'Front load' | 'Back load' | 'S-Curve' | 'Profile';
+  paymentType: 'LumpSum' | 'Schedule of Rates' | 'Re-measurable';
+  awardDate: string;
+  vendorId: string;
+  vendorName: string;
+  vendorUsers: string[]; // Emails
+  totalAmount: number;
+  forecastChanges?: number;
+  lineItems: SubcontractLineItem[];
+  enterpriseSubcontractAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  attributes?: Record<string, any>; // Keep for backward compatibility
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface SubcontractLineItem {
+  id: string;
+  subcontractId: string;
+  projectId: string;
+  itemNo: string;
+  description: string;
+  costCodeId?: string;
+  date?: string;
+  qty: number;
+  unit: string;
+  rate: number;
+  total: number;
+  type: 'Original' | 'ChangeOrder';
+  status: 'Approved' | 'Pending' | 'Forecast' | 'Rejected';
+  startDate?: string;
+  endDate?: string;
+  phasingSource?: 'Manual' | 'Auto';
+  distribution?: 'Even' | 'Bell Curve' | 'Front load' | 'Back load' | 'S-Curve' | 'Profile';
+  periodValues?: Record<string, number>;
+  enterpriseAttributes: Record<string, string>;
+  projectAttributes: Record<string, string>;
+  userDefined?: Record<string, any>;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Invoice {
+  id: string;
+  subcontractId: string;
+  projectId: string;
+  enterpriseId: string;
+  invoiceId: string;
+  description: string;
+  submittedDate?: string;
+  certifiedDate?: string;
+  paymentDate?: string;
+  status: 'Draft' | 'Submitted' | 'Certified' | 'Rejected' | 'Paid';
+  initiator?: string;
+  vendorId: string;
+  vendorName: string;
+  totalAmount: number;
+  certifiedAmount: number;
+  items: InvoiceItem[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
+export interface InvoiceItem {
+  id: string;
+  subcontractLineItemId: string;
+  itemNo: string;
+  description: string;
+  qty: number;
+  unit: string;
+  rate: number;
+  total: number;
+  type?: 'Original' | 'ChangeOrder';
+  claimQty: number;
+  claimPercent: number;
+  claimValue: number;
+  periodicClaimQty?: number;
+  periodicClaimPercent?: number;
+  periodicClaimValue?: number;
+  certifiedQty: number;
+  certifiedPercent: number;
+  certifiedValue: number;
+  periodicCertifiedQty?: number;
+  periodicCertifiedPercent?: number;
+  periodicCertifiedValue?: number;
+  commentary?: string;
 }
 
 export interface ProjectCostElement {
@@ -90,6 +204,8 @@ export interface Project {
   orderNumbers?: string[];
   costElements?: ProjectCostElement[];
   costCodeAttributes?: ProjectAttribute[];
+  subcontractAttributes?: ProjectAttribute[];
+  changeAttributes?: ProjectAttribute[];
   changeTypes?: string[];
   lineItemAttributes?: ProjectAttribute[];
   resourceRates?: ResourceRate[];
@@ -100,6 +216,9 @@ export interface Project {
     periods: { id: string; startDate: string; endDate: string; name: string; status: 'open' | 'closed' }[];
     currentPeriodId?: string;
   };
+  firstCostReportingMonth?: string;
+  currentReportingMonth?: string;
+  lastReportingMonth?: string;
 }
 
 export interface Sheet {
@@ -132,7 +251,12 @@ export interface ForecastRow {
   endDate?: string;
   timePhasing: Record<string, number>;
   distributionMethod: DistributionMethod;
-  attributes?: Record<string, any>;
+  enterpriseCostCodeAttributes?: Record<string, string>;
+  enterpriseLineItemAttributes?: Record<string, string>;
+  enterpriseSubcontractAttributes?: Record<string, string>;
+  enterpriseChangeAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  attributes?: Record<string, any>; // Keep for backward compatibility if needed
 }
 
 export interface UserProfile {
@@ -207,7 +331,7 @@ export interface EtcDetail {
   phasingMethod: 'Manual' | 'Auto-Phase';
   phasingStartDate: string;
   phasingEndDate: string;
-  phasingUnit: 'Daily' | 'Weekly' | 'Monthly' | 'Total';
+  phasingUnit: 'Daily' | 'Weekly' | 'Monthly' | 'Total' | 'Profile';
   phasingQty: number;
   enterpriseAttributes?: Record<string, string>;
   projectAttributes?: Record<string, string>;
@@ -217,6 +341,7 @@ export interface EtcDetail {
   updatedAt?: string;
   isEnterpriseResource?: boolean;
   resourceId?: string;
+  totalEtcPrevious?: number;
 }
 
 export interface Calendar {
@@ -241,6 +366,8 @@ export interface Change {
   budget: number; // Formula sum of children
   eac: number; // Formula sum of children
   periodId?: string;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }

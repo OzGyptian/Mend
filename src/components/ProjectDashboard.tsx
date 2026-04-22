@@ -3,7 +3,9 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch, collectionGroup } from 'firebase/firestore';
 import { Project, Sheet, Enterprise, ForecastRow } from '../types';
 import CostManagement from './CostManagement';
-import ChangeManagement from './ChangeManagement';
+import ChangeManagementSubPane from './ChangeManagementSubPane';
+import SubcontractManagement from './SubcontractManagement';
+import Invoicing from './Invoicing';
 import ErrorBoundary from './ErrorBoundary';
 import { cn } from '../lib/utils';
 import { 
@@ -27,7 +29,8 @@ import {
   ShoppingCart,
   PenTool,
   HardHat,
-  RefreshCw
+  RefreshCw,
+  Briefcase
 } from 'lucide-react';
 
 interface ProjectDashboardProps {
@@ -37,9 +40,11 @@ interface ProjectDashboardProps {
   subModuleId?: string;
   onSelectSheet: (sheet: Sheet) => void;
   setIsSidebarCollapsed?: (c: boolean) => void;
+  user: any;
+  theme?: 'light' | 'dark';
 }
 
-export default function ProjectDashboard({ project, enterprise, currentModule, subModuleId, onSelectSheet, setIsSidebarCollapsed }: ProjectDashboardProps) {
+export default function ProjectDashboard({ project, enterprise, currentModule, subModuleId, onSelectSheet, setIsSidebarCollapsed, user, theme = 'light' }: ProjectDashboardProps) {
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [sheetStats, setSheetStats] = useState<Record<string, { eac: number, etc: number }>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -177,8 +182,8 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
                   {[
                     { label: 'Cost Mgmt', status: 'Active', icon: DollarSign, color: 'text-emerald-500' },
                     { label: 'Change Mgmt', status: 'Active', icon: RefreshCw, color: 'text-emerald-500' },
-                    { label: 'Design Mgmt', status: 'Coming Soon', icon: PenTool, color: 'text-blue-500' },
-                    { label: 'Field Mgmt', status: 'Coming Soon', icon: HardHat, color: 'text-purple-500' },
+                    { label: 'Sub-Contract', status: 'Active', icon: Briefcase, color: 'text-blue-500' },
+                    { label: 'Invoicing', status: 'Active', icon: Receipt, color: 'text-purple-500' },
                   ].map((m, i) => (
                     <div key={i} className="p-4 rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-white/5">
                       <div className="flex items-center gap-2 mb-2">
@@ -208,14 +213,21 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
         );
       case 'change':
         return (
-          <div className="flex-1 flex flex-col overflow-hidden p-8">
-            <ErrorBoundary>
-              <ChangeManagement 
-                project={project} 
-                enterprise={enterprise}
-              />
-            </ErrorBoundary>
-          </div>
+          <ChangeManagementSubPane 
+            project={project} 
+            enterprise={enterprise}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
+          />
+        );
+      case 'subcontract':
+        return (
+          <SubcontractManagement 
+            project={project} 
+            enterprise={enterprise}
+            user={user}
+            theme={theme}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
+          />
         );
       default:
         return (
@@ -235,14 +247,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
   return (
     <div className={cn(
       "flex-1 flex flex-col w-full h-full transition-colors duration-300",
-      (currentModule === 'cost' || currentModule === 'change') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
+      (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
     )}>
       <div className={cn(
         "w-full flex-1 flex flex-col min-h-0",
-        (currentModule === 'cost' || currentModule === 'change') ? "" : "max-w-[1600px] mx-auto"
+        (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'bulk-change-records') ? "" : "max-w-[1600px] mx-auto"
       )}>
         {/* Project Hero Section */}
-        {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && (
+        {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'bulk-change-records' && (
           <div className="relative h-64 w-full rounded-3xl overflow-hidden shadow-2xl group mb-10 shrink-0">
             <img 
               src={project.photoURL} 
@@ -268,7 +280,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
           </div>
         )}
 
-        {currentModule !== 'cost' && currentModule !== 'change' && (
+        {currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && (
           <div className="flex justify-between items-start mb-10 shrink-0">
             <div>
               {!project.photoURL && (
@@ -293,7 +305,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
 
         <div className={cn(
           "flex-1 flex flex-col min-h-0",
-          currentModule === 'cost' ? "h-full" : ""
+          (currentModule === 'cost' || currentModule === 'subcontract') ? "h-full" : ""
         )}>
           {renderModuleContent()}
         </div>
