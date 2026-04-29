@@ -54,7 +54,10 @@ export interface Enterprise {
   costCodeAttributes?: ProjectAttribute[];
   subcontractAttributes?: ProjectAttribute[];
   changeAttributes?: ProjectAttribute[];
+  riskAttributes?: ProjectAttribute[];
+  procurementAttributes?: ProjectAttribute[];
   changeTypes?: string[];
+  riskTypes?: string[];
   resourceRates?: ResourceRate[];
   costElements?: CostElement[];
   categories?: string[];
@@ -174,6 +177,74 @@ export interface InvoiceItem {
   commentary?: string;
 }
 
+export interface Risk {
+  id: string; // Firestore Doc ID
+  projectId: string;
+  riskId: string; // User-facing UNIQUE ID (max 20 chars)
+  description: string;
+  type: string; // From Enterprise Admin
+  status: 'Open' | 'Mitigated' | 'Closed' | 'Realized';
+  strategy: 'Avoid' | 'Mitigate' | 'Transfer' | 'Accept';
+  initiator: string; // max 50 char
+  reference: string; // max 50 char
+  exposure: number; // Formula sum of children (Initial EMV)
+  mitigation: number; // Formula sum of children (Mitigation Cost)
+  residualExposure: number; // Formula sum of children (Residual EMV)
+  periodId?: string;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RiskRecord {
+  id: string;
+  riskId: string; // Parent Risk Doc ID
+  projectId: string;
+  costCodeId: string; // From Project Cost Codes
+  scope: string; // max 100 char
+  enterpriseAttributes: Record<string, string>;
+  projectAttributes: Record<string, string>;
+  probability: number; // 0-1 (e.g. 0.4 for 40%)
+  impactAmount: number; // $ Initial Impact
+  mitigationCost: number; // $ Cost to mitigate
+  residualProbability: number; // 0-1 (e.g. 0.15 for 15%)
+  residualImpactAmount: number; // $ Residual Impact
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProcurementStepDefinition {
+  id: string;
+  projectId?: string;
+  enterpriseId?: string;
+  name: string;
+  order: number;
+  isEnterpriseStandard?: boolean;
+}
+
+export interface ProcurementStepData {
+  plannedDate?: string;
+  actualDate?: string;
+  forecastDate?: string;
+  planDuration?: number;
+  forecastDuration?: number;
+}
+
+export interface ProcurementItem {
+  id: string;
+  projectId: string;
+  packageId: string;
+  description: string;
+  calendarId?: string;
+  category?: string;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  stepData: Record<string, ProcurementStepData>; // Keyed by step definition ID
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectCostElement {
   id: string;
   description: string;
@@ -206,7 +277,15 @@ export interface Project {
   costCodeAttributes?: ProjectAttribute[];
   subcontractAttributes?: ProjectAttribute[];
   changeAttributes?: ProjectAttribute[];
+  riskAttributes?: ProjectAttribute[];
+  procurementAttributes?: ProjectAttribute[];
+  procurementDefaults?: {
+    calendarId?: string;
+    stepDurations?: Record<string, number>; // stepId -> duration
+    attributeValues?: Record<string, string>; // attrId -> valueId
+  };
   changeTypes?: string[];
+  riskTypes?: string[];
   lineItemAttributes?: ProjectAttribute[];
   resourceRates?: ResourceRate[];
   reportingPeriods?: {

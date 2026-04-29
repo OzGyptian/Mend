@@ -296,6 +296,76 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["invoiceId", "subcontractItemId", "itemNo", "createdAt"]
+    },
+    "Risk": {
+      "title": "Risk",
+      "description": "Represents a project risk.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "riskId": { "type": "string" },
+        "description": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string", "enum": ["Open", "Mitigated", "Closed", "Realized"] },
+        "strategy": { "type": "string", "enum": ["Avoid", "Mitigate", "Transfer", "Accept"] },
+        "exposure": { "type": "number", "description": "Total Initial EMV" },
+        "mitigation": { "type": "number", "description": "Total Mitigation Cost" },
+        "residualExposure": { "type": "number", "description": "Total Residual EMV" },
+        "periodId": { "type": "string" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "riskId", "status", "createdAt", "updatedAt"]
+    },
+    "RiskRecord": {
+      "title": "Risk Record",
+      "description": "Represents the impact of a risk on a specific cost code.",
+      "type": "object",
+      "properties": {
+        "riskId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "costCodeId": { "type": "string" },
+        "scope": { "type": "string" },
+        "probability": { "type": "number" },
+        "impactAmount": { "type": "number" },
+        "mitigationCost": { "type": "number" },
+        "residualProbability": { "type": "number" },
+        "residualImpactAmount": { "type": "number" },
+        "enterpriseAttributes": { "type": "object" },
+        "projectAttributes": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["riskId", "projectId", "costCodeId", "probability", "impactAmount", "mitigationCost", "residualProbability", "residualImpactAmount", "createdAt", "updatedAt"]
+    },
+    "ProcurementStepDefinition": {
+      "title": "Procurement Step Definition",
+      "description": "Definition of a tracking step in the procurement process.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "enterpriseId": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": "number" },
+        "isEnterpriseStandard": { "type": "boolean" }
+      },
+      "required": ["name", "order"]
+    },
+    "ProcurementItem": {
+      "title": "Procurement Item",
+      "description": "A procurement package with tracked steps.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "packageId": { "type": "string" },
+        "description": { "type": "string" },
+        "calendarId": { "type": "string" },
+        "category": { "type": "string" },
+        "stepData": { "type": "object", "description": "Map of step definition ID to step data" }
+      },
+      "required": ["projectId", "packageId", "description", "stepData"]
     }
   },
   "firestore": {
@@ -366,6 +436,22 @@
     "/invoiceItems/{itemId}": {
       "schema": "InvoiceItem",
       "description": "Invoice line items"
+    },
+    "/risks/{riskId}": {
+      "schema": "Risk",
+      "description": "Project-specific risk records"
+    },
+    "/riskRecords/{recordId}": {
+      "schema": "RiskRecord",
+      "description": "Risk line item records"
+    },
+    "/procurementStepDefinitions/{stepId}": {
+      "schema": "ProcurementStepDefinition",
+      "description": "Step definitions for procurement tracking"
+    },
+    "/procurementItems/{itemId}": {
+      "schema": "ProcurementItem",
+      "description": "Procurement package records"
     }
   }
 }

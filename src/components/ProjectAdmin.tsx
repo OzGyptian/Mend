@@ -15,9 +15,6 @@ import {
   DollarSign,
   Clock,
   RefreshCw,
-  PenTool,
-  HardHat,
-  ShoppingCart,
   Briefcase,
   FileText,
   Menu,
@@ -29,7 +26,8 @@ import {
   Trash2,
   Edit2,
   Check,
-  Loader2
+  Loader2,
+  ShieldAlert
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
@@ -52,9 +50,7 @@ type AdminTab =
   | 'costMgmt' 
   | 'scheduleMgmt' 
   | 'changeMgmt' 
-  | 'designMgmt' 
-  | 'fieldMgmt' 
-  | 'procurement' 
+  | 'riskMgmt'
   | 'subContractMgmt' 
   | 'invoicing' 
   | 'access'
@@ -272,8 +268,10 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
 
   const adminItems = [
     { id: 'general', label: 'General Info', icon: <Layout className="w-4 h-4" /> },
-    { id: 'attributes', label: 'Project Attributes', icon: <Tag className="w-4 h-4" /> },
+    { id: 'attributes', label: 'Attributes', icon: <Tag className="w-4 h-4" /> },
     { id: 'calendar', label: 'Project Calendars', icon: <CalendarIcon className="w-4 h-4" /> },
+    { id: 'changeMgmt', label: 'Change Management', icon: <RefreshCw className="w-4 h-4" /> },
+    { id: 'riskMgmt', label: 'Risk Management', icon: <ShieldAlert className="w-4 h-4" /> },
     { id: 'access', label: 'Access Control', icon: <Users className="w-4 h-4" /> },
   ];
 
@@ -297,24 +295,26 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
         </div>
         
         <nav className="flex-1 py-4 space-y-2 overflow-y-auto custom-scrollbar">
-          {adminItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setActiveTab(item.id as AdminTab);
-                if (!isSidebarOpen) setIsSidebarOpen(true);
-              }}
-              title={!isSidebarOpen ? item.label : undefined}
-              className={`w-full flex items-center ${isSidebarOpen ? 'gap-3 px-4 mx-2 w-[calc(100%-16px)]' : 'justify-center px-0'} py-2.5 rounded-xl text-sm font-medium transition-all ${
-                activeTab === item.id 
-                  ? 'bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10' 
-                  : 'text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
-              }`}
-            >
-              {item.icon}
-              {isSidebarOpen && item.label}
-            </button>
-          ))}
+          <div className="px-4 space-y-2">
+            {adminItems.map(item => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id as AdminTab);
+                  if (!isSidebarOpen) setIsSidebarOpen(true);
+                }}
+                title={!isSidebarOpen ? item.label : undefined}
+                className={`w-full flex items-center ${isSidebarOpen ? 'gap-3 px-4' : 'justify-center px-0'} py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  activeTab === item.id 
+                    ? 'bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10' 
+                    : 'text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
+                }`}
+              >
+                {item.icon}
+                {isSidebarOpen && item.label}
+              </button>
+            ))}
+          </div>
         </nav>
         {isSidebarOpen && (
           <div className="p-4 border-t border-gray-200 dark:border-white/10">
@@ -482,6 +482,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
 
           {activeTab === 'attributes' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              {/* Project Attributes */}
               <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
                 <h2 className="text-lg font-bold mb-2 dark:text-white">Project Attributes</h2>
                 <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">Assign values to enterprise-defined project attributes for analysis and reporting.</p>
@@ -528,17 +529,24 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
                           </td>
                         </tr>
                       ))}
-                      {(enterprise.projectAttributes || []).filter(attr => attr.title && attr.title.trim() !== '').length === 0 && (
-                        <tr>
-                          <td colSpan={3} className="py-12 text-center">
-                            <Tag className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-4" />
-                            <p className="text-sm text-gray-500 dark:text-gray-400">No project attributes defined in Enterprise Admin.</p>
-                          </td>
-                        </tr>
-                      )}
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* Change Attributes */}
+              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h2 className="text-lg font-bold mb-2 dark:text-white">Change Attributes</h2>
+                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">Enable or disable enterprise-defined change attributes for this project.</p>
+                {/* Similar structure for changeAttributes if they have project-level visibility settings */}
+                <p className="text-xs italic text-gray-500">Project-specific attribute overrides are managed here.</p>
+              </div>
+
+              {/* Risk Attributes */}
+              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h2 className="text-lg font-bold mb-2 dark:text-white">Risk Attributes</h2>
+                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">Enable or disable enterprise-defined risk attributes for this project.</p>
+                <p className="text-xs italic text-gray-500">Project-specific attribute overrides are managed here.</p>
               </div>
             </div>
           )}
@@ -554,6 +562,27 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
             </div>
           )}
 
+          {activeTab === 'changeMgmt' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h2 className="text-lg font-bold mb-6 dark:text-white">Change Management Settings</h2>
+                <div className="space-y-4">
+                   <p className="text-sm text-gray-500 italic">Project-specific change management settings go here.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'riskMgmt' && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
+                <h2 className="text-lg font-bold mb-6 dark:text-white">Risk Management Settings</h2>
+                <div className="space-y-4">
+                   <p className="text-sm text-gray-500 italic">Project-specific risk management settings go here.</p>
+                </div>
+              </div>
+            </div>
+          )}
           {activeTab === 'access' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
               <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { db, auth } from '../firebase';
 import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc, writeBatch } from 'firebase/firestore';
 import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, SavedView } from '../types';
-import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, PenTool, HardHat, ShoppingCart, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2 } from 'lucide-react';
+import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2, ShieldAlert, ShoppingCart } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import CalendarManager from './CalendarManager';
 import DataGridModule from './DataGridModule';
+import EnterpriseProcurementSteps from './EnterpriseProcurementSteps';
 
 const RESOURCE_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries', 'Staff'];
 const RESOURCE_UNITS = [
@@ -100,24 +101,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       ]
     },
     {
-      title: 'Design Management',
-      icon: <PenTool className="w-4 h-4" />,
-      items: [
-        { id: 'designMgmt', label: 'Design Settings', icon: <PenTool className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Field Management',
-      icon: <HardHat className="w-4 h-4" />,
-      items: [
-        { id: 'fieldMgmt', label: 'Field Settings', icon: <HardHat className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Procurement',
+      title: 'Procurement Management',
       icon: <ShoppingCart className="w-4 h-4" />,
       items: [
-        { id: 'procurement', label: 'Procurement Settings', icon: <ShoppingCart className="w-4 h-4" /> },
+        { id: 'procurementAttributes', label: 'Enterprise Procurement Attributes', icon: <Tag className="w-4 h-4" /> },
+        { id: 'procurementSteps', label: 'Standard Procurement Steps', icon: <ShoppingCart className="w-4 h-4" /> },
+      ]
+    },
+    {
+      title: 'Risk Management',
+      icon: <ShieldAlert className="w-4 h-4" />,
+      items: [
+        { id: 'riskAttributes', label: 'Enterprise Risk Attributes', icon: <Tag className="w-4 h-4" /> },
+        { id: 'riskMgmt', label: 'Risk Settings', icon: <ShieldAlert className="w-4 h-4" /> },
       ]
     },
     {
@@ -164,6 +160,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(new Set());
   const [selectedChangeTypeIds, setSelectedChangeTypeIds] = useState<Set<string>>(new Set());
+  const [selectedRiskTypeIds, setSelectedRiskTypeIds] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'user' | 'project' | 'attr-value' | 'rate' | 'costElement' | 'vendor', id: string } | null>(null);
   const [selectedAttrId, setSelectedAttrId] = useState<string>('01');
   const [selectedAttrValueIds, setSelectedAttrValueIds] = useState<Set<string>>(new Set());
@@ -172,7 +169,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [projectSort, setProjectSort] = useState<{ field: 'dateCreated' | 'dateLastModified' | 'projectName' | 'projectCode', direction: 'asc' | 'desc' }>({ field: 'dateCreated', direction: 'desc' });
   
   // Modal States
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'bulk-user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement' | 'vendor' | 'bulk-vendor' | 'bulk-changeType', id?: string, name?: string, count?: number } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'bulk-user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement' | 'vendor' | 'bulk-vendor' | 'bulk-changeType' | 'bulk-riskType', id?: string, name?: string, count?: number } | null>(null);
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [isInviting, setIsInviting] = useState(false);
@@ -192,7 +189,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [editingValueId, setEditingValueId] = useState<string | null>(null);
   const [editingField, setEditingField] = useState<'description' | 'sortOrder' | null>(null);
 
-  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string | null } | null>(null);
+  const [isEditingValue, setIsEditingValue] = useState<{ type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string, valueId: string | null } | null>(null);
   const [isEditingResource, setIsEditingResource] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [isEditingCostElement, setIsEditingCostElement] = useState<{ id: string | null, insertIndex?: number } | null>(null);
   const [isEditingVendor, setIsEditingVendor] = useState<{ id: string | null, insertIndex?: number } | null>(null);
@@ -221,7 +218,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     costCodeAttributes: ['id', 'description', 'sortOrder'],
     projectAttributes: ['id', 'description', 'sortOrder'],
     subcontractAttributes: ['id', 'description', 'sortOrder'],
+    procurementAttributes: ['id', 'description', 'sortOrder'],
     changeAttributes: ['id', 'description', 'sortOrder'],
+    riskAttributes: ['id', 'description', 'sortOrder'],
     resourceRates: ['id', 'name', 'category', 'unit', 'rate', 'udf1', 'udf2', 'udf3'],
     vendors: ['id', 'name', 'code', 'contactName', 'contactEmail']
   });
@@ -237,7 +236,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     resourceRates: true,
     vendors: true
   });
-  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'subcontractAttributes' | 'changeAttributes', data: any[], attrId?: string } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'subcontractAttributes' | 'procurementAttributes' | 'changeAttributes' | 'riskAttributes', data: any[], attrId?: string } | null>(null);
   const [userSort, setUserSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
   const [attrSort, setAttrSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'sortOrder', direction: 'asc' });
   const [resourceSort, setResourceSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
@@ -248,6 +247,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [isSavedViewMenuOpen, setIsSavedViewMenuOpen] = useState<string | null>(null);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [newChangeType, setNewChangeType] = useState('');
+  const [newRiskType, setNewRiskType] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, Record<string, string>>>({
     users: {},
     projects: {},
@@ -256,6 +256,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     projectAttributes: {},
     subcontractAttributes: {},
     changeAttributes: {},
+    riskAttributes: {},
     resourceRates: {}
   });
 
@@ -264,7 +265,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (tableId === 'resourceRates') setResourceSearch('');
     if (tableId === 'projects') setProjectSearch('');
     if (tableId === 'users') setUserSearch('');
-    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'changeAttributes') {
+    if (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'procurementAttributes' || tableId === 'changeAttributes') {
       setAttrSearch('');
       setValueSearch('');
     }
@@ -338,8 +339,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const getAttributes = (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change') => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const getAttributes = (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk') => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
     const attrs = (enterprise as any)[field] || [];
     
     // Legacy check: if it's an array of strings, convert to new structure
@@ -498,6 +499,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
+  const bulkDeleteRiskTypes = async () => {
+    if (!enterprise.id || selectedRiskTypeIds.size === 0) return;
+    try {
+      const newTypes = (enterprise.riskTypes || []).filter(t => !selectedRiskTypeIds.has(t));
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { riskTypes: newTypes });
+      setSelectedRiskTypeIds(new Set());
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Bulk delete risk types failed', error);
+      alert('Failed to delete risk types.');
+    }
+  };
+
   const deleteProject = async (projectId: string) => {
     await deleteDoc(doc(db, 'projects', projectId));
     setDeleteConfirm(null);
@@ -633,8 +647,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setSelectedProjectId(null);
   };
 
-  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const bulkDeleteAttributeValues = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -649,8 +663,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setDeleteConfirm(null);
   };
 
-  const deleteAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const deleteAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string, valueId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -939,7 +953,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const lineItemAttributes = useMemo(() => getAttributes('lineItem'), [enterprise.lineItemAttributes]);
   const costCodeAttributes = useMemo(() => getAttributes('costCode'), [enterprise.costCodeAttributes]);
   const subcontractAttributes = useMemo(() => getAttributes('subcontract'), [enterprise.subcontractAttributes]);
+  const procurementAttributes = useMemo(() => getAttributes('procurement'), [enterprise.procurementAttributes]);
   const changeAttributes = useMemo(() => getAttributes('change'), [enterprise.changeAttributes]);
+  const riskAttributes = useMemo(() => getAttributes('risk'), [enterprise.riskAttributes]);
 
   const userColumnDefs = useMemo(() => [
     {
@@ -1109,7 +1125,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           <button 
             onClick={(e) => {
               e.stopPropagation();
-              const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem';
+              const type = activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'procurementAttributes' ? 'procurement' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : 'lineItem';
               deleteAttributeValue(type, selectedAttrId, params.data.id);
             }}
             className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
@@ -1202,7 +1218,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   ], []);
 
   const sortedAttrValues = useMemo(() => {
-    const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
+    const values = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'procurementAttributes' ? procurementAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.values || [];
     let result = [...values].filter(v => 
       v.description.toLowerCase().includes(valueSearch.toLowerCase()) ||
       v.id.toLowerCase().includes(valueSearch.toLowerCase())
@@ -1228,8 +1244,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   }, [selectedAttrId, projectAttributes, lineItemAttributes, costCodeAttributes, subcontractAttributes, changeAttributes, attrSort, activeTab, valueSearch, columnFilters.lineItemAttributes, columnFilters.projectAttributes, columnFilters.costCodeAttributes, columnFilters.subcontractAttributes, columnFilters.changeAttributes]);
 
 
-  const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', id: string, title: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const updateAttributeTitle = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change', id: string, title: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => a.id === id ? { ...a, title } : a);
     
@@ -1247,10 +1263,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const addAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, value: ProjectAttributeValue) => {
+  const addAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string, value: ProjectAttributeValue) => {
     try {
       setIsSubmitting(true);
-      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
       const currentAttrs = getAttributes(type);
       const finalValue = {
         ...value,
@@ -1279,8 +1295,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }
   };
 
-  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string, valueId: string) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -1293,8 +1309,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
-  const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'change', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'change' ? 'changeAttributes' : 'lineItemAttributes';
+  const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
+    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : 'lineItemAttributes';
     const currentAttrs = getAttributes(type);
     const newAttrs = currentAttrs.map(a => {
       if (a.id === attrId) {
@@ -1323,7 +1339,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     setEditingField(null);
   };
 
-  const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'subcontract' | 'change', attrId?: string) => {
+  const handleExport = (type: 'project' | 'lineItem' | 'costCode' | 'resourceRates' | 'subcontract' | 'change' | 'risk', attrId?: string) => {
     if (type === 'resourceRates') {
       const rates = enterprise.resourceRates || [];
       if (rates.length === 0) {
@@ -1363,7 +1379,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     XLSX.writeFile(wb, `${type === 'project' ? 'Project' : type === 'costCode' ? 'CostCode' : type === 'subcontract' ? 'Subcontract' : type === 'change' ? 'Change' : 'LineItem'}_Attr_${attrId}_${attr.title || 'Untitled'}.xlsx`);
   };
 
-  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'subcontractAttributes' | 'changeAttributes' | 'resourceRates', file: File, attrId?: string) => {
+  const handleImport = async (type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'subcontractAttributes' | 'procurementAttributes' | 'changeAttributes' | 'riskAttributes' | 'resourceRates', file: File, attrId?: string) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const data = new Uint8Array(e.target?.result as ArrayBuffer);
@@ -1380,8 +1396,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     if (!importPreview) return;
     const { type, data, attrId } = importPreview;
 
-    if ((type === 'lineItemAttributes' || type === 'costCodeAttributes' || type === 'projectAttributes' || type === 'subcontractAttributes' || type === 'changeAttributes') && attrId) {
-      const attrType = type === 'projectAttributes' ? 'project' : type === 'costCodeAttributes' ? 'costCode' : type === 'subcontractAttributes' ? 'subcontract' : type === 'changeAttributes' ? 'change' : 'lineItem';
+    if ((type === 'lineItemAttributes' || type === 'costCodeAttributes' || type === 'projectAttributes' || type === 'subcontractAttributes' || type === 'procurementAttributes' || type === 'changeAttributes' || type === 'riskAttributes') && attrId) {
+      const attrType = type === 'projectAttributes' ? 'project' : type === 'costCodeAttributes' ? 'costCode' : type === 'subcontractAttributes' ? 'subcontract' : type === 'procurementAttributes' ? 'procurement' : type === 'changeAttributes' ? 'change' : type === 'riskAttributes' ? 'risk' : 'lineItem';
       const currentAttrs = getAttributes(attrType);
       
       const newAttrs = currentAttrs.map(a => {
@@ -1812,7 +1828,19 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
-          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes' || activeTab === 'costCodeAttributes' || activeTab === 'subcontractAttributes' || activeTab === 'changeAttributes') && (
+          {activeTab === 'procurementSteps' && (
+            <motion.div 
+              key="procurementSteps"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <EnterpriseProcurementSteps enterpriseId={enterprise.id} />
+            </motion.div>
+          )}
+
+          {(activeTab === 'projectAttributes' || activeTab === 'lineItemAttributes' || activeTab === 'costCodeAttributes' || activeTab === 'subcontractAttributes' || activeTab === 'procurementAttributes' || activeTab === 'changeAttributes' || activeTab === 'riskAttributes') && (
             <motion.div 
               key="attributes"
               initial={{ opacity: 0, y: 20 }}
@@ -1843,7 +1871,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 dark:divide-white/5">
-                      {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).filter((a: any) => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
+                      {(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'procurementAttributes' ? procurementAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : lineItemAttributes).filter((a: any) => a.title.toLowerCase().includes(attrSearch.toLowerCase()) || a.id.includes(attrSearch)).map((attr: any) => (
                         <tr 
                           key={attr.id}
                           onClick={() => setSelectedAttrId(attr.id)}
@@ -1853,7 +1881,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <td className="p-2">
                             <AttributeTitleInput 
                               attr={attr} 
-                              type={activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem'} 
+                              type={activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'procurementAttributes' ? 'procurement' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : 'lineItem'} 
                               onSave={updateAttributeTitle} 
                             />
                           </td>
@@ -1876,16 +1904,16 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       className="flex-1 flex flex-col min-h-0"
                     >
                       <DataGridModule
-                        title={`Attribute ${selectedAttrId}: ${(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}`}
+                        title={`Attribute ${selectedAttrId}: ${(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}`}
                         description="Manage the list of allowed values for this attribute."
                         onAdd={() => {
-                          const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
+                          const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
                           setValueFormData({ id: '', description: '', sortOrder: (currentAttr?.values?.length || 0) + 1 });
-                          setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', attrId: selectedAttrId, valueId: null });
+                          setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : 'lineItem', attrId: selectedAttrId, valueId: null });
                         }}
-                        onExport={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', selectedAttrId)}
+                        onExport={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : 'lineItem', selectedAttrId)}
                         onImport={() => {
-                          const type = activeTab === 'projectAttributes' ? 'projectAttributes' : activeTab === 'costCodeAttributes' ? 'costCodeAttributes' : activeTab === 'subcontractAttributes' ? 'subcontractAttributes' : activeTab === 'changeAttributes' ? 'changeAttributes' : 'lineItemAttributes';
+                          const type = activeTab === 'projectAttributes' ? 'projectAttributes' : activeTab === 'costCodeAttributes' ? 'costCodeAttributes' : activeTab === 'subcontractAttributes' ? 'subcontractAttributes' : activeTab === 'changeAttributes' ? 'changeAttributes' : activeTab === 'riskAttributes' ? 'riskAttributes' : 'lineItemAttributes';
                           fileInputRef.current?.click();
                           // Override the onchange for this specific context
                           if (fileInputRef.current) {
@@ -2126,7 +2154,97 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
-          {['scheduleMgmt', 'designMgmt', 'fieldMgmt', 'procurement', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
+          {activeTab === 'riskMgmt' && (
+            <motion.div 
+              key="risk-mgmt"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex-1 flex flex-col min-h-0"
+            >
+              <DataGridModule
+                title="Risk Management Settings"
+                description="Configure global risk types for the enterprise."
+                extraToolbarActions={
+                  <div className="flex gap-2">
+                    <Input 
+                      placeholder="New risk type..."
+                      value={newRiskType}
+                      onChange={(e) => setNewRiskType(e.target.value)}
+                      className="w-64"
+                    />
+                    <Button 
+                      onClick={async () => {
+                        if (!newRiskType.trim()) return;
+                        const currentTypes = enterprise.riskTypes || [];
+                        if (currentTypes.includes(newRiskType.trim())) {
+                          alert('This risk type already exists.');
+                          return;
+                        }
+                        await handleUpdateEnterprise({
+                          riskTypes: [...currentTypes, newRiskType.trim()]
+                        });
+                        setNewRiskType('');
+                      }}
+                      className="bg-black dark:bg-white text-white dark:text-black"
+                    >
+                      <Plus className="w-4 h-4 mr-2" />
+                      Add
+                    </Button>
+                  </div>
+                }
+                rowData={(enterprise.riskTypes || []).map(type => ({ type }))}
+                onCellValueChanged={async (event) => {
+                  const { oldValue, newValue } = event;
+                  if (!newValue || oldValue === newValue) return;
+                  const currentTypes = enterprise.riskTypes || [];
+                  const newTypes = currentTypes.map(t => t === oldValue ? newValue : t);
+                  await handleUpdateEnterprise({ riskTypes: newTypes });
+                }}
+                columnDefs={[
+                  { 
+                    field: 'type', 
+                    headerName: 'Risk Type', 
+                    flex: 1, 
+                    editable: true,
+                    cellClass: 'font-bold text-sm' 
+                  },
+                  {
+                    headerName: '',
+                    width: 80,
+                    pinned: 'right',
+                    cellRenderer: (params: any) => {
+                      if (params.data.isSubtotal) return null;
+                      return (
+                        <div className="flex justify-end py-1">
+                          <button 
+                            onClick={async () => {
+                              const newTypes = (enterprise.riskTypes || []).filter(t => t !== params.data.type);
+                              await handleUpdateEnterprise({ riskTypes: newTypes });
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    }
+                  }
+                ]}
+                gridProps={{
+                  rowSelection: 'multiple',
+                  onSelectionChanged: (params: any) => {
+                    const selectedNodes = params.api.getSelectedNodes();
+                    setSelectedRiskTypeIds(new Set(selectedNodes.map((node: any) => node.data.type)));
+                  }
+                }}
+                selectedCount={selectedRiskTypeIds.size}
+                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-riskType', count: selectedRiskTypeIds.size })}
+              />
+            </motion.div>
+          )}
+
+          {['scheduleMgmt', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
             <motion.div 
               key="under-development"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -2569,7 +2687,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   else if (deleteConfirm.type === 'bulk-user') bulkDeleteUsers();
                   else if (deleteConfirm.type === 'project') deleteProject(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-project') bulkDeleteProjects();
-                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : 'lineItem', selectedAttrId);
+                  else if (deleteConfirm.type === 'bulk-attr-value') bulkDeleteAttributeValues(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : 'lineItem', selectedAttrId);
                   else if (deleteConfirm.type === 'rate') deleteResourceRate(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-rate') bulkDeleteResourceRates();
                   else if (deleteConfirm.type === 'vendor') deleteVendor(deleteConfirm.id!);

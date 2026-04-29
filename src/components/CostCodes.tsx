@@ -388,6 +388,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [selectedTimephasingCode, setSelectedTimephasingCode] = useState<string | null>(null);
   const [selectedChangesCode, setSelectedChangesCode] = useState<string | null>(null);
   const [selectedBaselineCode, setSelectedBaselineCode] = useState<string | null>(null);
+  const [riskRecords, setRiskRecords] = useState<any[]>([]);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [allChanges, setAllChanges] = useState<Change[]>([]);
   const [isCalculated, setIsCalculated] = useState(false);
@@ -983,6 +984,40 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     });
     return () => unsubscribe();
   }, [selectedChangesCode, project.id]);
+
+  useEffect(() => {
+    if (!project.id) return;
+    const q = query(collection(db, 'riskRecords'), where('projectId', '==', project.id));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setRiskRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsubscribe();
+  }, [project.id]);
+
+  const riskExposureByCostCode = useMemo(() => {
+    const aggregates: Record<string, { initialEMV: number; mitigationCost: number; residualEMV: number }> = {};
+    
+    riskRecords.forEach(record => {
+      const ccId = record.costCodeId;
+      if (!ccId) return;
+      
+      if (!aggregates[ccId]) {
+        aggregates[ccId] = { initialEMV: 0, mitigationCost: 0, residualEMV: 0 };
+      }
+      
+      const prob = Number(record.probability) || 0;
+      const impact = Number(record.impactAmount) || 0;
+      const resProb = Number(record.residualProbability) || 0;
+      const resImpact = Number(record.residualImpactAmount) || 0;
+      const mitCost = Number(record.mitigationCost) || 0;
+      
+      aggregates[ccId].initialEMV += prob * impact;
+      aggregates[ccId].mitigationCost += mitCost;
+      aggregates[ccId].residualEMV += resProb * resImpact;
+    });
+    
+    return aggregates;
+  }, [riskRecords]);
 
   const changesPinnedBottomRowData = useMemo(() => {
     if (changeRecords.length === 0) return [];
@@ -3979,6 +4014,58 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       ]
     });
 
+    // 8. Risk Management
+    defs.push({
+      headerName: 'Risk Management',
+      headerClass: 'header-group-risk',
+      openByDefault: true,
+      children: [
+        {
+          headerName: 'Initial EMV Exposure',
+          width: 130,
+          type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const cc = params.data;
+            if (!cc) return 0;
+            // The link is the risk records cost code. In our system, costCodeId in record matches cc.id or cc.code
+            return riskExposureByCostCode[cc.id]?.initialEMV || riskExposureByCostCode[cc.code]?.initialEMV || 0;
+          },
+          valueFormatter: currencyFormatter,
+          cellClass: 'bg-slate-100 dark:bg-slate-800',
+          aggFunc: 'sum',
+        },
+        {
+          headerName: 'Mitigation Cost',
+          width: 130,
+          type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const cc = params.data;
+            if (!cc) return 0;
+            return riskExposureByCostCode[cc.id]?.mitigationCost || riskExposureByCostCode[cc.code]?.mitigationCost || 0;
+          },
+          valueFormatter: currencyFormatter,
+          cellClass: 'bg-slate-100 dark:bg-slate-800',
+          aggFunc: 'sum',
+        },
+        {
+          headerName: 'Residual Exposure',
+          width: 130,
+          type: 'numericColumn',
+          valueGetter: (params: any) => {
+            if (params.node?.group) return undefined;
+            const cc = params.data;
+            if (!cc) return 0;
+            return riskExposureByCostCode[cc.id]?.residualEMV || riskExposureByCostCode[cc.code]?.residualEMV || 0;
+          },
+          valueFormatter: currencyFormatter,
+          cellClass: 'bg-slate-100 dark:bg-slate-800 font-bold',
+          aggFunc: 'sum',
+        }
+      ]
+    });
+
     // 8. Cost Variance
     defs.push({
       headerName: 'Cost Variance',
@@ -4047,7 +4134,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     });
 
     return defs;
-  }, [enterpriseAttrs, projectAttrs, selectedEtcCode]);
+  }, [enterpriseAttrs, projectAttrs, selectedEtcCode, riskExposureByCostCode]);
 
   const sideBar = useMemo(() => {
     return {

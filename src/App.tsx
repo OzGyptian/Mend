@@ -41,7 +41,7 @@ export default function App() {
     }
   });
 
-  const isSystemOwner = user?.email === 'tarek.guindy@gmail.com';
+  const isSystemOwner = user?.email?.toLowerCase() === 'tarek.guindy@gmail.com' || user?.email?.toLowerCase() === 'tarek_guindy@hotmail.com';
 
   useEffect(() => {
     try {
@@ -175,7 +175,9 @@ export default function App() {
   }, [user, systemOwnerEnterpriseId]);
 
   useEffect(() => {
-    if (!user || user.email !== 'tarek.guindy@gmail.com') return;
+    if (!user || 
+        (user.email?.toLowerCase() !== 'tarek.guindy@gmail.com' && 
+         user.email?.toLowerCase() !== 'tarek_guindy@hotmail.com')) return;
 
     // Check if any enterprise exists
     const q = query(collection(db, 'enterprises'));
@@ -346,7 +348,7 @@ function AuthenticatedApp({
     );
   }
 
-  if (user && !user.emailVerified) {
+  if (user && !user.emailVerified && !isSystemOwner) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4] p-6">
         <div className="max-w-md w-full bg-white p-12 rounded-3xl shadow-sm text-center">
@@ -528,7 +530,7 @@ function AuthenticatedApp({
     );
   }
 
-  if (user && !currentEnterprise && !loading) {
+  if (user && !currentEnterprise && !loading && !isSystemOwner) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4] p-6">
         <div className="max-w-md w-full bg-white p-12 rounded-3xl shadow-sm text-center">

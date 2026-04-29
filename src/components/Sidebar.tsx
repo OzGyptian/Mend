@@ -14,13 +14,12 @@ import {
   CalendarCheck2,
   DollarSign,
   RefreshCw,
-  PenTool,
-  HardHat,
-  ShoppingCart,
   Users as UsersIcon,
   Receipt,
   PieChart,
-  ClipboardList
+  ClipboardList,
+  ShieldAlert,
+  ShoppingCart
 } from 'lucide-react';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
@@ -94,7 +93,7 @@ export default function Sidebar({
     return () => unsubscribe();
   }, [sheetId]);
 
-  const isSystemAdmin = userEmail === 'tarek.guindy@gmail.com';
+  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
@@ -107,10 +106,9 @@ export default function Sidebar({
     { id: 'project-admin', label: 'Project Admin', icon: Settings, visible: !!project && (isProjectAdmin || isSystemAdmin) },
     { id: 'cost', label: 'Cost Management', icon: DollarSign },
     { id: 'change', label: 'Change Management', icon: RefreshCw },
-    { id: 'design', label: 'Design Management', icon: PenTool },
-    { id: 'field', label: 'Field Management', icon: HardHat },
-    { id: 'procurement', label: 'Procurement', icon: ShoppingCart },
+    { id: 'risk', label: 'Risk Management', icon: ShieldAlert },
     { id: 'subcontract', label: 'Sub-Contract Management', icon: UsersIcon },
+    { id: 'procurement', label: 'Procurement Progress', icon: ShoppingCart },
   ];
 
   const adminItems = [

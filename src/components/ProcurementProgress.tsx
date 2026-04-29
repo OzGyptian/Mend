@@ -1,0 +1,548 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { db } from '../firebase';
+import { 
+  collection, 
+  query, 
+  where, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  writeBatch, 
+  orderBy 
+} from 'firebase/firestore';
+import { Project, Enterprise, ProcurementStepDefinition, ProcurementItem, Calendar as ProjectCalendar } from '../types';
+import { AgGridReact } from 'ag-grid-react';
+import { ColDef, ColGroupDef, ValueFormatterParams, CellValueChangedEvent } from 'ag-grid-community';
+import { 
+  Plus, 
+  Search, 
+  Download, 
+  Trash2, 
+  Calendar as CalendarIcon,
+  Clock,
+  CheckCircle2,
+  Activity,
+  ShoppingCart
+} from 'lucide-react';
+import { cn } from '../lib/utils';
+import { toast } from 'sonner';
+import { recalculatePlannedDates, recalculateForecastDates } from '../lib/procurementUtils';
+import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
+
+import CreatePackageModal from './CreatePackageModal';
+
+interface ProcurementProgressProps {
+  project: Project;
+  enterprise: Enterprise;
+  setIsSidebarCollapsed?: (collapsed: boolean) => void;
+  hideTabs?: boolean;
+}
+
+export default function ProcurementProgress({ project, enterprise, hideTabs = false }: ProcurementProgressProps) {
+  const [items, setItems] = useState<ProcurementItem[]>([]);
+  const [stepDefinitions, setStepDefinitions] = useState<ProcurementStepDefinition[]>([]);
+  const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
+  const [quickFilterText, setQuickFilterText] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const gridRef = useRef<AgGridReact>(null);
+
+  // 1. Data Fetching
+  useEffect(() => {
+    if (!project.id) return;
+    
+    // Fetch Project Steps
+    const stepsQuery = query(
+      collection(db, 'procurementStepDefinitions'), 
+      where('projectId', '==', project.id),
+      orderBy('order', 'asc')
+    );
+    const unsubSteps = onSnapshot(stepsQuery, (snapshot) => {
+      setStepDefinitions(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProcurementStepDefinition)));
+    }, (error) => {
+      console.error("Firestore Error fetching steps:", error);
+    });
+
+    // Fetch Packages
+    const itemsQuery = query(collection(db, 'procurementItems'), where('projectId', '==', project.id));
+    const unsubItems = onSnapshot(itemsQuery, (snapshot) => {
+      setItems(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProcurementItem)));
+    }, (error) => {
+       console.error("Firestore Error fetching items:", error);
+    });
+
+    // Fetch Calendars
+    const calendarsQuery = query(collection(db, 'calendars'), where('projectId', '==', project.id));
+    const unsubCalendars = onSnapshot(calendarsQuery, (snapshot) => {
+      setCalendars(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProjectCalendar)));
+    }, (error) => {
+       console.error("Firestore Error fetching calendars:", error);
+    });
+
+    return () => {
+      unsubSteps();
+      unsubItems();
+      unsubCalendars();
+    };
+  }, [project.id]);
+
+  // 1.5 Sync Engine: Recalculate on load
+  const hasSyncedInitialRef = useRef(false);
+  useEffect(() => {
+    if (items.length > 0 && stepDefinitions.length > 0 && calendars.length > 0 && !hasSyncedInitialRef.current) {
+      hasSyncedInitialRef.current = true;
+      
+      const syncItems = async () => {
+        const batch = writeBatch(db);
+        let hasChanges = false;
+
+        items.forEach(item => {
+          const calendar = calendars.find(c => c.id === item.calendarId) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
+          let updatedStepData = { ...item.stepData };
+          
+          const stepDataWithPlanned = recalculatePlannedDates(updatedStepData, stepDefinitions, calendar);
+          const finalStepData = recalculateForecastDates(stepDataWithPlanned, stepDefinitions, calendar);
+          
+          // Only update if data actually changed
+          if (JSON.stringify(item.stepData) !== JSON.stringify(finalStepData)) {
+            batch.update(doc(db, 'procurementItems', item.id), {
+              stepData: finalStepData,
+              updatedAt: new Date().toISOString()
+            });
+            hasChanges = true;
+          }
+        });
+
+        if (hasChanges) {
+          try {
+            await batch.commit();
+            toast.success('Procurement schedule synchronized');
+          } catch (e) {
+            console.error('Initial sync failed:', e);
+          }
+        }
+      };
+
+      syncItems();
+    }
+  }, [items.length, stepDefinitions.length, calendars.length, calendars, stepDefinitions, items]);
+
+  // 2. ColDefs Construction
+  const columnDefs = useMemo<ColDef[]>(() => {
+    const baseCols: ColDef[] = [
+      {
+        headerName: '',
+        width: 50,
+        checkboxSelection: true,
+        headerCheckboxSelection: true,
+        pinned: 'left',
+        lockPosition: true,
+      },
+      { field: 'packageId', headerName: 'Package ID', width: 130, pinned: 'left', editable: true, cellClass: 'font-mono' },
+      { field: 'description', headerName: 'Description', width: 250, pinned: 'left', editable: true },
+      { 
+        field: 'calendarId', 
+        headerName: 'Calendar', 
+        width: 150, 
+        pinned: 'left', 
+        editable: true,
+        cellEditor: 'agSelectCellEditor',
+        cellEditorParams: {
+          values: calendars.map(c => c.id),
+        },
+        valueFormatter: (params) => calendars.find(c => c.id === params.value)?.name || params.value
+      },
+    ];
+
+    const enterpriseAttrCols: ColDef[] = (enterprise.procurementAttributes || [])
+      .filter(attr => attr.title && attr.values && attr.values.length > 0)
+      .map(attr => ({
+      headerName: attr.title,
+      field: `enterpriseAttributes.${attr.id}`,
+      width: 150,
+      editable: true,
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: {
+        values: attr.values?.map(v => v.id) || [],
+      },
+      valueFormatter: (params) => attr.values?.find(v => v.id === params.value)?.description || params.value
+    }));
+
+    const projectAttrCols: ColDef[] = (project.procurementAttributes || [])
+      .filter(attr => attr.title && attr.values && attr.values.length > 0)
+      .map(attr => ({
+      headerName: attr.title,
+      field: `projectAttributes.${attr.id}`,
+      width: 150,
+      editable: true,
+      cellEditor: 'agSelectCellEditor',
+      cellEditorParams: {
+        values: attr.values?.map(v => v.id) || [],
+      },
+      valueFormatter: (params) => attr.values?.find(v => v.id === params.value)?.description || params.value
+    }));
+
+    const formatDate = (val: any) => {
+      if (!val) return '';
+      let date: Date;
+      if (val instanceof Date) {
+        date = val;
+      } else if (val && typeof val === 'object' && 'seconds' in val) {
+        date = new Date(val.seconds * 1000);
+      } else {
+        date = new Date(val);
+      }
+      return isNaN(date.getTime()) ? val : date.toLocaleDateString();
+    };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const stepCols: (ColGroupDef | ColDef)[] = stepDefinitions.map(step => ({
+      headerName: step.name,
+      headerClass: 'procurement-step-header',
+      children: [
+        {
+          headerName: 'Planned',
+          field: `stepData.${step.id}.plannedDate`,
+          width: 110,
+          editable: (params) => {
+            const steps = stepDefinitions || [];
+            return steps.length > 0 && step.id === steps[steps.length - 1].id;
+          },
+          cellEditor: 'agDateCellEditor',
+          valueGetter: (params) => {
+            const val = params.data.stepData?.[step.id]?.plannedDate;
+            if (!val) return null;
+            const d = val && typeof val === 'object' && 'seconds' in val ? new Date(val.seconds * 1000) : new Date(val);
+            return isNaN(d.getTime()) ? null : d;
+          },
+          valueFormatter: (p: ValueFormatterParams) => formatDate(p.value),
+          valueParser: (params) => {
+            const val = params.newValue as any;
+            if (val instanceof Date) {
+              return val.toISOString().split('T')[0];
+            }
+            return params.newValue;
+          },
+          cellClass: (params) => {
+            const steps = stepDefinitions || [];
+            const isLast = steps.length > 0 && step.id === steps[steps.length - 1].id;
+            const stepData = params.data.stepData?.[step.id] || {};
+            
+            // params.value is the Date object from valueGetter
+            const plannedDate = params.value instanceof Date ? params.value : null;
+            const hasActual = !!stepData.actualDate;
+            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < todayStr;
+            
+            return cn(
+              'text-gray-500 bg-gray-50/30',
+              isLast && 'font-bold text-black dark:text-white cursor-pointer',
+              isDelayed && 'bg-red-100 text-red-700 font-bold'
+            );
+          },
+          cellStyle: (params) => {
+            const stepData = params.data.stepData?.[step.id] || {};
+            const plannedDate = params.value instanceof Date ? params.value : null;
+            const hasActual = !!stepData.actualDate;
+            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < todayStr;
+            
+            if (isDelayed) {
+              return { backgroundColor: '#fee2e2' }; // Red color
+            }
+            return null;
+          }
+        },
+        {
+          headerName: 'Forecast',
+          field: `stepData.${step.id}.forecastDate`,
+          width: 110,
+          valueFormatter: (p: ValueFormatterParams) => formatDate(p.value),
+          cellClass: (params) => {
+            const stepData = params.data.stepData?.[step.id] || {};
+            const forecastDateStr = stepData.forecastDate;
+            const hasActual = !!stepData.actualDate;
+            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < todayStr;
+            
+            return cn(
+              'font-semibold text-blue-600',
+              needsUpdate && 'bg-amber-100 text-amber-700'
+            );
+          },
+          cellStyle: (params) => {
+            const stepData = params.data.stepData?.[step.id] || {};
+            const forecastDateStr = stepData.forecastDate;
+            const hasActual = !!stepData.actualDate;
+            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < todayStr;
+            
+            if (needsUpdate) {
+              return { backgroundColor: '#fef3c7' }; // Yellow color
+            }
+            return null;
+          }
+        },
+        {
+          headerName: 'Actual',
+          field: `stepData.${step.id}.actualDate`,
+          width: 110,
+          editable: true,
+          cellEditor: 'agDateCellEditor',
+          valueGetter: (params) => {
+            const val = params.data.stepData?.[step.id]?.actualDate;
+            if (!val) return null;
+            const d = val && typeof val === 'object' && 'seconds' in val ? new Date(val.seconds * 1000) : new Date(val);
+            return isNaN(d.getTime()) ? null : d;
+          },
+          valueFormatter: (p: ValueFormatterParams) => formatDate(p.value),
+          valueParser: (params) => {
+            const val = params.newValue as any;
+            if (val instanceof Date) {
+              return val.toISOString().split('T')[0];
+            }
+            return params.newValue;
+          },
+        },
+        {
+          headerName: 'Dur',
+          field: `stepData.${step.id}.planDuration`,
+          width: 60,
+          editable: true,
+          headerClass: 'procurement-duration-header'
+        },
+        {
+          headerName: 'F.Dur',
+          field: `stepData.${step.id}.forecastDuration`,
+          width: 60,
+          editable: true,
+          headerClass: 'procurement-duration-header bg-blue-50/10'
+        }
+      ]
+    }));
+
+    return [...baseCols, ...enterpriseAttrCols, ...projectAttrCols, ...stepCols] as ColDef[];
+  }, [stepDefinitions, calendars]);
+
+  const handleCellValueChanged = async (event: CellValueChangedEvent) => {
+    const { data, colDef } = event;
+    const field = colDef.field;
+    if (!field) return;
+
+    let updatedStepData = { ...data.stepData };
+    const calendar = calendars.find(c => c.id === data.calendarId) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
+
+    const lastStepId = stepDefinitions[stepDefinitions.length - 1]?.id;
+    const isPlanDurationChange = field.includes('planDuration');
+    const isLastStepPlannedDateChange = field === `stepData.${lastStepId}.plannedDate`;
+    const isForecastDurationChange = field.includes('forecastDuration');
+    const isActualDateChange = field.includes('actualDate');
+    const isCalendarChange = field === 'calendarId';
+
+    const needsPlanRecalc = isPlanDurationChange || isLastStepPlannedDateChange || isCalendarChange;
+    const needsForecastRecalc = isActualDateChange || isForecastDurationChange || needsPlanRecalc;
+
+    if (needsPlanRecalc) {
+      updatedStepData = recalculatePlannedDates(updatedStepData, stepDefinitions, calendar);
+    }
+    
+    if (needsForecastRecalc) {
+      updatedStepData = recalculateForecastDates(updatedStepData, stepDefinitions, calendar);
+    }
+
+    try {
+      await updateDoc(doc(db, 'procurementItems', data.id), {
+        ...data,
+        stepData: updatedStepData,
+        updatedAt: new Date().toISOString()
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `procurementItems/${data.id}`);
+    }
+  };
+
+  const handleCreatePackage = async (packageId: string, description: string) => {
+    // Uniqueness check
+    if (items.some(item => item.packageId.toLowerCase() === packageId.toLowerCase())) {
+      toast.error('Package ID already exists in this project');
+      return;
+    }
+
+    try {
+      const defaults = project.procurementDefaults;
+      const initialStepData: Record<string, any> = {};
+      
+      const calendar = calendars.find(c => c.id === (defaults?.calendarId || (calendars.length > 0 ? calendars[0].id : ''))) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
+
+      stepDefinitions.forEach(s => {
+        const defaultDur = defaults?.stepDurations?.[s.id] ?? 5;
+        initialStepData[s.id] = {
+          planDuration: defaultDur,
+          forecastDuration: defaultDur
+        };
+      });
+
+      // Recalculate scheduled dates immediately
+      const initialStepDataWithPlanned = recalculatePlannedDates(initialStepData, stepDefinitions, calendar);
+      const finalInitialStepData = recalculateForecastDates(initialStepDataWithPlanned, stepDefinitions, calendar);
+
+      const now = new Date().toISOString();
+      const path = 'procurementItems';
+      await addDoc(collection(db, path), {
+        projectId: project.id,
+        packageId: packageId,
+        description: description,
+        calendarId: calendar.id || '',
+        enterpriseAttributes: defaults?.attributeValues || {},
+        projectAttributes: {},
+        stepData: finalInitialStepData,
+        createdAt: now,
+        updatedAt: now
+      });
+      toast.success('Package added successfully');
+      setIsCreateModalOpen(false);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, 'procurementItems');
+    }
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Are you sure you want to delete ${selectedIds.size} packages?`)) return;
+
+    try {
+      const batch = writeBatch(db);
+      selectedIds.forEach(id => {
+        batch.delete(doc(db, 'procurementItems', id));
+      });
+      await batch.commit();
+      setSelectedIds(new Set());
+      toast.success('Packages deleted');
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to delete packages');
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#0a0a0a]">
+      {/* Header */}
+      <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-white/10 shrink-0">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/20">
+              <ShoppingCart className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold tracking-tight dark:text-white">Procurement Tracking</h1>
+              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">{project.projectName}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Filter packages..." 
+              value={quickFilterText}
+              onChange={(e) => setQuickFilterText(e.target.value)}
+              className="pl-9 pr-4 py-2 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-xs w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white transition-all shadow-sm"
+            />
+          </div>
+          <button className="p-2.5 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-500 hover:text-blue-600 transition-all shadow-sm"><Download className="w-4 h-4" /></button>
+          {selectedIds.size > 0 && (
+            <button 
+              onClick={handleDeleteSelected}
+              className="flex items-center gap-2 px-4 py-2.5 bg-red-50 text-red-600 border border-red-100 rounded-xl text-xs font-bold hover:bg-red-100 transition-all shadow-sm"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete ({selectedIds.size})
+            </button>
+          )}
+          <button 
+            onClick={() => setIsCreateModalOpen(true)}
+            className="flex items-center gap-2 px-6 py-2.5 bg-black dark:bg-white text-white dark:text-black rounded-xl text-xs font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-xl shadow-black/10"
+          >
+            <Plus className="w-4 h-4" />
+            Add Package
+          </button>
+        </div>
+      </div>
+
+      {/* Grid */}
+      <div className="flex-1 p-4 overflow-hidden bg-gray-50 dark:bg-black/20">
+        <div className="h-full rounded-2xl border border-gray-200 dark:border-white/10 overflow-hidden ag-theme-quartz shadow-2xl relative">
+          <AgGridReact
+            ref={gridRef}
+            rowData={items}
+            columnDefs={columnDefs}
+            quickFilterText={quickFilterText}
+            rowSelection="multiple"
+            suppressRowClickSelection={true}
+            onCellValueChanged={handleCellValueChanged}
+            onSelectionChanged={() => {
+              const nodes = gridRef.current?.api.getSelectedNodes();
+              setSelectedIds(new Set(nodes?.map(n => n.data.id) || []));
+            }}
+            defaultColDef={{
+              sortable: true,
+              filter: true,
+              resizable: true,
+            }}
+            gridOptions={{
+              headerHeight: 48,
+              groupHeaderHeight: 40,
+            }}
+          />
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="p-3 border-t border-gray-200 dark:border-white/10 bg-white dark:bg-[#0a0a0a] flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-widest px-6 shrink-0">
+        <div className="flex gap-8">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+            <span>Total: {items.length} Packages</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Activity className="w-3 h-3 text-blue-500" />
+            <span>Defined Steps: {stepDefinitions.length}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <CalendarIcon className="w-3 h-3 text-amber-500" />
+            <span>Project Calendars: {calendars.length}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Clock className="w-3 h-3" />
+          <span>Sync OK: {new Date().toLocaleTimeString()}</span>
+        </div>
+      </div>
+
+      <style>{`
+        .procurement-step-header {
+          background-color: #000 !important;
+          color: #fff !important;
+          font-weight: 800 !important;
+          font-size: 11px !important;
+          text-transform: uppercase !important;
+          letter-spacing: 0.05em !important;
+        }
+        .procurement-duration-header {
+          background-color: #f8fafc !important;
+          border-left: 2px solid #e2e8f0 !important;
+        }
+        .dark .procurement-duration-header {
+          background-color: rgba(255, 255, 255, 0.03) !important;
+          border-left: 2px solid rgba(255, 255, 255, 0.05) !important;
+        }
+      `}</style>
+
+      <CreatePackageModal 
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onSubmit={handleCreatePackage}
+      />
+    </div>
+  );
+}

@@ -28,7 +28,7 @@ const ChangeManagementSubPane: React.FC<ChangeManagementSubPaneProps> = ({
 
   const userId = auth.currentUser?.uid;
   const userEmail = auth.currentUser?.email;
-  const isSystemAdmin = userEmail === 'tarek.guindy@gmail.com';
+  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);
 

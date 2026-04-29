@@ -4,7 +4,9 @@ import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, 
 import { Project, Sheet, Enterprise, ForecastRow } from '../types';
 import CostManagement from './CostManagement';
 import ChangeManagementSubPane from './ChangeManagementSubPane';
+import RiskManagementSubPane from './RiskManagementSubPane';
 import SubcontractManagement from './SubcontractManagement';
+import ProcurementManagementSubPane from './ProcurementManagementSubPane';
 import Invoicing from './Invoicing';
 import ErrorBoundary from './ErrorBoundary';
 import { cn } from '../lib/utils';
@@ -26,11 +28,9 @@ import {
   Activity,
   Users as UsersIcon,
   Receipt,
-  ShoppingCart,
-  PenTool,
-  HardHat,
   RefreshCw,
-  Briefcase
+  Briefcase,
+  ShieldAlert
 } from 'lucide-react';
 
 interface ProjectDashboardProps {
@@ -182,6 +182,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
                   {[
                     { label: 'Cost Mgmt', status: 'Active', icon: DollarSign, color: 'text-emerald-500' },
                     { label: 'Change Mgmt', status: 'Active', icon: RefreshCw, color: 'text-emerald-500' },
+                    { label: 'Risk Mgmt', status: 'Active', icon: ShieldAlert, color: 'text-amber-500' },
                     { label: 'Sub-Contract', status: 'Active', icon: Briefcase, color: 'text-blue-500' },
                     { label: 'Invoicing', status: 'Active', icon: Receipt, color: 'text-purple-500' },
                   ].map((m, i) => (
@@ -219,6 +220,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
             setIsSidebarCollapsed={setIsSidebarCollapsed}
           />
         );
+      case 'risk':
+        return (
+          <RiskManagementSubPane 
+            project={project} 
+            enterprise={enterprise}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
+          />
+        );
       case 'subcontract':
         return (
           <SubcontractManagement 
@@ -226,6 +235,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
             enterprise={enterprise}
             user={user}
             theme={theme}
+            setIsSidebarCollapsed={setIsSidebarCollapsed}
+          />
+        );
+      case 'procurement':
+        return (
+          <ProcurementManagementSubPane 
+            project={project} 
+            enterprise={enterprise}
             setIsSidebarCollapsed={setIsSidebarCollapsed}
           />
         );
@@ -247,11 +264,11 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
   return (
     <div className={cn(
       "flex-1 flex flex-col w-full h-full transition-colors duration-300",
-      (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
+      (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'risk' || currentModule === 'procurement') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
     )}>
       <div className={cn(
         "w-full flex-1 flex flex-col min-h-0",
-        (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'bulk-change-records') ? "" : "max-w-[1600px] mx-auto"
+        (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'bulk-change-records' || currentModule === 'risk' || currentModule === 'procurement') ? "" : "max-w-[1600px] mx-auto"
       )}>
         {/* Project Hero Section */}
         {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'bulk-change-records' && (
@@ -280,7 +297,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
           </div>
         )}
 
-        {currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && (
+        {currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'risk' && currentModule !== 'procurement' && (
           <div className="flex justify-between items-start mb-10 shrink-0">
             <div>
               {!project.photoURL && (

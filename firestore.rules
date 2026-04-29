@@ -16,8 +16,7 @@ service cloud.firestore {
 
     function isSystemAdmin() {
       return isAuthenticated() && 
-             request.auth.token.email == "tarek.guindy@gmail.com" && 
-             request.auth.token.email_verified == true;
+             (request.auth.token.email.lower() == "tarek.guindy@gmail.com" || request.auth.token.email.lower() == "tarek_guindy@hotmail.com");
     }
 
     function isAdminOfEnterprise(enterpriseId) {
@@ -168,6 +167,56 @@ service cloud.firestore {
              data.subcontractItemId is string &&
              data.itemNo is string &&
              isValidTimestamp(data.createdAt);
+    }
+
+    function isValidRisk(data) {
+      return data.projectId is string &&
+             data.riskId is string && data.riskId.size() > 0 && data.riskId.size() <= 100 &&
+             (!('description' in data) || data.description is string) &&
+             (!('type' in data) || data.type is string) &&
+             (!('status' in data) || data.status in ['Open', 'Mitigated', 'Closed', 'Realized']) &&
+             (!('strategy' in data) || data.strategy in ['Avoid', 'Mitigate', 'Transfer', 'Accept']) &&
+             (!('exposure' in data) || data.exposure is number) &&
+             (!('mitigation' in data) || data.mitigation is number) &&
+             (!('residualExposure' in data) || data.residualExposure is number) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt)) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
+    }
+
+    function isValidRiskRecord(data) {
+      return data.projectId is string &&
+             data.riskId is string &&
+             (!('costCodeId' in data) || data.costCodeId is string) &&
+             (!('scope' in data) || data.scope is string) &&
+             (!('probability' in data) || data.probability is number) &&
+             (!('impactAmount' in data) || data.impactAmount is number) &&
+             (!('mitigationCost' in data) || data.mitigationCost is number) &&
+             (!('residualProbability' in data) || data.residualProbability is number) &&
+             (!('residualImpactAmount' in data) || data.residualImpactAmount is number) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt)) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
+    }
+
+    function isValidProcurementStepDefinition(data) {
+      return data.name is string && data.name.size() > 0 &&
+             data.order is number &&
+             (!('projectId' in data) || data.projectId is string) &&
+             (!('enterpriseId' in data) || data.enterpriseId is string) &&
+             (!('isEnterpriseStandard' in data) || data.isEnterpriseStandard is bool);
+    }
+
+    function isValidProcurementItem(data) {
+      return data.projectId is string &&
+             data.packageId is string &&
+             data.description is string &&
+             (!('calendarId' in data) || data.calendarId is string) &&
+             (!('category' in data) || data.category is string) &&
+             data.stepData is map &&
+             (!('enterpriseAttributes' in data) || data.enterpriseAttributes is map) &&
+             (!('projectAttributes' in data) || data.projectAttributes is map) &&
+             (!('status' in data) || data.status in ['Not Started', 'In Progress', 'Issued', 'Completed', 'Delayed']) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt)) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
     }
 
     // ===============================================================
@@ -344,6 +393,34 @@ service cloud.firestore {
         isProjectAdmin(get(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.projectId) || 
         request.auth.token.email.lower() in get(/databases/$(database)/documents/subcontracts/$(get(/databases/$(database)/documents/invoices/$(request.resource.data.invoiceId)).data.subcontractId)).data.vendorUsers
       ) && isValidInvoiceItem(request.resource.data);
+    }
+
+    match /risks/{riskId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidRisk(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidRisk(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /riskRecords/{recordId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidRiskRecord(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidRiskRecord(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /procurementStepDefinitions/{stepId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidProcurementStepDefinition(request.resource.data);
+      allow update: if isAuthenticated() && isValidProcurementStepDefinition(request.resource.data);
+      allow delete: if isAuthenticated();
+    }
+
+    match /procurementItems/{itemId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidProcurementItem(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidProcurementItem(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
     }
   }
 }
