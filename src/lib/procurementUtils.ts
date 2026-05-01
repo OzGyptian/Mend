@@ -73,10 +73,11 @@ export function recalculatePlannedDates(
 export function recalculateForecastDates(
   stepData: Record<string, any>,
   steps: { id: string }[],
-  calendar: Calendar
+  calendar: Calendar,
+  cutoffDate?: string
 ): Record<string, any> {
   const updatedData = { ...stepData };
-  const todayStr = new Date().toISOString().split('T')[0];
+  const effectiveCutoff = cutoffDate || new Date().toISOString().split('T')[0];
   
   // Work forward from the first step
   for (let i = 0; i < steps.length; i++) {
@@ -84,16 +85,16 @@ export function recalculateForecastDates(
     const current = updatedData[currentStepId] || {};
     
     if (i === 0) {
-      // First Step: IF(Actual="", IF(Planned > Today, Planned, Today), Actual)
+      // First Step: IF(Actual="", IF(Planned > Cutoff, Planned, Cutoff), Actual)
       if (current.actualDate) {
         updatedData[currentStepId] = {
           ...current,
           forecastDate: current.actualDate
         };
       } else {
-        const plannedDate = current.plannedDate || todayStr;
-        // If planned date is in the future, use it. Otherwise use today.
-        const basisValue = plannedDate > todayStr ? plannedDate : todayStr;
+        const plannedDate = current.plannedDate || effectiveCutoff;
+        // If planned date is in the future relative to cutoff, use it. Otherwise use cutoff.
+        const basisValue = plannedDate > effectiveCutoff ? plannedDate : effectiveCutoff;
         updatedData[currentStepId] = {
           ...current,
           forecastDate: basisValue

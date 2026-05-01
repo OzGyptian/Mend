@@ -7,6 +7,14 @@
       "properties": {
         "name": { "type": "string", "description": "Company name" },
         "adminUsers": { "type": "array", "items": { "type": "string" }, "description": "List of admin UIDs" },
+        "projectAttributes": { "type": "array" },
+        "lineItemAttributes": { "type": "array" },
+        "costCodeAttributes": { "type": "array" },
+        "subcontractAttributes": { "type": "array" },
+        "changeAttributes": { "type": "array" },
+        "riskAttributes": { "type": "array" },
+        "procurementAttributes": { "type": "array" },
+        "progressAttributes": { "type": "array" },
         "settings": { "type": "object", "description": "Enterprise-wide settings" }
       },
       "required": ["name", "adminUsers"]
@@ -22,7 +30,16 @@
         "projectBudget": { "type": "number" },
         "startDate": { "type": "string", "format": "date" },
         "endDate": { "type": "string", "format": "date" },
-        "users": { "type": "object", "description": "Map of UID to role (e.g., 'admin', 'editor', 'viewer')" }
+        "reportingPeriods": { "type": "object" },
+        "progressPeriods": { "type": "object" },
+        "users": { "type": "object", "description": "Map of UID to role (e.g., 'admin', 'editor', 'viewer')" },
+        "costCodeAttributes": { "type": "array" },
+        "subcontractAttributes": { "type": "array" },
+        "changeAttributes": { "type": "array" },
+        "riskAttributes": { "type": "array" },
+        "procurementAttributes": { "type": "array" },
+        "progressAttributes": { "type": "array" },
+        "lineItemAttributes": { "type": "array" }
       },
       "required": ["enterpriseId", "projectName", "projectCode"]
     },
@@ -366,6 +383,109 @@
         "stepData": { "type": "object", "description": "Map of step definition ID to step data" }
       },
       "required": ["projectId", "packageId", "description", "stepData"]
+    },
+    "ProgressPackage": {
+      "title": "Progress Package",
+      "description": "A high-level package for tracking physical progress.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "packageId": { "type": "string", "description": "Unique Package ID (max 20 chars)" },
+        "description": { "type": "string" },
+        "ruleOfCreditId": { "type": "string", "description": "Reference to the selected Rule of Credit" },
+        "attributes": { "type": "object", "description": "Custom attribute values" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "packageId", "description"]
+    },
+    "ProgressItem": {
+      "title": "Progress Item",
+      "description": "A detailed item within a progress package.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "packageId": { "type": "string", "description": "Reference to parent packageId" },
+        "itemId": { "type": "string", "description": "Unique Item ID within package" },
+        "description": { "type": "string" },
+        "costCodeId": { "type": "string", "description": "Reference to Project Cost Code" },
+        "totalQty": { "type": "number" },
+        "unit": { "type": "string" },
+        "plannedStartDate": { "type": "string", "format": "date" },
+        "plannedEndDate": { "type": "string", "format": "date" },
+        "phasingMethod": { "type": "string", "enum": ["Auto", "Manual"] },
+        "phasingCurve": { "type": "string" },
+        "currentStartDate": { "type": "string", "format": "date" },
+        "currentEndDate": { "type": "string", "format": "date" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "packageId", "itemId", "description"]
+    },
+    "ProgressReportingPeriod": {
+      "title": "Progress Reporting Period",
+      "description": "Weekly reporting periods for progress tracking.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "periodName": { "type": "string" },
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "status": { "type": "string", "enum": ["Open", "Closed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "periodName", "startDate", "endDate"]
+    },
+    "ProgressAttribute": {
+      "title": "Progress Attribute",
+      "description": "Custom attributes for progress tracking items.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "dropdown", "date", "number"] },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["projectId", "title", "type"]
+    },
+    "RuleOfCredit": {
+      "title": "Rule of Credit",
+      "description": "Setup rules of credit types with detailed steps and weightings.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "ruleId": { "type": "string", "description": "Unique RoC ID (max 20 chars)" },
+        "description": { "type": "string" },
+        "packageId": { "type": "string", "description": "ID of the assigned package" },
+        "userField1": { "type": "string", "description": "User defined field 1" },
+        "userField2": { "type": "string", "description": "User defined field 2" },
+        "userField3": { "type": "string", "description": "User defined field 3" },
+        "userField4": { "type": "string", "description": "User defined field 4" },
+        "userField5": { "type": "string", "description": "User defined field 5" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "orderNo": { "type": "number", "description": "Step Order No (max 10 chars decimal)" },
+              "description": { "type": "string", "description": "Step Description (max 100 chars)" },
+              "weight": { "type": "number", "description": "Step Weight decimal" }
+            }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "ruleId", "description"]
     }
   },
   "firestore": {
@@ -452,6 +572,26 @@
     "/procurementItems/{itemId}": {
       "schema": "ProcurementItem",
       "description": "Procurement package records"
+    },
+    "/progressPackages/{packageId}": {
+      "schema": "ProgressPackage",
+      "description": "Progress tracking package headers"
+    },
+    "/progressItems/{itemId}": {
+      "schema": "ProgressItem",
+      "description": "Detailed progress tracking items"
+    },
+    "/progressReportingPeriods/{periodId}": {
+      "schema": "ProgressReportingPeriod",
+      "description": "Reporting periods for progress"
+    },
+    "/progressAttributes/{attrId}": {
+      "schema": "ProgressAttribute",
+      "description": "Progress tracking custom attributes"
+    },
+    "/rulesOfCredit/{ruleId}": {
+      "schema": "RuleOfCredit",
+      "description": "Rules of credit definitions"
     }
   }
 }

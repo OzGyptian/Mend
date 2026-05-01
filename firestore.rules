@@ -219,6 +219,56 @@ service cloud.firestore {
              (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
     }
 
+    function isValidProgressPackage(data) {
+      return data.projectId is string &&
+             data.packageId is string && data.packageId.size() <= 20 &&
+             data.description is string &&
+             (!('ruleOfCreditId' in data) || (data.ruleOfCreditId is string && data.ruleOfCreditId.size() <= 128)) &&
+             (!('attributes' in data) || data.attributes is map) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt)) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
+    }
+
+    function isValidProgressItem(data) {
+      return data.projectId is string &&
+             data.packageId is string &&
+             data.itemId is string &&
+             data.description is string &&
+             (!('totalQty' in data) || data.totalQty is number) &&
+             (!('unit' in data) || data.unit is string) &&
+             (!('phasingMethod' in data) || data.phasingMethod in ['Auto', 'Manual']) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt)) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt));
+    }
+
+    function isValidProgressReportingPeriod(data) {
+      return data.projectId is string &&
+             data.periodName is string &&
+             data.startDate is string &&
+             data.endDate is string &&
+             (!('status' in data) || data.status in ['Open', 'Closed']);
+    }
+
+    function isValidProgressAttribute(data) {
+      return data.projectId is string &&
+             data.title is string &&
+             data.type in ['text', 'dropdown', 'date', 'number'];
+    }
+
+    function isValidRuleOfCredit(data) {
+      return data.projectId is string &&
+             data.ruleId is string && data.ruleId.size() <= 20 &&
+             (!('description' in data) || data.description is string) &&
+             (!('packageId' in data) || data.packageId is string) &&
+             (!('userField1' in data) || data.userField1 is string) &&
+             (!('userField2' in data) || data.userField2 is string) &&
+             (!('userField3' in data) || data.userField3 is string) &&
+             (!('userField4' in data) || data.userField4 is string) &&
+             (!('userField5' in data) || data.userField5 is string) &&
+             (!('steps' in data) || data.steps is list) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt));
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -420,6 +470,41 @@ service cloud.firestore {
       allow read: if canAccessProject(resource.data.projectId);
       allow create: if canAccessProject(request.resource.data.projectId) && isValidProcurementItem(request.resource.data);
       allow update: if canAccessProject(resource.data.projectId) && isValidProcurementItem(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /progressPackages/{packageId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidProgressPackage(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidProgressPackage(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /progressItems/{itemId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidProgressItem(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidProgressItem(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /progressReportingPeriods/{periodId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidProgressReportingPeriod(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidProgressReportingPeriod(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /progressAttributes/{attrId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidProgressAttribute(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidProgressAttribute(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /rulesOfCredit/{ruleId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidRuleOfCredit(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidRuleOfCredit(request.resource.data);
       allow delete: if canAccessProject(resource.data.projectId);
     }
   }

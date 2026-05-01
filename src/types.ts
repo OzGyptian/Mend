@@ -56,6 +56,7 @@ export interface Enterprise {
   changeAttributes?: ProjectAttribute[];
   riskAttributes?: ProjectAttribute[];
   procurementAttributes?: ProjectAttribute[];
+  progressAttributes?: ProjectAttribute[];
   changeTypes?: string[];
   riskTypes?: string[];
   resourceRates?: ResourceRate[];
@@ -279,6 +280,7 @@ export interface Project {
   changeAttributes?: ProjectAttribute[];
   riskAttributes?: ProjectAttribute[];
   procurementAttributes?: ProjectAttribute[];
+  progressAttributes?: ProjectAttribute[];
   procurementDefaults?: {
     calendarId?: string;
     stepDurations?: Record<string, number>; // stepId -> duration
@@ -291,6 +293,13 @@ export interface Project {
   reportingPeriods?: {
     baseDate: string;
     duration: 'week' | 'month';
+    numberOfPeriods: number;
+    periods: { id: string; startDate: string; endDate: string; name: string; status: 'open' | 'closed' }[];
+    currentPeriodId?: string;
+  };
+  progressPeriods?: {
+    baseDate: string;
+    duration: 'week';
     numberOfPeriods: number;
     periods: { id: string; startDate: string; endDate: string; name: string; status: 'open' | 'closed' }[];
     currentPeriodId?: string;
@@ -463,4 +472,77 @@ export interface ChangeRecord {
   eacAmount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProgressPackage {
+  id: string;
+  projectId: string;
+  packageId: string; // Unique per project (max 20 char)
+  description: string;
+  ruleOfCreditId?: string;
+  attributes?: Record<string, string>; // Map of attrId to valueId
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProgressItem {
+  id: string;
+  projectId: string;
+  packageId: string; // The user-facing ID of the package
+  packageDocId: string; // The Firestore ID of the package
+  itemId: string; // Unique per package
+  description: string;
+  costCodeId: string;
+  totalQty: number;
+  unit: string;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  phasingMethod: 'Auto' | 'Manual';
+  phasingCurve: 'Scurve' | 'Bell' | 'front load' | 'back load' | 'even';
+  projectAttributes?: Record<string, string>;
+  enterpriseAttributes?: Record<string, string>;
+  currentStartDate?: string;
+  currentEndDate?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProgressReportingPeriod {
+  id: string;
+  projectId: string;
+  periodName: string;
+  startDate: string;
+  endDate: string;
+  status: 'Open' | 'Closed';
+  createdAt: string;
+}
+
+export interface ProgressAttribute {
+  id: string;
+  projectId: string;
+  title: string;
+  type: 'text' | 'dropdown' | 'date' | 'number';
+  values?: { id: string; description: string }[];
+}
+
+export interface RuleOfCredit {
+  id: string;
+  projectId: string;
+  ruleId: string; // Max 20 chars
+  description: string;
+  packageId?: string;
+  userField1?: string;
+  userField2?: string;
+  userField3?: string;
+  userField4?: string;
+  userField5?: string;
+  steps?: RuleOfCreditStep[];
+  createdAt: string;
+}
+
+export interface RuleOfCreditStep {
+  id: string;
+  orderNo: number; // decimal, max 10
+  description: string; // max 100
+  weight: number; // decimal
 }

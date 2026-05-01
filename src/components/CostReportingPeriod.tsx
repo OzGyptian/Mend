@@ -609,7 +609,6 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10">
-                      <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 w-16">ID</th>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Period Name</th>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Start Date</th>
                       <th className="p-3 text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">End Date</th>
@@ -620,7 +619,6 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
                   <tbody className="divide-y divide-gray-100 dark:divide-white/5">
                     {periods.map(period => (
                       <tr key={period.id} className="hover:bg-gray-50 dark:hover:bg-white/5">
-                        <td className="p-3 text-sm font-mono dark:text-white">{period.id}</td>
                         <td className="p-3">
                           <input 
                             type="text" 

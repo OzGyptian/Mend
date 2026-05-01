@@ -18,13 +18,16 @@ import {
   Plus, 
   Search, 
   Download, 
+  Upload,
   Trash2, 
   Calendar as CalendarIcon,
   Clock,
   CheckCircle2,
   Activity,
-  ShoppingCart
+  ShoppingCart,
+  Calculator
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { recalculatePlannedDates, recalculateForecastDates } from '../lib/procurementUtils';
@@ -47,6 +50,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const gridRef = useRef<AgGridReact>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 1. Data Fetching
   useEffect(() => {
@@ -102,7 +106,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
           let updatedStepData = { ...item.stepData };
           
           const stepDataWithPlanned = recalculatePlannedDates(updatedStepData, stepDefinitions, calendar);
-          const finalStepData = recalculateForecastDates(stepDataWithPlanned, stepDefinitions, calendar);
+          const finalStepData = recalculateForecastDates(stepDataWithPlanned, stepDefinitions, calendar, project.cutoffDate);
           
           // Only update if data actually changed
           if (JSON.stringify(item.stepData) !== JSON.stringify(finalStepData)) {
@@ -196,7 +200,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
       return isNaN(date.getTime()) ? val : date.toLocaleDateString();
     };
 
-    const todayStr = new Date().toISOString().split('T')[0];
+    const effectiveCutoffStr = project.cutoffDate || new Date().toISOString().split('T')[0];
 
     const stepCols: (ColGroupDef | ColDef)[] = stepDefinitions.map(step => ({
       headerName: step.name,
@@ -233,7 +237,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
             // params.value is the Date object from valueGetter
             const plannedDate = params.value instanceof Date ? params.value : null;
             const hasActual = !!stepData.actualDate;
-            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < todayStr;
+            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < effectiveCutoffStr;
             
             return cn(
               'text-gray-500 bg-gray-50/30',
@@ -245,7 +249,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
             const stepData = params.data.stepData?.[step.id] || {};
             const plannedDate = params.value instanceof Date ? params.value : null;
             const hasActual = !!stepData.actualDate;
-            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < todayStr;
+            const isDelayed = plannedDate && !hasActual && plannedDate.toISOString().split('T')[0] < effectiveCutoffStr;
             
             if (isDelayed) {
               return { backgroundColor: '#fee2e2' }; // Red color
@@ -262,7 +266,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
             const stepData = params.data.stepData?.[step.id] || {};
             const forecastDateStr = stepData.forecastDate;
             const hasActual = !!stepData.actualDate;
-            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < todayStr;
+            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < effectiveCutoffStr;
             
             return cn(
               'font-semibold text-blue-600',
@@ -273,7 +277,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
             const stepData = params.data.stepData?.[step.id] || {};
             const forecastDateStr = stepData.forecastDate;
             const hasActual = !!stepData.actualDate;
-            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < todayStr;
+            const needsUpdate = forecastDateStr && !hasActual && forecastDateStr < effectiveCutoffStr;
             
             if (needsUpdate) {
               return { backgroundColor: '#fef3c7' }; // Yellow color
@@ -345,7 +349,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
     }
     
     if (needsForecastRecalc) {
-      updatedStepData = recalculateForecastDates(updatedStepData, stepDefinitions, calendar);
+      updatedStepData = recalculateForecastDates(updatedStepData, stepDefinitions, calendar, project.cutoffDate);
     }
 
     try {
@@ -382,7 +386,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
 
       // Recalculate scheduled dates immediately
       const initialStepDataWithPlanned = recalculatePlannedDates(initialStepData, stepDefinitions, calendar);
-      const finalInitialStepData = recalculateForecastDates(initialStepDataWithPlanned, stepDefinitions, calendar);
+      const finalInitialStepData = recalculateForecastDates(initialStepDataWithPlanned, stepDefinitions, calendar, project.cutoffDate);
 
       const now = new Date().toISOString();
       const path = 'procurementItems';
@@ -422,6 +426,212 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
     }
   };
 
+  const handleCutoffDateChange = async (newDate: string) => {
+    try {
+      await updateDoc(doc(db, 'projects', project.id), {
+        cutoffDate: newDate,
+        dateLastModified: new Date().toISOString()
+      });
+      // Trigger a batch update for all items to recalculate based on new cutoff
+      await handleRecalculateAll(newDate);
+      toast.success('Cut-off date updated and schedule recalculated');
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to update cut-off date');
+    }
+  };
+
+  const handleRecalculateAll = async (cutoffOverride?: string) => {
+    const targetCutoff = cutoffOverride || project.cutoffDate || new Date().toISOString().split('T')[0];
+    const batch = writeBatch(db);
+    let hasChanges = false;
+    
+    items.forEach(item => {
+      const calendar = calendars.find(c => c.id === item.calendarId) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
+      const stepDataWithPlanned = recalculatePlannedDates(item.stepData, stepDefinitions, calendar);
+      const finalStepData = recalculateForecastDates(stepDataWithPlanned, stepDefinitions, calendar, targetCutoff);
+      
+      if (JSON.stringify(item.stepData) !== JSON.stringify(finalStepData)) {
+        batch.update(doc(db, 'procurementItems', item.id), {
+          stepData: finalStepData,
+          updatedAt: new Date().toISOString()
+        });
+        hasChanges = true;
+      }
+    });
+
+    if (hasChanges) {
+      try {
+        await batch.commit();
+        if (!cutoffOverride) toast.success('All schedules recalculated');
+      } catch (e) {
+        console.error(e);
+        toast.error('Failed to recalculate items');
+      }
+    } else if (!cutoffOverride) {
+      toast.info('No changes detected in schedules');
+    }
+  };
+
+  const handleExportExcel = () => {
+    try {
+      const allAttributes = [
+        ...(enterprise.procurementAttributes || []),
+        ...(project.procurementAttributes || [])
+      ].filter(attr => attr.title);
+
+      const exportData = items.map(item => {
+        const row: Record<string, any> = {
+          'Package ID': item.packageId,
+          'Description': item.description,
+          'Calendar': calendars.find(c => c.id === item.calendarId)?.name || item.calendarId
+        };
+
+        // Attributes
+        allAttributes.forEach(attr => {
+          const valId = item.enterpriseAttributes?.[attr.id] || item.projectAttributes?.[attr.id];
+          row[attr.title] = attr.values?.find(v => v.id === valId)?.description || valId || '';
+        });
+
+        // Steps
+        stepDefinitions.forEach(step => {
+          const sd = item.stepData?.[step.id] || {};
+          row[`${step.name} - Planned`] = sd.plannedDate || '';
+          row[`${step.name} - Forecast`] = sd.forecastDate || '';
+          row[`${step.name} - Actual`] = sd.actualDate || '';
+          row[`${step.name} - Dur`] = sd.planDuration || '';
+          row[`${step.name} - F.Dur`] = sd.forecastDuration || '';
+        });
+
+        return row;
+      });
+
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Procurement');
+      XLSX.writeFile(wb, `Procurement_${project.projectName}_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success('Excel file exported');
+    } catch (e) {
+      console.error(e);
+      toast.error('Export failed');
+    }
+  };
+
+  const handleImportExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+
+        if (data.length === 0) {
+          toast.error('No data found in Excel sheet');
+          return;
+        }
+
+        const batch = writeBatch(db);
+        const now = new Date().toISOString();
+        const allAttributes = [
+          ...(enterprise.procurementAttributes || []),
+          ...(project.procurementAttributes || [])
+        ].filter(attr => attr.title);
+
+        let updateCount = 0;
+        let createCount = 0;
+
+        for (const row of data) {
+          const packageId = row['Package ID'] || row['packageId'];
+          if (!packageId) continue;
+
+          const description = row['Description'] || row['description'] || '';
+          const calendarName = row['Calendar'] || row['calendar'];
+          const calendarId = calendars.find(c => c.name === calendarName || c.id === calendarName)?.id || project.procurementDefaults?.calendarId || (calendars.length > 0 ? calendars[0].id : '');
+          
+          const existingItem = items.find(i => i.packageId === packageId);
+          
+          // Map Attributes
+          const enterpriseAttributes: Record<string, string> = { ...existingItem?.enterpriseAttributes };
+          const projectAttributes: Record<string, string> = { ...existingItem?.projectAttributes };
+
+          allAttributes.forEach(attr => {
+            const excelVal = row[attr.title];
+            if (excelVal !== undefined) {
+              const matchedVal = attr.values?.find(v => v.description === excelVal || v.id === excelVal)?.id || excelVal;
+              if (enterprise.procurementAttributes?.some(ea => ea.id === attr.id)) {
+                enterpriseAttributes[attr.id] = matchedVal;
+              } else {
+                projectAttributes[attr.id] = matchedVal;
+              }
+            }
+          });
+
+          // Map Step Data
+          const stepData: Record<string, any> = { ...existingItem?.stepData };
+          stepDefinitions.forEach(step => {
+            if (!stepData[step.id]) stepData[step.id] = {};
+            
+            const planned = row[`${step.name} - Planned`];
+            const forecast = row[`${step.name} - Forecast`];
+            const actual = row[`${step.name} - Actual`];
+            const dur = row[`${step.name} - Dur`];
+            const fdur = row[`${step.name} - F.Dur`];
+
+            if (planned !== undefined) stepData[step.id].plannedDate = planned;
+            if (forecast !== undefined) stepData[step.id].forecastDate = forecast;
+            if (actual !== undefined) stepData[step.id].actualDate = actual;
+            if (dur !== undefined) stepData[step.id].planDuration = Number(dur) || 0;
+            if (fdur !== undefined) stepData[step.id].forecastDuration = Number(fdur) || 0;
+          });
+
+          // Recalculate
+          const cal = calendars.find(c => c.id === calendarId) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
+          const afterPlanned = recalculatePlannedDates(stepData, stepDefinitions, cal);
+          const finalSD = recalculateForecastDates(afterPlanned, stepDefinitions, cal, project.cutoffDate);
+
+          if (existingItem) {
+            batch.update(doc(db, 'procurementItems', existingItem.id), {
+              description,
+              calendarId,
+              enterpriseAttributes,
+              projectAttributes,
+              stepData: finalSD,
+              updatedAt: now
+            });
+            updateCount++;
+          } else {
+            const newItemRef = doc(collection(db, 'procurementItems'));
+            batch.set(newItemRef, {
+              projectId: project.id,
+              packageId,
+              description,
+              calendarId,
+              enterpriseAttributes,
+              projectAttributes,
+              stepData: finalSD,
+              createdAt: now,
+              updatedAt: now
+            });
+            createCount++;
+          }
+        }
+
+        await batch.commit();
+        toast.success(`Import complete: ${createCount} added, ${updateCount} updated`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (e) {
+        console.error(e);
+        toast.error('Import failed - check console for details');
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#0a0a0a]">
       {/* Header */}
@@ -439,6 +649,15 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 rounded-xl mr-2">
+            <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-tight">Cut-Off:</span>
+            <input 
+              type="date" 
+              value={project.cutoffDate || new Date().toISOString().split('T')[0]} 
+              onChange={(e) => handleCutoffDateChange(e.target.value)}
+              className="bg-transparent text-xs font-bold text-amber-900 dark:text-amber-200 focus:outline-none cursor-pointer"
+            />
+          </div>
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input 
@@ -449,7 +668,42 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
               className="pl-9 pr-4 py-2 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-xs w-64 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:text-white transition-all shadow-sm"
             />
           </div>
-          <button className="p-2.5 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-500 hover:text-blue-600 transition-all shadow-sm"><Download className="w-4 h-4" /></button>
+          
+          <div className="h-8 w-px bg-gray-200 dark:bg-white/10 mx-1" />
+
+          <button 
+            onClick={() => handleRecalculateAll()}
+            className="flex items-center gap-2 px-3 py-2.5 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-500 hover:text-blue-600 transition-all shadow-sm group"
+            title="Recalculate All"
+          >
+            <Calculator className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-tight hidden lg:inline">Calculate</span>
+          </button>
+
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-2.5 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-400 hover:text-emerald-600 transition-all shadow-sm group"
+            title="Import Excel"
+          >
+            <Upload className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-tight hidden lg:inline">Import</span>
+          </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImportExcel} 
+            accept=".xlsx, .xls" 
+            className="hidden" 
+          />
+
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-3 py-2.5 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-400 hover:text-blue-600 transition-all shadow-sm"
+            title="Export Excel"
+          >
+            <Download className="w-4 h-4" />
+            <span className="text-[10px] font-bold uppercase tracking-tight hidden lg:inline">Export</span>
+          </button>
           {selectedIds.size > 0 && (
             <button 
               onClick={handleDeleteSelected}
