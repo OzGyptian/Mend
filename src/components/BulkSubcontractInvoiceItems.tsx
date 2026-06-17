@@ -443,7 +443,86 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
         rowData={rowData}
         columnDefs={columnDefs}
         pinnedBottomRowData={pinnedBottomRowData}
-        onImport={() => fileInputRef.current?.click()}
+        gridRef={gridRef}
+        onImportData={(excelData) => {
+          const processImport = async () => {
+            const toastId = toast.loading('Importing invoice items...');
+            try {
+              // Duplicate check in file
+              const idsInFile = new Set<string>();
+              const duplicates = [];
+              excelData.forEach((row, idx) => {
+                const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '').trim();
+                const itemNo = String(row['Item No.'] || row.itemNo || '').trim();
+                if (orderId && invoiceNo && itemNo) {
+                  const key = `${orderId.toLowerCase()}_${invoiceNo.toLowerCase()}_${itemNo.toLowerCase()}`;
+                  if (idsInFile.has(key)) duplicates.push({ row: idx + 1, key });
+                  idsInFile.add(key);
+                }
+              });
+
+              if (duplicates.length > 0) {
+                toast.error(`Duplicate items found in file: ${duplicates.map(d => d.key).join(', ')}`, { id: toastId });
+                return;
+              }
+
+              const chunkSize = 400;
+              const totalChunks = Math.ceil(excelData.length / chunkSize);
+              let importedCount = 0;
+
+              for (let i = 0; i < totalChunks; i++) {
+                const chunk = excelData.slice(i * chunkSize, (i + 1) * chunkSize);
+                const batch = writeBatch(db);
+
+                for (const row of chunk) {
+                  const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                  const targetSub = subcontracts.find(s => s.orderId === orderId);
+                  if (!targetSub) continue;
+
+                  const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '');
+                  if (!invoiceNo) continue;
+
+                  const invoice = invoices.find(inv => inv.subcontractId === targetSub.id && inv.invoiceId === invoiceNo);
+                  if (!invoice) continue;
+
+                  const itemNo = String(row['Item No.'] || row.itemNo || '');
+                  if (!itemNo) continue;
+
+                  const items = invoice.items || [];
+                  const itemIndex = items.findIndex(it => it.itemNo === itemNo);
+                  if (itemIndex === -1) continue;
+
+                  const updatedItems = [...items];
+                  const item = { ...updatedItems[itemIndex] };
+                  
+                  if (row['Claim Value'] !== undefined || row.periodicClaimValue !== undefined) item.periodicClaimValue = Number(row['Claim Value'] || row.periodicClaimValue || 0);
+                  if (row['Certified Value'] !== undefined || row.periodicCertifiedValue !== undefined) item.periodicCertifiedValue = Number(row['Certified Value'] || row.periodicCertifiedValue || 0);
+                  
+                  updatedItems[itemIndex] = item;
+                  
+                  // Calculate new invoice totals
+                  const invoiceTotal = updatedItems.reduce((sum, it) => sum + (it.periodicClaimValue || 0), 0);
+                  const invoiceCertifiedTotal = updatedItems.reduce((sum, it) => sum + (it.periodicCertifiedValue || 0), 0);
+
+                  batch.update(doc(db, 'invoices', invoice.id), {
+                    items: updatedItems,
+                    totalAmount: invoiceTotal,
+                    certifiedAmount: invoiceCertifiedTotal,
+                    updatedAt: new Date().toISOString()
+                  });
+                  importedCount++;
+                }
+                await batch.commit();
+              }
+              toast.success(`Imported ${importedCount} invoice items.`, { id: toastId });
+            } catch (error: any) {
+              console.error("Import error:", error);
+              toast.error("Failed to import invoice items: " + error.message, { id: toastId });
+            }
+          };
+          processImport();
+        }}
         selectedCount={selectedIds.length}
         onBulkUpdate={() => setIsBulkUpdateOpen(true)}
         gridProps={{

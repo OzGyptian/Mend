@@ -110,6 +110,7 @@ export interface SubcontractLineItem {
   projectId: string;
   itemNo: string;
   description: string;
+  activityId?: string;
   costCodeId?: string;
   date?: string;
   qty: number;
@@ -188,9 +189,12 @@ export interface Risk {
   strategy: 'Avoid' | 'Mitigate' | 'Transfer' | 'Accept';
   initiator: string; // max 50 char
   reference: string; // max 50 char
-  exposure: number; // Formula sum of children (Initial EMV)
-  mitigation: number; // Formula sum of children (Mitigation Cost)
-  residualExposure: number; // Formula sum of children (Residual EMV)
+  exposure: number; // Formula sum of children (Beta Pert Exposure)
+  minImpactTotal?: number;
+  mostLikelyImpactTotal?: number;
+  maxImpactTotal?: number;
+  mitigation: number; // Legacy, kept for compatibility
+  residualExposure: number; // Legacy, kept for compatibility
   periodId?: string;
   enterpriseAttributes?: Record<string, string>;
   projectAttributes?: Record<string, string>;
@@ -207,10 +211,10 @@ export interface RiskRecord {
   enterpriseAttributes: Record<string, string>;
   projectAttributes: Record<string, string>;
   probability: number; // 0-1 (e.g. 0.4 for 40%)
-  impactAmount: number; // $ Initial Impact
-  mitigationCost: number; // $ Cost to mitigate
-  residualProbability: number; // 0-1 (e.g. 0.15 for 15%)
-  residualImpactAmount: number; // $ Residual Impact
+  minImpactAmount: number; // $ Min Impact
+  mostLikelyImpactAmount: number; // $ Most Likely Impact
+  maxImpactAmount: number; // $ Max Impact
+  betaPertImpactAmount: number; // $ (Min + 4*ML + Max) / 6
   createdAt: string;
   updatedAt: string;
 }
@@ -271,6 +275,10 @@ export interface Project {
   projectManagerName?: string;
   dateCreated: string;
   dateLastModified: string;
+  createdBy?: string;
+  createdByEmail?: string;
+  modifiedBy?: string;
+  modifiedByEmail?: string;
   categories?: string[];
   controlAccounts?: string[];
   orderNumbers?: string[];
@@ -363,6 +371,9 @@ export interface CostCode {
   projectAttributes: Record<string, string>;
   eacMethod: 'Manual' | 'Change Management' | 'ETC Details' | 'Sub-Contract Management';
   sortOrder: number;
+  activityId?: string;
+  plannedStartDate?: string;
+  plannedEndDate?: string;
 
   // Budget Fields
   baselineBudget: number;
@@ -419,6 +430,7 @@ export interface EtcDetail {
   phasingMethod: 'Manual' | 'Auto-Phase';
   phasingStartDate: string;
   phasingEndDate: string;
+  activityId?: string;
   phasingUnit: 'Daily' | 'Weekly' | 'Monthly' | 'Total' | 'Profile';
   phasingQty: number;
   enterpriseAttributes?: Record<string, string>;
@@ -480,7 +492,12 @@ export interface ProgressPackage {
   packageId: string; // Unique per project (max 20 char)
   description: string;
   ruleOfCreditId?: string;
+  unit?: string;
   attributes?: Record<string, string>; // Map of attrId to valueId
+  defaultStartDate?: string;
+  defaultEndDate?: string;
+  defaultPhasingMethod?: 'Auto' | 'Manual';
+  defaultPhasingCurve?: 'Scurve' | 'Bell' | 'front load' | 'back load' | 'even';
   createdAt: string;
   updatedAt: string;
 }
@@ -491,18 +508,28 @@ export interface ProgressItem {
   packageId: string; // The user-facing ID of the package
   packageDocId: string; // The Firestore ID of the package
   itemId: string; // Unique per package
+  activityId?: string;
   description: string;
   costCodeId: string;
   totalQty: number;
-  unit: string;
+  totalQtyPrevious?: number;
+  earnedQtyPrevious?: number;
   plannedStartDate: string;
   plannedEndDate: string;
   phasingMethod: 'Auto' | 'Manual';
   phasingCurve: 'Scurve' | 'Bell' | 'front load' | 'back load' | 'even';
   projectAttributes?: Record<string, string>;
   enterpriseAttributes?: Record<string, string>;
+  ruleOfCreditId?: string;
+  ruleOfCreditProgress?: Record<string, number>; // stepId -> progress percentage (0-100)
+  periodValues?: Record<string, number>; // periodId -> qty
   currentStartDate?: string;
   currentEndDate?: string;
+  currentPhasingMethod?: 'Auto' | 'Manual';
+  currentPhasingCurve?: 'Scurve' | 'Bell' | 'front load' | 'back load' | 'even';
+  currentPeriodValues?: Record<string, number>;
+  actualPeriodValues?: Record<string, number>;
+  sortOrder?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -545,4 +572,18 @@ export interface RuleOfCreditStep {
   orderNo: number; // decimal, max 10
   description: string; // max 100
   weight: number; // decimal
+}
+
+export interface ScheduleItem {
+  id: string;
+  projectId: string;
+  activityId: string;
+  description: string;
+  baselineStartDate: string;
+  baselineEndDate: string;
+  plannedStartDate: string;
+  plannedEndDate: string;
+  currentStartDate: string;
+  currentEndDate: string;
+  updatedAt: string;
 }

@@ -25,7 +25,8 @@ import {
   CheckCircle2,
   Activity,
   ShoppingCart,
-  Calculator
+  Calculator,
+  ShieldCheck
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { cn } from '../lib/utils';
@@ -197,7 +198,11 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
       } else {
         date = new Date(val);
       }
-      return isNaN(date.getTime()) ? val : date.toLocaleDateString();
+      if (isNaN(date.getTime())) return val;
+      const d = String(date.getDate()).padStart(2, '0');
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const y = date.getFullYear();
+      return `${d}/${m}/${y}`;
     };
 
     const effectiveCutoffStr = project.cutoffDate || new Date().toISOString().split('T')[0];

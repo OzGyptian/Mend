@@ -5,7 +5,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { auth } from '../firebase';
 import ProjectCostCodeAttributes from './ProjectCostCodeAttributes';
-import ProjectLineItemAttributes from './ProjectLineItemAttributes';
 import ProjectResourceRates from './ProjectResourceRates';
 import CostReportingPeriod from './CostReportingPeriod';
 import CostDashboard from './CostDashboard';
@@ -28,7 +27,7 @@ interface CostManagementProps {
   setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-type CostTab = 'costCodes' | 'timephasing' | 'actualCost' | 'baselineBudget' | 'etcDetails' | 'costElements' | 'costCodeAttributes' | 'lineItemAttributes' | 'reportingPeriod' | 'resourceRates';
+type CostTab = 'costCodes' | 'timephasing' | 'actualCost' | 'baselineBudget' | 'etcDetails' | 'costElements' | 'costCodeAttributes' | 'reportingPeriod' | 'resourceRates';
 
 const CostManagement: React.FC<CostManagementProps> = ({ 
   project, 
@@ -80,7 +79,6 @@ const CostManagement: React.FC<CostManagementProps> = ({
       items: [
         { id: 'reportingPeriod', label: 'Cost Reporting Period', icon: <Calendar className="w-4 h-4" /> },
         { id: 'costCodeAttributes', label: 'Cost Code Attributes', icon: <Database className="w-4 h-4" /> },
-        { id: 'lineItemAttributes', label: 'Project Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'resourceRates', label: 'Project Resource Rates', icon: <DollarSign className="w-4 h-4" /> },
         { id: 'baselineBudget', label: 'Baseline Budget', icon: <Target className="w-4 h-4" /> },
         { id: 'actualCost', label: 'Actual Cost', icon: <DollarSign className="w-4 h-4" /> },
@@ -91,7 +89,7 @@ const CostManagement: React.FC<CostManagementProps> = ({
 
   const filteredSections = sections.filter(s => s.visible !== false);
 
-  const isSettingsTab = ['baselineBudget', 'etcDetails', 'costElements', 'costCodeAttributes', 'lineItemAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
+  const isSettingsTab = ['baselineBudget', 'etcDetails', 'costElements', 'costCodeAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
 
   const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === project.reportingPeriods?.currentPeriodId);
 
@@ -201,7 +199,6 @@ const CostManagement: React.FC<CostManagementProps> = ({
             </div>
           )}
           {activeTab === 'costCodeAttributes' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectCostCodeAttributes project={project} /></div>}
-          {activeTab === 'lineItemAttributes' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectLineItemAttributes project={project} /></div>}
           {activeTab === 'resourceRates' && <div className="flex-1 flex flex-col overflow-hidden"><ProjectResourceRates project={project} /></div>}
           {activeTab === 'reportingPeriod' && <div className="flex-1 flex flex-col overflow-hidden"><CostReportingPeriod project={project} /></div>}
         </div>

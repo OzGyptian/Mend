@@ -18,8 +18,14 @@ import {
   Hash,
   ChevronUp,
   ArrowLeft,
-  Settings
+  Settings,
+  Download,
+  Upload,
+  RefreshCw,
+  X
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
+import { toast } from 'sonner';
 import { 
   collection, 
   query, 
@@ -74,6 +80,134 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
 
   const gridRef = useRef<AgGridReact>(null);
   const itemsGridRef = useRef<AgGridReact>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [importPreview, setImportPreview] = useState<{ type: 'invoices', data: any[] } | null>(null);
+
+  const dateToISO = (date: Date) => {
+    try {
+      return date.toISOString().split('T')[0];
+    } catch {
+      return '';
+    }
+  };
+
+  const handleExport = () => {
+    if (gridRef.current?.api) {
+      gridRef.current.api.exportDataAsExcel({
+        fileName: `${project.projectCode}_Invoices_${new Date().toISOString().split('T')[0]}.xlsx`
+      });
+    }
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+        
+        if (data.length === 0) {
+          toast.error("The file is empty.");
+          return;
+        }
+
+        setImportPreview({ type: 'invoices', data });
+      } catch (error) {
+        console.error('Error reading import file:', error);
+        toast.error('Failed to read the import file.');
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const completeImport = async () => {
+    if (!importPreview) return;
+    const { data } = importPreview;
+    const toastId = toast.loading('Importing invoices...');
+    
+    try {
+      const batch = writeBatch(db);
+      const subcontractsMap = new Map(subcontracts.map(s => [s.orderId.toLowerCase(), s]));
+
+      for (const row of data) {
+        const orderId = String(row['Order ID'] || row.orderId || '').trim();
+        const invoiceNo = String(row['Invoice No.'] || row.invoiceId || row.ID || row.id || '').trim();
+        
+        if (!orderId || !invoiceNo) continue;
+
+        const targetSub = subcontractsMap.get(orderId.toLowerCase());
+        if (!targetSub) continue;
+
+        const existingInvoice = invoices.find(i => i.subcontractId === targetSub.id && i.invoiceId === invoiceNo);
+        
+        const invoiceData: any = {
+          description: String(row['Invoice Name'] || row.description || row.Description || 'Imported Invoice'),
+          status: (row['Status'] || row.status || 'Draft') as any,
+          submittedDate: row['Submit Date'] ? dateToISO(new Date(row['Submit Date'])) : '',
+          certifiedDate: row['Approve Date'] ? dateToISO(new Date(row['Approve Date'])) : '',
+          paymentDate: row['Payment Date'] ? dateToISO(new Date(row['Payment Date'])) : '',
+          updatedAt: new Date().toISOString()
+        };
+
+        if (existingInvoice) {
+          batch.update(doc(db, 'invoices', existingInvoice.id), invoiceData);
+        } else {
+          const newRef = doc(collection(db, 'invoices'));
+          batch.set(newRef, {
+            ...invoiceData,
+            id: newRef.id,
+            invoiceId: invoiceNo,
+            subcontractId: targetSub.id,
+            projectId: project.id,
+            enterpriseId: enterprise.id,
+            vendorId: targetSub.vendorId,
+            vendorName: targetSub.vendorName,
+            totalAmount: 0,
+            certifiedAmount: 0,
+            items: [],
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+
+      await batch.commit();
+      toast.success('Successfully imported invoices.', { id: toastId });
+    } catch (error) {
+      console.error('Error committing import:', error);
+      toast.error('Failed to commit import.', { id: toastId });
+    }
+    setImportPreview(null);
+  };
+
+  const { duplicateIds, hasImportDuplicates } = useMemo(() => {
+    if (!importPreview) return { duplicateIds: [], hasImportDuplicates: false };
+    
+    const idsInFile = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    
+    importPreview.data.forEach(row => {
+      const orderId = String(row['Order ID'] || row.orderId || '').trim();
+      const invoiceNo = String(row['Invoice No.'] || row.invoiceId || row.ID || row.id || '').trim();
+      if (orderId && invoiceNo) {
+        const key = `${orderId.toLowerCase()}_${invoiceNo.toLowerCase()}`;
+        if (idsInFile.has(key)) {
+          fileDuplicates.add(key);
+        }
+        idsInFile.add(key);
+      }
+    });
+
+    const duplicateList = Array.from(fileDuplicates);
+    return { duplicateIds: duplicateList, hasImportDuplicates: duplicateList.length > 0 };
+  }, [importPreview]);
 
   useEffect(() => {
     if (!project.id) return;
@@ -338,6 +472,30 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
           <p className="text-sm text-gray-900 dark:text-gray-400">Manage subcontractor claims, certifications, and payments.</p>
         </div>
         <div className="flex gap-2">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleImport} 
+            accept=".xlsx,.xls" 
+            className="hidden" 
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+            title="Import Excel"
+          >
+            <Upload className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={handleExport}
+            className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
+            title="Export Excel"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+          
+          <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
+          
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input 
@@ -358,6 +516,98 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
           </Button>
         </div>
       </div>
+
+      {/* Import Preview Modal */}
+      <AnimatePresence>
+        {importPreview && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white dark:bg-[#1a1a1a] rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden border border-gray-200 dark:border-white/10"
+            >
+              <div className="p-8 border-b border-gray-100 dark:border-white/5 flex justify-between items-center bg-gray-50/50 dark:bg-white/5">
+                <div>
+                  <h2 className="text-2xl font-bold dark:text-white uppercase tracking-tight">Review Invoices Import</h2>
+                  <p className="text-sm text-gray-500 mt-1 uppercase font-bold tracking-widest opacity-60">Review data before final processing</p>
+                </div>
+                {hasImportDuplicates && (
+                  <div className="flex items-center gap-2 px-4 py-2 bg-red-50 dark:bg-red-500/10 text-red-600 rounded-xl animate-pulse">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-widest">Duplicates detected: {duplicateIds.length}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-auto p-8">
+                {hasImportDuplicates && (
+                  <div className="mb-6 p-6 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl">
+                    <h3 className="text-red-800 dark:text-red-400 font-bold text-sm uppercase tracking-widest mb-4">Duplicate Invoices Detected in file</h3>
+                    <p className="text-xs text-red-600 dark:text-red-400/80 mb-4 uppercase tracking-wider font-medium leading-relaxed">
+                      The following duplicate (Subcontract + Invoice No) combinations were found in your Excel file. Duplicates are NOT allowed. Please resolve these in your Excel file before importing.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {duplicateIds.map(id => (
+                        <span key={id} className="px-3 py-1 bg-white dark:bg-black/40 text-red-600 text-[10px] font-mono font-bold rounded-lg border border-red-200 dark:border-red-500/30">
+                          {id}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <table className="w-full text-left border-collapse rounded-2xl overflow-hidden">
+                  <thead>
+                    <tr className="bg-gray-100 dark:bg-white/5">
+                      {Object.keys(importPreview.data[0] || {}).map(key => (
+                        <th key={key} className="px-4 py-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-200 dark:border-white/10">{key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.data.map((row, i) => {
+                      const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                      const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '').trim();
+                      const key = `${orderId.toLowerCase()}_${invoiceNo.toLowerCase()}`;
+                      const isDup = duplicateIds.includes(key);
+
+                      return (
+                        <tr key={i} className={cn(
+                          "border-b border-gray-100 dark:border-white/5",
+                          isDup ? "bg-red-50/50 dark:bg-red-500/10" : ""
+                        )}>
+                          {Object.values(row).map((val: any, j) => (
+                            <td key={j} className="px-4 py-4 text-xs dark:text-gray-300 font-medium">
+                              {val instanceof Date ? val.toLocaleDateString() : String(val)}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="p-8 bg-gray-50 dark:bg-white/5 border-t border-gray-100 dark:border-white/10 flex gap-4">
+                <button 
+                  onClick={() => setImportPreview(null)}
+                  className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={completeImport}
+                  disabled={hasImportDuplicates}
+                  className="flex-[2] py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  Complete Import ({importPreview.data.length} records)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Main Content - Top/Bottom Split */}
       <div className="flex-1 flex flex-col overflow-hidden">

@@ -351,8 +351,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     paymentType: 'LumpSum',
     awardDate: new Date().toISOString().split('T')[0],
     vendorId: '',
-    vendorName: '',
-    vendorUsers: []
+    vendorName: ''
   });
   const [invoiceFormData, setInvoiceFormData] = useState({
     description: '',
@@ -382,6 +381,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
 
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'single' | 'bulk'; id?: string; name?: string; count?: number } | null>(null);
   const [entryMethod, setEntryMethod] = useState<'Cumulative' | 'Periodic'>('Cumulative');
+  const [importPreview, setImportPreview] = useState<{ type: 'subcontracts' | 'lineItems', data: any[] } | null>(null);
 
   const gridRef = useRef<AgGridReact>(null);
   const lineItemsGridRef = useRef<AgGridReact>(null);
@@ -995,25 +995,17 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         children: validEnterpriseSubcontractAttrs.map(attr => ({
           field: `enterpriseAttributes.${attr.id}`,
           headerName: attr.title || `Attribute ${attr.id}`,
-          width: 150,
+          width: 200,
           editable: true,
           enableRowGroup: true,
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: ['', ...(attr.values?.map(v => v.id) || [])],
-            formatValue: (id: string) => {
-              if (!id) return '';
-              const match = attr.values?.find(v => v.id === id);
-              return match ? `${match.id} - ${match.description}` : id;
-            },
-            searchType: 'match',
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
             allowTyping: true,
             filterList: true
-          },
-          valueFormatter: (params: any) => {
-            if (!params.value) return '';
-            const match = attr.values?.find(v => v.id === params.value);
-            return match ? `${match.id} - ${match.description}` : params.value;
           }
         }))
       };
@@ -1030,25 +1022,17 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         children: validProjectSubcontractAttrs.map(attr => ({
           field: `projectAttributes.${attr.id}`,
           headerName: attr.title || `Attribute ${attr.id}`,
-          width: 150,
+          width: 200,
           editable: true,
           enableRowGroup: true,
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: ['', ...(attr.values?.map(v => v.id) || [])],
-            formatValue: (id: string) => {
-              if (!id) return '';
-              const match = attr.values?.find(v => v.id === id);
-              return match ? `${match.id} - ${match.description}` : id;
-            },
-            searchType: 'match',
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
             allowTyping: true,
             filterList: true
-          },
-          valueFormatter: (params: any) => {
-            if (!params.value) return '';
-            const match = attr.values?.find(v => v.id === params.value);
-            return match ? `${match.id} - ${match.description}` : params.value;
           }
         }))
       };
@@ -1129,8 +1113,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
           paymentType: 'LumpSum',
           awardDate: new Date().toISOString().split('T')[0],
           vendorId: '',
-          vendorName: '',
-          vendorUsers: []
+          vendorName: ''
         });
         toast.success('Subcontract updated successfully.');
       } catch (error) {
@@ -1173,8 +1156,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         paymentType: 'LumpSum',
         awardDate: new Date().toISOString().split('T')[0],
         vendorId: '',
-        vendorName: '',
-        vendorUsers: []
+        vendorName: ''
       });
       toast.success('Subcontract added successfully.');
     } catch (error) {
@@ -1217,19 +1199,39 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = async (evt) => {
+    reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-
-        const batch = writeBatch(db);
         
+        if (data.length === 0) {
+          toast.error("The file is empty.");
+          return;
+        }
+
+        setImportPreview({ type: 'subcontracts', data });
+      } catch (error) {
+        console.error('Error reading import file:', error);
+        toast.error('Failed to read the import file.');
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const completeImport = async () => {
+    if (!importPreview) return;
+    const { type, data } = importPreview;
+    
+    if (type === 'subcontracts') {
+      try {
+        const batch = writeBatch(db);
         data.forEach(row => {
-          const orderId = row['Order ID'] || row.orderId;
-          const orderName = row['Order Name'] || row.orderName || '';
+          const orderId = row['Order ID'] || row.orderId || row.ID || row.id;
+          const orderName = row['Order Name'] || row.orderName || row.Name || row.name || '';
           const vendorName = row['Vendor'] || row.vendorName || '';
           const status = row['Status'] || row.status || 'Active';
           const paymentType = row['Payment Type'] || row.paymentType || 'LumpSum';
@@ -1256,7 +1258,6 @@ export default function SubcontractManagement({ enterprise, project, user, theme
               batch.set(newRef, { 
                 ...subcontractData, 
                 vendorId: '',
-                vendorUsers: [],
                 totalAmount: 0,
                 lineItems: [],
                 createdAt: new Date().toISOString(),
@@ -1265,40 +1266,22 @@ export default function SubcontractManagement({ enterprise, project, user, theme
             }
           }
         });
-
         await batch.commit();
         toast.success('Import successful.');
       } catch (error) {
-        console.error('Error importing:', error);
-        toast.error('Failed to import. Check format.');
+        console.error('Error committing import:', error);
+        toast.error('Failed to commit import.');
       }
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    };
-    reader.readAsBinaryString(file);
+    }
+    setImportPreview(null);
   };
 
   const handleExport = () => {
-    const exportData = subcontracts.map(s => {
-      const calcs = getSubcontractCalculations(s);
-      return {
-        'Order ID': s.orderId,
-        'Order Name': s.orderName,
-        'Vendor': s.vendorName,
-        'Status': s.status,
-        'Payment Type': s.paymentType,
-        'Award Date': s.awardDate,
-        'Original Amount': calcs.originalAmount,
-        'Approved Changes': calcs.approvedChanges,
-        'Pending Changes': calcs.pendingChanges,
-        'Total Amount': calcs.totalAmount,
-        'Claimed To Date': calcs.claimedAmountToDate,
-        'Certified To Date': calcs.certifiedAmountToDate
-      };
-    });
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Subcontracts');
-    XLSX.writeFile(wb, `${project.projectCode}_Subcontracts.xlsx`);
+    if (gridRef.current?.api) {
+      gridRef.current.api.exportDataAsExcel({
+        fileName: `${project.projectCode}_Subcontracts_${new Date().toISOString().split('T')[0]}.xlsx`
+      });
+    }
   };
 
   const handleBulkDelete = async () => {
@@ -3124,6 +3107,30 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     }];
   }, [selectedSubcontract, lineItemInvoiceAggregates, project.reportingPeriods]);
 
+  const { duplicateIds, hasImportDuplicates } = useMemo(() => {
+    if (!importPreview) return { duplicateIds: [], hasImportDuplicates: false };
+    
+    const idsInFile = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    
+    importPreview.data.forEach(row => {
+      const id = row['Order ID'] || row.orderId || row.ID || row.id;
+      if (id) {
+        const normalizedId = id.toString().trim().toLowerCase();
+        if (idsInFile.has(normalizedId)) {
+          fileDuplicates.add(id.toString().trim());
+        }
+        idsInFile.add(normalizedId);
+      }
+    });
+
+    const duplicateList = Array.from(fileDuplicates);
+    return { 
+      duplicateIds: duplicateList, 
+      hasImportDuplicates: duplicateList.length > 0 
+    };
+  }, [importPreview]);
+
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -3821,6 +3828,80 @@ export default function SubcontractManagement({ enterprise, project, user, theme
             </motion.div>
           )}
         </AnimatePresence>
+
+        <AnimatePresence>
+          {importPreview && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4">
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col max-h-[90vh]"
+              >
+                <div className="flex justify-between items-start mb-6">
+                  <div>
+                    <h2 className="text-2xl font-bold dark:text-white">Review Import</h2>
+                    <p className="text-gray-900 dark:text-gray-400 text-sm mt-1">
+                      Review the records found in your file. Existing Order IDs will be updated.
+                    </p>
+                  </div>
+                  <button onClick={() => setImportPreview(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors">
+                    <X className="w-5 h-5 text-gray-500" />
+                  </button>
+                </div>
+
+                {hasImportDuplicates && (
+                  <div className="mb-4 p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl flex flex-col gap-2">
+                    <div className="flex items-center gap-3 text-red-600 dark:text-red-400 text-[10px] font-black uppercase tracking-[0.15em]">
+                      <AlertTriangle className="w-4 h-4" />
+                      Duplicate ID found in file
+                    </div>
+                    <div className="text-sm text-red-600 dark:text-red-400 font-medium leading-relaxed">
+                      The following IDs appear multiple times in your excel: <span className="font-bold underline">{duplicateIds.join(', ')}</span>. Please resolve duplicates before importing.
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-auto border border-gray-100 dark:border-white/10 rounded-2xl mb-6 shadow-inner bg-gray-50/50 dark:bg-black/20">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-white dark:bg-[#1a1a1a] sticky top-0 border-b border-gray-200 dark:border-white/10 shadow-sm z-10">
+                      <tr>
+                        {Object.keys(importPreview.data[0] || {}).map(key => (
+                          <th key={key} className="px-4 py-3 font-bold text-gray-900 dark:text-white uppercase tracking-widest text-[10px] bg-white dark:bg-[#1a1a1a]">{key}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                      {importPreview.data.map((row, i) => (
+                        <tr key={i} className="hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors">
+                          {Object.values(row).map((val: any, j) => (
+                            <td key={j} className="px-4 py-3 text-gray-900 dark:text-gray-300 font-medium whitespace-nowrap">{val?.toString()}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex gap-4">
+                  <button 
+                    onClick={() => setImportPreview(null)}
+                    className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={completeImport}
+                    disabled={hasImportDuplicates}
+                    className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    Complete Import ({importPreview.data.length} records)
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Add/Edit Invoice Modal */}
@@ -4075,38 +4156,25 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor</label>
-                  <select 
-                    value={subcontractFormData.vendorId}
-                    onChange={e => {
-                      const vendor = (enterprise.vendors || []).find(v => v.id === e.target.value);
-                      setSubcontractFormData({ 
-                        ...subcontractFormData, 
-                        vendorId: e.target.value,
-                        vendorName: vendor?.name || ''
-                      });
-                    }}
-                    className="w-full p-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
-                  >
-                    <option value="">Select Vendor</option>
-                    {(enterprise.vendors || []).map(v => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor User Emails (Comma separated)</label>
-                  <Input 
-                    value={subcontractFormData.vendorUsers?.join(', ')}
-                    onChange={e => setSubcontractFormData({ 
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor</label>
+                <select 
+                  value={subcontractFormData.vendorId}
+                  onChange={e => {
+                    const vendor = (enterprise.vendors || []).find(v => v.id === e.target.value);
+                    setSubcontractFormData({ 
                       ...subcontractFormData, 
-                      vendorUsers: e.target.value.split(',').map(s => s.trim()).filter(s => !!s)
-                    })}
-                    placeholder="e.g. user1@vendor.com, user2@vendor.com"
-                  />
-                </div>
+                      vendorId: e.target.value,
+                      vendorName: vendor?.name || ''
+                    });
+                  }}
+                  className="w-full p-2 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 dark:text-white"
+                >
+                  <option value="">Select Vendor</option>
+                  {(enterprise.vendors || []).map(v => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex justify-end gap-3 pt-4">

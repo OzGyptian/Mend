@@ -20,7 +20,8 @@ import {
   ClipboardList,
   ShieldAlert,
   ShoppingCart,
-  Activity
+  Activity,
+  GanttChartSquare
 } from 'lucide-react';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
@@ -111,6 +112,7 @@ export default function Sidebar({
     { id: 'subcontract', label: 'Sub-Contract Management', icon: UsersIcon },
     { id: 'procurement', label: 'Procurement Progress', icon: ShoppingCart },
     { id: 'progress', label: 'Commodity Tracking', icon: Activity },
+    { id: 'schedule', label: 'Time Schedule', icon: GanttChartSquare },
   ];
 
   const adminItems = [

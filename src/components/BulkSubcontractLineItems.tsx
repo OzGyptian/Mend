@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Project, Enterprise, Subcontract, SubcontractLineItem, CostCode, Invoice } from '../types';
+import { Project, Enterprise, Subcontract, SubcontractLineItem, CostCode, Invoice, ScheduleItem } from '../types';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import DataGridModule from './DataGridModule';
@@ -79,6 +79,7 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const gridRef = useRef<AgGridReact>(null);
@@ -130,10 +131,16 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
       setCostCodes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as CostCode)));
     });
 
+    const qSch = query(collection(db, 'scheduleItems'), where('projectId', '==', project.id));
+    const unsubSch = onSnapshot(qSch, (snapshot) => {
+      setScheduleItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ScheduleItem)));
+    });
+
     return () => {
       unsubSub();
       unsubInv();
       unsubCc();
+      unsubSch();
     };
   }, [project.id]);
 
@@ -293,6 +300,7 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
           if (li.id === id) {
             const updatedLi = { ...li, updatedAt: new Date().toISOString() };
             if (bulkUpdateData.costCodeId) updatedLi.costCodeId = bulkUpdateData.costCodeId;
+            if (bulkUpdateData.activityId) updatedLi.activityId = bulkUpdateData.activityId;
             if (bulkUpdateData.type) updatedLi.type = bulkUpdateData.type as any;
             if (bulkUpdateData.status) updatedLi.status = bulkUpdateData.status as any;
             if (bulkUpdateData.unit) updatedLi.unit = bulkUpdateData.unit;
@@ -361,27 +369,11 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
   };
 
   const handleExportExcel = () => {
-    const exportData = rowData.map(li => ({
-      'Order ID': li.orderId,
-      'Order Name': li.orderName,
-      'Vendor': li.vendorName,
-      'No.': li.itemNo,
-      'Description': li.description,
-      'Cost Code ID': li.costCodeId || '',
-      'Date': li.date || '',
-      'Type': li.type,
-      'Status': li.status,
-      'Qty': li.qty,
-      'Unit': li.unit,
-      'Rate': li.rate,
-      'Total': li.total,
-      'Claimed': li.claimedTotal,
-      'Certified': li.certifiedTotal
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'BulkLineItems');
-    XLSX.writeFile(wb, `Bulk_Subcontract_Line_Items_${project.projectName}.xlsx`);
+    if (gridRef.current?.api) {
+      gridRef.current.api.exportDataAsExcel({
+        fileName: `Bulk_Subcontract_Line_Items_${project.projectName}_${new Date().toISOString().split('T')[0]}.xlsx`
+      });
+    }
   };
 
   const handleCellValueChanged = async (event: CellValueChangedEvent) => {
@@ -415,6 +407,15 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
           current[parts[parts.length - 1]] = finalValue;
         } else {
           (updatedLi as any)[field] = finalValue;
+          
+          // Auto-populate dates if activityId changes
+          if (field === 'activityId' && finalValue) {
+            const scheduleItem = scheduleItems.find(s => s.activityId === finalValue);
+            if (scheduleItem) {
+              updatedLi.startDate = scheduleItem.currentStartDate;
+              updatedLi.endDate = scheduleItem.currentEndDate;
+            }
+          }
         }
         
         // Recalculate total if qty or rate changes
@@ -465,10 +466,20 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
         const errors: { row: number; msg: string; type: 'error' | 'warning' }[] = [];
 
         // Validation pass
+        const idsInFile = new Set<string>();
         data.forEach((row, index) => {
           const rowNum = index + 1;
           const orderId = String(row['Order ID'] || '').trim();
           const costCodeValue = String(row['Cost Code ID'] || '').trim();
+          const itemNo = String(row['No.'] || row.itemNo || '').trim();
+          
+          if (orderId && itemNo) {
+            const uniqueKey = `${orderId.toLowerCase()}_${itemNo.toLowerCase()}`;
+            if (idsInFile.has(uniqueKey)) {
+              errors.push({ row: rowNum, msg: `Duplicate Item "${itemNo}" for Order "${orderId}" in Excel file`, type: 'error' });
+            }
+            idsInFile.add(uniqueKey);
+          }
 
           if (!orderId) {
             errors.push({ row: rowNum, msg: "Missing Order ID", type: 'error' });
@@ -685,6 +696,53 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
               filterList: true,
               highlightMatch: true
             }
+          },
+          {
+            field: 'activityId',
+            headerName: 'Activity ID',
+            width: 150,
+            editable: true,
+            cellEditor: 'agRichSelectCellEditor',
+            cellEditorParams: {
+              values: scheduleItems.map(item => item.activityId).sort(),
+              formatValue: (val: string) => {
+                const item = scheduleItems.find(i => i.activityId === val);
+                return item ? `${item.activityId} - ${item.description}` : val;
+              },
+              searchType: 'match',
+              allowTyping: true,
+              filterList: true,
+              highlightMatch: true
+            },
+            cellClass: 'bg-emerald-50/10'
+          },
+          {
+            field: 'startDate',
+            headerName: 'Start Date',
+            width: 130,
+            editable: (params: any) => !params.data.activityId,
+            cellEditor: 'agDateCellEditor',
+            valueGetter: params => params.data?.startDate ? new Date(params.data.startDate) : null,
+            valueSetter: params => {
+              if (!params.data) return false;
+              params.data.startDate = params.newValue instanceof Date ? params.newValue.toISOString().split('T')[0] : params.newValue;
+              return true;
+            },
+            valueFormatter: params => params.value ? new Date(params.value).toLocaleDateString() : ''
+          },
+          {
+            field: 'endDate',
+            headerName: 'End Date',
+            width: 130,
+            editable: (params: any) => !params.data.activityId,
+            cellEditor: 'agDateCellEditor',
+            valueGetter: params => params.data?.endDate ? new Date(params.data.endDate) : null,
+            valueSetter: params => {
+              if (!params.data) return false;
+              params.data.endDate = params.newValue instanceof Date ? params.newValue.toISOString().split('T')[0] : params.newValue;
+              return true;
+            },
+            valueFormatter: params => params.value ? new Date(params.value).toLocaleDateString() : ''
           },
           {
             field: 'date',
@@ -928,8 +986,9 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
           width: 120,
           editable: true,
           cellEditor: 'agDateCellEditor',
-          valueGetter: params => params.data.startDate ? new Date(params.data.startDate) : null,
+          valueGetter: params => params.data?.startDate ? new Date(params.data.startDate) : null,
           valueSetter: params => {
+            if (!params.data) return false;
             if (params.newValue instanceof Date) {
               params.data.startDate = dateToISO(params.newValue);
             } else {
@@ -945,8 +1004,9 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
           width: 120,
           editable: true,
           cellEditor: 'agDateCellEditor',
-          valueGetter: params => params.data.endDate ? new Date(params.data.endDate) : null,
+          valueGetter: params => params.data?.endDate ? new Date(params.data.endDate) : null,
           valueSetter: params => {
+            if (!params.data) return false;
             if (params.newValue instanceof Date) {
               params.data.endDate = dateToISO(params.newValue);
             } else {
@@ -1278,6 +1338,15 @@ const BulkSubcontractLineItems: React.FC<BulkSubcontractLineItemsProps> = ({ pro
                       <option key={c.id} value={c.code}>{c.code} - {c.name}</option>
                     ))}
                   </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Activity ID</label>
+                  <Input 
+                    placeholder="Enter Activity ID..."
+                    className="h-11 rounded-xl"
+                    value={bulkUpdateData.activityId || ''}
+                    onChange={e => setBulkUpdateData({ ...bulkUpdateData, activityId: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Date</label>

@@ -146,12 +146,14 @@ const ProgressManagementSubPane: React.FC<ProgressManagementSubPaneProps> = ({
                 enterprise={enterprise}
                 user={user}
                 theme={theme}
+                isAdmin={isProjectAdmin}
                 setIsSidebarCollapsed={setIsSidebarCollapsed}
               />
             )}
             {activeTab === 'periods' && (
               <ProgressReportingPeriod 
                 project={project} 
+                isAdmin={isProjectAdmin}
               />
             )}
             {activeTab === 'attributes' && (

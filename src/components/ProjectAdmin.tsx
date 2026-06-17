@@ -9,7 +9,6 @@ import {
   Save, 
   Layout, 
   Database, 
-  ShieldCheck, 
   Table, 
   ChevronLeft,
   DollarSign,
@@ -27,13 +26,14 @@ import {
   Edit2,
   Check,
   Loader2,
-  ShieldAlert
+  ShieldAlert,
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, parseISO } from 'date-fns';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { toast } from 'sonner';
 import CalendarManager from './CalendarManager';
+import ProjectLineItemAttributes from './ProjectLineItemAttributes';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -54,6 +54,7 @@ type AdminTab =
   | 'subContractMgmt' 
   | 'invoicing' 
   | 'access'
+  | 'lineItemAttributes'
   | 'attributes';
 
 export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps) {
@@ -268,10 +269,9 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
 
   const adminItems = [
     { id: 'general', label: 'General Info', icon: <Layout className="w-4 h-4" /> },
-    { id: 'attributes', label: 'Attributes', icon: <Tag className="w-4 h-4" /> },
+    { id: 'lineItemAttributes', label: 'Line-Item Attributes', icon: <Table className="w-4 h-4" /> },
+    { id: 'attributes', label: 'Project Attributes', icon: <Tag className="w-4 h-4" /> },
     { id: 'calendar', label: 'Project Calendars', icon: <CalendarIcon className="w-4 h-4" /> },
-    { id: 'changeMgmt', label: 'Change Management', icon: <RefreshCw className="w-4 h-4" /> },
-    { id: 'riskMgmt', label: 'Risk Management', icon: <ShieldAlert className="w-4 h-4" /> },
     { id: 'access', label: 'Access Control', icon: <Users className="w-4 h-4" /> },
   ];
 
@@ -480,6 +480,12 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
             </div>
           )}
 
+          {activeTab === 'lineItemAttributes' && (
+            <div className="flex-1 flex flex-col h-[calc(100vh-64px)] animate-in fade-in slide-in-from-bottom-4 duration-300">
+               <ProjectLineItemAttributes project={project} />
+            </div>
+          )}
+
           {activeTab === 'attributes' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
               {/* Project Attributes */}
@@ -533,21 +539,6 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
                   </table>
                 </div>
               </div>
-
-              {/* Change Attributes */}
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
-                <h2 className="text-lg font-bold mb-2 dark:text-white">Change Attributes</h2>
-                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">Enable or disable enterprise-defined change attributes for this project.</p>
-                {/* Similar structure for changeAttributes if they have project-level visibility settings */}
-                <p className="text-xs italic text-gray-500">Project-specific attribute overrides are managed here.</p>
-              </div>
-
-              {/* Risk Attributes */}
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
-                <h2 className="text-lg font-bold mb-2 dark:text-white">Risk Attributes</h2>
-                <p className="text-sm text-gray-900 dark:text-gray-400 mb-6">Enable or disable enterprise-defined risk attributes for this project.</p>
-                <p className="text-xs italic text-gray-500">Project-specific attribute overrides are managed here.</p>
-              </div>
             </div>
           )}
 
@@ -555,32 +546,11 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
               <CalendarManager 
                 projectId={project.id} 
+                enterpriseId={enterprise.id}
                 title="Project Calendars"
                 description="Define working days, weekends, and holidays for phasing calculations."
                 allowImport={true}
               />
-            </div>
-          )}
-
-          {activeTab === 'changeMgmt' && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
-                <h2 className="text-lg font-bold mb-6 dark:text-white">Change Management Settings</h2>
-                <div className="space-y-4">
-                   <p className="text-sm text-gray-500 italic">Project-specific change management settings go here.</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {activeTab === 'riskMgmt' && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-              <div className="bg-white dark:bg-[#141414] p-8 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
-                <h2 className="text-lg font-bold mb-6 dark:text-white">Risk Management Settings</h2>
-                <div className="space-y-4">
-                   <p className="text-sm text-gray-500 italic">Project-specific risk management settings go here.</p>
-                </div>
-              </div>
             </div>
           )}
           {activeTab === 'access' && (

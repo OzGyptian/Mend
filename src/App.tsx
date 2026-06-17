@@ -22,6 +22,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
   const [currentModule, setCurrentModule] = useState<string>('dashboard');
   const [view, setView] = useState<'enterprise' | 'project' | 'sheet' | 'system-admin' | 'enterprise-admin' | 'project-admin' | 'profile'>('enterprise');
@@ -165,6 +166,12 @@ export default function App() {
         const doc = snapshot.docs[0];
         const data = { ...doc.data() as Enterprise, id: doc.id };
         setCurrentEnterprise(data);
+        
+        // Fetch projects for this enterprise
+        const qProjects = query(collection(db, 'projects'), where('enterpriseId', '==', doc.id));
+        getDocs(qProjects).then(projSnap => {
+          setProjects(projSnap.docs.map(d => ({ ...d.data() as Project, id: d.id })));
+        });
       } else {
         setCurrentEnterprise(null);
       }
@@ -294,6 +301,7 @@ export default function App() {
         handleLogin={handleLogin}
         handleEmailAuth={handleEmailAuth}
         openInNewTab={openInNewTab}
+        projects={projects}
       />
     </BrowserRouter>
   );
@@ -325,6 +333,7 @@ interface AuthenticatedAppProps {
   handleLogin: () => Promise<void>;
   handleEmailAuth: (e: React.FormEvent) => Promise<void>;
   openInNewTab: () => void;
+  projects: Project[];
 }
 
 function AuthenticatedApp({
@@ -332,7 +341,8 @@ function AuthenticatedApp({
   systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
   isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
   email, setEmail, password, setPassword, isRegistering, setIsRegistering,
-  showLanding, setShowLanding, isInIframe, handleLogin, handleEmailAuth, openInNewTab
+  showLanding, setShowLanding, isInIframe, handleLogin, handleEmailAuth, openInNewTab,
+  projects
 }: AuthenticatedAppProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -622,7 +632,7 @@ function AuthenticatedApp({
               />
             } />
             <Route path="/enterprise-admin" element={
-              currentEnterprise ? <EnterpriseAdmin enterprise={currentEnterprise} /> : <Navigate to="/" />
+              currentEnterprise ? <EnterpriseAdmin enterprise={currentEnterprise} setIsSidebarCollapsed={setIsSidebarCollapsed} /> : <Navigate to="/" />
             } />
             <Route path="/profile" element={
               currentEnterprise ? <UserProfile userId={user.uid} enterprise={currentEnterprise} /> : <Navigate to="/" />

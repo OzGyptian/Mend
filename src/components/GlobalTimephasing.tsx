@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Project, Enterprise, CostCode, Subcontract } from '../types';
+import { Project, Enterprise, CostCode, Subcontract, ScheduleItem } from '../types';
 import { db, auth } from '../firebase';
 import { 
   collection, 
@@ -70,6 +70,7 @@ interface GlobalTimephasingProps {
 
 export default function GlobalTimephasing({ project, enterprise, theme = 'light' }: GlobalTimephasingProps) {
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [loading, setLoading] = useState(true);
   const [timephasingRows, setTimephasingRows] = useState<any[]>([]);
@@ -88,9 +89,33 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const gridRef = useRef<AgGridReact>(null);
 
-  const currencyFormatter = (params: ValueFormatterParams) => {
-    if (params.value == null) return '';
+  const dateFormatter = (params: any) => {
+    if (!params.value) return '';
+    const date = params.value instanceof Date ? params.value : new Date(params.value);
+    if (isNaN(date.getTime())) return '';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  const currencyFormatter = useCallback((params: ValueFormatterParams) => {
     return formatCurrency(params.value);
+  }, []);
+
+  const safeDateSetter = (field: string) => (params: any) => {
+    const val = params.newValue;
+    if (!val) {
+      params.data[field] = '';
+      return true;
+    }
+    const date = val instanceof Date ? val : new Date(val);
+    if (isNaN(date.getTime())) return false;
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    params.data[field] = `${y}-${m}-${d}`;
+    return true;
   };
 
   // Fetch all cost codes
@@ -132,6 +157,18 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
+    });
+    return () => unsubscribe();
+  }, [project.id]);
+
+  // Fetch all schedule items
+  useEffect(() => {
+    const q = query(
+      collection(db, 'scheduleItems'),
+      where('projectId', '==', project.id)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setScheduleItems(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ScheduleItem)));
     });
     return () => unsubscribe();
   }, [project.id]);
@@ -243,6 +280,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             startDate: baselineDoc?.startDate ? new Date(baselineDoc.startDate) : '',
             endDate: baselineDoc?.endDate ? new Date(baselineDoc.endDate) : '',
             distribution: baselineDoc?.distribution || 'Even',
+            activityId: baselineDoc?.activityId || '',
             periodValues: periods.reduce((acc, p) => {
               const source = baselineDoc?.phasingSource || 'Manual';
               if (source === 'SubContract') {
@@ -267,6 +305,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             startDate: approvedDoc?.startDate ? new Date(approvedDoc.startDate) : '',
             endDate: approvedDoc?.endDate ? new Date(approvedDoc.endDate) : '',
             distribution: approvedDoc?.distribution || 'Even',
+            activityId: approvedDoc?.activityId || '',
             periodValues: periods.reduce((acc, p) => {
               const source = approvedDoc?.phasingSource || 'Manual';
               if (source === 'SubContract') {
@@ -291,6 +330,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             startDate: eacDoc?.startDate ? new Date(eacDoc.startDate) : '',
             endDate: eacDoc?.endDate ? new Date(eacDoc.endDate) : '',
             distribution: eacDoc?.distribution || 'Even',
+            activityId: eacDoc?.activityId || '',
             totalFromCode: code.estimateAtCompletion || 0,
             docId: eacDoc?.id,
             periodValues: periods.reduce((acc, p, idx) => {
@@ -532,18 +572,52 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         updatePayload.periodValues = data.periodValues;
       } else {
         updatePayload[field] = newValue instanceof Date ? newValue.toISOString() : newValue;
+        
+        // Auto-populate dates if Activity ID changes
+        if (field === 'activityId' && newValue) {
+          const scheduleItem = scheduleItems.find(s => s.activityId === newValue);
+          if (scheduleItem) {
+            let startDate = '';
+            let endDate = '';
+            
+            if (data.rowType === 'baseline') {
+              startDate = scheduleItem.baselineStartDate;
+              endDate = scheduleItem.baselineEndDate;
+            } else if (data.rowType === 'approved') {
+              startDate = scheduleItem.plannedStartDate;
+              endDate = scheduleItem.plannedEndDate;
+            } else if (data.rowType === 'eac') {
+              startDate = scheduleItem.currentStartDate;
+              endDate = scheduleItem.currentEndDate;
+            }
+            
+            if (startDate) updatePayload.startDate = startDate;
+            if (endDate) updatePayload.endDate = endDate;
+            
+            // Update local row data for immediate feedback
+            data.startDate = startDate ? new Date(startDate) : '';
+            data.endDate = endDate ? new Date(endDate) : '';
+            params.api.applyTransaction({ update: [data] });
+          }
+        }
       }
 
       if (data.docId) {
         await updateDoc(doc(db, 'costPhasing', data.docId), updatePayload);
       } else {
-        await addDoc(collection(db, 'costPhasing'), updatePayload);
+        const docRef = await addDoc(collection(db, 'costPhasing'), updatePayload);
+        data.docId = docRef.id;
+      }
+      
+      if (field === 'activityId') {
+        toast.success('Synced dates from schedule');
+        setRefreshTrigger(prev => prev + 1);
       }
     } catch (error) {
       console.error("Error updating phasing cell:", error);
       toast.error("Failed to save changes");
     }
-  }, [project.id]);
+  }, [project.id, scheduleItems]);
 
   const handleBulkUpdate = async () => {
     const selectedNodes = gridRef.current?.api.getSelectedNodes();
@@ -644,6 +718,25 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         cellClass: 'font-bold bg-slate-50 dark:bg-slate-900',
       },
       {
+        headerName: 'Activity ID',
+        field: 'activityId',
+        width: 150,
+        editable: (params: any) => params.data.phasingSource === 'Auto',
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: scheduleItems.map(item => item.activityId).sort(),
+          formatValue: (val: string) => {
+            const item = scheduleItems.find(i => i.activityId === val);
+            return item ? `${item.activityId} - ${item.description}` : val;
+          },
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true,
+          highlightMatch: true
+        },
+        cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900 border-l-2 border-l-emerald-500' : 'bg-slate-50 dark:bg-slate-900/50',
+      },
+      {
         headerName: 'Phasing Source',
         field: 'phasingSource',
         width: 130,
@@ -661,19 +754,15 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         headerName: 'Start Date',
         field: 'startDate',
         width: 120,
-        editable: (params: any) => params.data.phasingSource === 'Auto',
+        editable: (params: any) => params.data.phasingSource === 'Auto' && !params.data.activityId,
         valueGetter: (params) => {
           const val = params.data.startDate;
           if (!val) return null;
-          if (val instanceof Date) return val;
-          const d = new Date(val);
+          const d = val instanceof Date ? val : new Date(val);
           return isNaN(d.getTime()) ? null : d;
         },
-        valueFormatter: (params) => {
-          if (!params.value) return '';
-          const d = params.value instanceof Date ? params.value : new Date(params.value);
-          return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-        },
+        valueFormatter: dateFormatter,
+        valueSetter: safeDateSetter('startDate'),
         cellEditor: 'agDateCellEditor',
         cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
       },
@@ -681,19 +770,15 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         headerName: 'End Date',
         field: 'endDate',
         width: 120,
-        editable: (params: any) => params.data.phasingSource === 'Auto',
+        editable: (params: any) => params.data.phasingSource === 'Auto' && !params.data.activityId,
         valueGetter: (params) => {
           const val = params.data.endDate;
           if (!val) return null;
-          if (val instanceof Date) return val;
-          const d = new Date(val);
+          const d = val instanceof Date ? val : new Date(val);
           return isNaN(d.getTime()) ? null : d;
         },
-        valueFormatter: (params) => {
-          if (!params.value) return '';
-          const d = params.value instanceof Date ? params.value : new Date(params.value);
-          return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-        },
+        valueFormatter: dateFormatter,
+        valueSetter: safeDateSetter('endDate'),
         cellEditor: 'agDateCellEditor',
         cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
       },

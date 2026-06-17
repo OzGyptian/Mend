@@ -135,20 +135,18 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     costCodeId: string;
     scope: string;
     probability: string;
-    impactAmount: string;
-    mitigationCost: string;
-    residualProbability: string;
-    residualImpactAmount: string;
+    minImpactAmount: string;
+    mostLikelyImpactAmount: string;
+    maxImpactAmount: string;
     enterpriseAttributes: Record<string, any>;
     projectAttributes: Record<string, any>;
   }>({
     costCodeId: '',
     scope: '',
     probability: '',
-    impactAmount: '',
-    mitigationCost: '',
-    residualProbability: '',
-    residualImpactAmount: '',
+    minImpactAmount: '',
+    mostLikelyImpactAmount: '',
+    maxImpactAmount: '',
     enterpriseAttributes: {},
     projectAttributes: {}
   });
@@ -160,11 +158,10 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     if (allRiskRecords.length === 0) return [];
     return [{
       riskId: 'TOTALS',
-      impactAmount: allRiskRecords.reduce((sum, r) => sum + (r.impactAmount || 0), 0),
-      mitigationCost: allRiskRecords.reduce((sum, r) => sum + (r.mitigationCost || 0), 0),
-      residualImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.residualImpactAmount || 0), 0),
-      initialEMV: allRiskRecords.reduce((sum, r) => sum + ((r.probability || 0) * (r.impactAmount || 0)), 0),
-      residualEMV: allRiskRecords.reduce((sum, r) => sum + ((r.residualProbability || 0) * (r.residualImpactAmount || 0)), 0)
+      minImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.minImpactAmount || 0), 0),
+      mostLikelyImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.mostLikelyImpactAmount || 0), 0),
+      maxImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.maxImpactAmount || 0), 0),
+      betaPertImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.betaPertImpactAmount || 0), 0),
     }];
   }, [allRiskRecords]);
 
@@ -214,14 +211,16 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     try {
       const recordsSnap = await getDocs(query(collection(db, 'riskRecords'), where('riskId', '==', riskId)));
       const records = recordsSnap.docs.map(d => d.data() as RiskRecord);
-      const totalInitialExposure = records.reduce((sum, r) => sum + ((Number(r.probability) || 0) * (Number(r.impactAmount) || 0)), 0);
-      const totalMitigation = records.reduce((sum, r) => sum + (Number(r.mitigationCost) || 0), 0);
-      const totalResidualExposure = records.reduce((sum, r) => sum + ((Number(r.residualProbability) || 0) * (Number(r.residualImpactAmount) || 0)), 0);
+      const totalBetaPert = records.reduce((sum, r) => sum + (Number(r.betaPertImpactAmount) || 0), 0);
+      const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
+      const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
+      const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
       
       await updateDoc(doc(db, 'risks', riskId), {
-        exposure: totalInitialExposure,
-        mitigation: totalMitigation,
-        residualExposure: totalResidualExposure,
+        exposure: totalBetaPert,
+        minImpactTotal: totalMin,
+        mostLikelyImpactTotal: totalLikely,
+        maxImpactTotal: totalMax,
         updatedAt: new Date().toISOString()
       });
     } catch (error) {
@@ -234,8 +233,19 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     if (!data.id) return;
     try {
       let updates: any = { [colDef.field!]: params.newValue, updatedAt: new Date().toISOString() };
+      
+      // If any PERT input changes, update betaPertImpactAmount
+      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
+        const prob = Number(colDef.field === 'probability' ? params.newValue : data.probability) || 0;
+        const min = Number(colDef.field === 'minImpactAmount' ? params.newValue : data.minImpactAmount) || 0;
+        const ml = Number(colDef.field === 'mostLikelyImpactAmount' ? params.newValue : data.mostLikelyImpactAmount) || 0;
+        const max = Number(colDef.field === 'maxImpactAmount' ? params.newValue : data.maxImpactAmount) || 0;
+        const betaPert = ((min + 4 * ml + max) / 6) * prob;
+        updates.betaPertImpactAmount = betaPert;
+      }
+      
       await updateDoc(doc(db, 'riskRecords', data.id), updates);
-      if (['probability', 'impactAmount', 'mitigationCost', 'residualProbability', 'residualImpactAmount'].includes(colDef.field!)) {
+      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
         updateParentTotals(data.riskId);
       }
     } catch (error) {
@@ -251,13 +261,11 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
         'Cost Code': r.costCodeId,
         'Scope': r.scope,
         'Prob %': (Number(r.probability) || 0) * 100,
-        'Impact $': r.impactAmount,
-        'Initial EMV': (Number(r.probability) || 0) * (Number(r.impactAmount) || 0),
+        'Min Value $': r.minImpactAmount || 0,
+        'Most Likely $': r.mostLikelyImpactAmount || 0,
+        'Max Value $': r.maxImpactAmount || 0,
+        'Beta Pert $': r.betaPertImpactAmount || 0,
         'Parent Strategy': parentRisk?.strategy || '-',
-        'Mitigation Cost $': r.mitigationCost,
-        'Res. Prob %': (Number(r.residualProbability) || 0) * 100,
-        'Res. Impact $': r.residualImpactAmount,
-        'Res. EMV': (Number(r.residualProbability) || 0) * (Number(r.residualImpactAmount) || 0)
       };
     });
     const ws = XLSX.utils.json_to_sheet(exportData);
@@ -296,16 +304,22 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           const riskId = riskMap.get(riskIdStr);
           if (!riskId) continue;
           const newRecordRef = doc(collection(db, 'riskRecords'));
+          const min = Number(row['Min Value $']) || 0;
+          const ml = Number(row['Most Likely $']) || 0;
+          const max = Number(row['Max Value $']) || 0;
+          const prob = (Number(row['Prob %']) || 100) / 100;
+          const betaPert = ((min + 4 * ml + max) / 6) * prob;
+
           batch.set(newRecordRef, {
             riskId: riskId,
             projectId: project.id,
             costCodeId: String(row['Cost Code'] || '').trim(),
             scope: String(row['Scope'] || ''),
-            probability: (Number(row['Prob %']) || 100) / 100,
-            impactAmount: Number(row['Impact $']) || 0,
-            mitigationCost: Number(row['Mitigation Cost $']) || 0,
-            residualProbability: (Number(row['Res. Prob %']) || 100) / 100,
-            residualImpactAmount: Number(row['Res. Impact $']) || 0,
+            probability: prob,
+            minImpactAmount: min,
+            mostLikelyImpactAmount: ml,
+            maxImpactAmount: max,
+            betaPertImpactAmount: betaPert,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
           });
@@ -313,6 +327,11 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
         }
         if (addedCount > 0) {
           await batch.commit();
+          // Update all parent totals
+          const affectedRisks = new Set(data.map(row => riskMap.get(String(row['Risk ID'] || '').trim().toLowerCase())).filter(id => id));
+          for (const rid of affectedRisks) {
+            if (rid) await updateParentTotals(rid);
+          }
           toast.success(`Imported ${addedCount} records`);
         }
       } catch (error) { toast.error("Import failed"); }
@@ -339,12 +358,30 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       valueGetter: (p) => risks.find(r => r.id === p.data.riskId)?.strategy || '-'
     },
     {
-      headerName: 'Cost Code', field: 'costCodeId', width: 150, editable: true,
-      cellEditor: 'agRichSelectCellEditor', cellEditorParams: { values: costCodes.map(c => c.code) }
+      headerName: 'Cost Code', field: 'costCodeId', width: 180, editable: true,
+      cellEditor: 'agSelectCellEditor', 
+      cellEditorParams: { 
+        values: ['', ...costCodes.map(c => c.id)],
+        valueListGap: 0,
+        formatValue: (id: string) => {
+          if (!id) return 'Select Cost Code...';
+          const cc = costCodes.find(c => c.id === id);
+          return cc ? `${cc.code} - ${cc.name}` : id;
+        }
+      },
+      valueFormatter: (params) => {
+        if (!params.value) return '';
+        const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
+        return cc ? cc.code : params.value;
+      },
+      tooltipValueGetter: (params) => {
+        const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
+        return cc ? `${cc.code} - ${cc.name}` : params.value;
+      }
     },
     { headerName: 'Scope', field: 'scope', width: 200, editable: true },
     {
-      headerName: 'Initial Risk Analysis',
+      headerName: 'Risk Impact Analysis',
       openByDefault: true,
       children: [
         {
@@ -355,47 +392,30 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           valueParser: (p) => Number(p.newValue) > 1 ? Number(p.newValue) / 100 : Number(p.newValue)
         },
         {
-          headerName: 'Impact $', field: 'impactAmount', editable: true, width: 130, type: 'numericColumn',
+          headerName: 'Min Value $', field: 'minImpactAmount', editable: true, width: 130, type: 'numericColumn',
           valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
         },
         {
-          headerName: 'EMV', width: 120, type: 'numericColumn',
+          headerName: 'Most Likely $', field: 'mostLikelyImpactAmount', editable: true, width: 130, type: 'numericColumn',
+          valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
+        },
+        {
+          headerName: 'Maximum Value $', field: 'maxImpactAmount', editable: true, width: 130, type: 'numericColumn',
+          valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
+        },
+        {
+          headerName: 'Beta Pert', width: 120, type: 'numericColumn',
+          field: 'betaPertImpactAmount',
           valueGetter: (p) => {
-            if (p.node?.rowPinned) return p.data.initialEMV;
-            return (Number(p.data.probability) || 0) * (Number(p.data.impactAmount) || 0);
+            if (p.node?.rowPinned) return p.data.betaPertImpactAmount;
+            const prob = Number(p.data.probability) || 0;
+            const min = Number(p.data.minImpactAmount) || 0;
+            const ml = Number(p.data.mostLikelyImpactAmount) || 0;
+            const max = Number(p.data.maxImpactAmount) || 0;
+            return ((min + 4 * ml + max) / 6) * prob;
           },
           valueFormatter: (p) => formatCurrency(p.value),
           cellStyle: { backgroundColor: 'rgba(220, 38, 38, 0.05)', fontWeight: 'bold' }
-        }
-      ]
-    },
-    {
-      headerName: 'Mitigation Cost $', field: 'mitigationCost', editable: true, width: 160, type: 'numericColumn',
-      valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-    },
-    {
-      headerName: 'Residual Risk Analysis',
-      openByDefault: true,
-      children: [
-        {
-          headerName: 'Res. Prob %', field: 'residualProbability', editable: true, width: 110,
-          valueFormatter: (p) => p.value === null ? '' : `${((p.value || 0) * 100).toFixed(0)}%`,
-          cellEditor: 'agNumberCellEditor',
-          cellEditorParams: { min: 0, max: 1 },
-          valueParser: (p) => Number(p.newValue) > 1 ? Number(p.newValue) / 100 : Number(p.newValue)
-        },
-        {
-          headerName: 'Res. Impact $', field: 'residualImpactAmount', editable: true, width: 130, type: 'numericColumn',
-          valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-        },
-        {
-          headerName: 'Res. EMV', width: 120, type: 'numericColumn',
-          valueGetter: (p) => {
-            if (p.node?.rowPinned) return p.data.residualEMV;
-            return (Number(p.data.residualProbability) || 0) * (Number(p.data.residualImpactAmount) || 0);
-          },
-          valueFormatter: (p) => formatCurrency(p.value),
-          cellStyle: { backgroundColor: 'rgba(37, 99, 235, 0.05)', fontWeight: 'bold' }
         }
       ]
     }
@@ -406,15 +426,35 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     try {
       const batch = writeBatch(db);
       const updates: any = { updatedAt: new Date().toISOString() };
-      if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
+      if (bulkRecordUpdateData.costCodeId) {
+        updates.costCodeId = bulkRecordUpdateData.costCodeId === '_' ? '' : bulkRecordUpdateData.costCodeId;
+      }
       if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope;
       if (bulkRecordUpdateData.probability) updates.probability = Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability);
-      if (bulkRecordUpdateData.impactAmount) updates.impactAmount = Number(bulkRecordUpdateData.impactAmount);
-      if (bulkRecordUpdateData.mitigationCost) updates.mitigationCost = Number(bulkRecordUpdateData.mitigationCost);
-      if (bulkRecordUpdateData.residualProbability) updates.residualProbability = Number(bulkRecordUpdateData.residualProbability) > 1 ? Number(bulkRecordUpdateData.residualProbability) / 100 : Number(bulkRecordUpdateData.residualProbability);
-      if (bulkRecordUpdateData.residualImpactAmount) updates.residualImpactAmount = Number(bulkRecordUpdateData.residualImpactAmount);
+      
+      const hasMinChange = bulkRecordUpdateData.minImpactAmount !== '';
+      const hasMLChange = bulkRecordUpdateData.mostLikelyImpactAmount !== '';
+      const hasMaxChange = bulkRecordUpdateData.maxImpactAmount !== '';
 
-      selectedBulkRecordIds.forEach(id => batch.update(doc(db, 'riskRecords', id), updates));
+      if (hasMinChange) updates.minImpactAmount = Number(bulkRecordUpdateData.minImpactAmount);
+      if (hasMLChange) updates.mostLikelyImpactAmount = Number(bulkRecordUpdateData.mostLikelyImpactAmount);
+      if (hasMaxChange) updates.maxImpactAmount = Number(bulkRecordUpdateData.maxImpactAmount);
+
+      selectedBulkRecordIds.forEach(id => {
+        const record = allRiskRecords.find(x => x.id === id);
+        if (record) {
+          const finalUpdates = { ...updates };
+          const hasProbChange = bulkRecordUpdateData.probability !== '';
+          if (hasMinChange || hasMLChange || hasMaxChange || hasProbChange) {
+            const prob = hasProbChange ? (Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability)) : (record.probability || 0);
+            const min = hasMinChange ? Number(bulkRecordUpdateData.minImpactAmount) : (record.minImpactAmount || 0);
+            const ml = hasMLChange ? Number(bulkRecordUpdateData.mostLikelyImpactAmount) : (record.mostLikelyImpactAmount || 0);
+            const max = hasMaxChange ? Number(bulkRecordUpdateData.maxImpactAmount) : (record.maxImpactAmount || 0);
+            finalUpdates.betaPertImpactAmount = ((min + 4 * ml + max) / 6) * prob;
+          }
+          batch.update(doc(db, 'riskRecords', id), finalUpdates);
+        }
+      });
       await batch.commit();
 
       const affected = new Set<string>();
@@ -474,6 +514,18 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           <button onClick={() => toggleAllRecordColumnGroups(false)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Collapse All Groups"><Minimize2 className="w-4 h-4" /></button>
           
           <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
+          
+          <button onClick={async () => {
+            const affected = new Set(allRiskRecords.map(r => r.riskId));
+            let count = 0;
+            for (const rid of affected) {
+              await updateParentTotals(rid);
+              count++;
+            }
+            toast.success(`Recalculated totals for ${count} risks`);
+          }} className="p-2 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors" title="Recalculate All Totals">
+            <RefreshCw className="w-5 h-5" />
+          </button>
 
           {selectedBulkRecordIds.size > 0 && (
             <div className="flex gap-2">
@@ -506,15 +558,27 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Update Risks</DialogTitle></DialogHeader>
           <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto pr-2">
+            <Select onValueChange={v => setBulkRecordUpdateData({...bulkRecordUpdateData, costCodeId: v})} value={bulkRecordUpdateData.costCodeId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Cost Code">
+                  {bulkRecordUpdateData.costCodeId === '_' ? 'Clear Cost Code' : 
+                   costCodes.find(cc => cc.id === bulkRecordUpdateData.costCodeId)?.code || 
+                   (bulkRecordUpdateData.costCodeId && "Selected")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_">Clear Cost Code</SelectItem>
+                {costCodes.map(cc => (
+                  <SelectItem key={cc.id} value={cc.id}>{cc.code} - {cc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input placeholder="Scope" value={bulkRecordUpdateData.scope} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, scope: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <Input type="number" placeholder="Prob % (0-100)" value={bulkRecordUpdateData.probability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, probability: e.target.value})} />
-              <Input type="number" placeholder="Impact $" value={bulkRecordUpdateData.impactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, impactAmount: e.target.value})} />
-            </div>
-            <Input type="number" placeholder="Mitigation Cost $" value={bulkRecordUpdateData.mitigationCost} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, mitigationCost: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <Input type="number" placeholder="Res. Prob % (0-100)" value={bulkRecordUpdateData.residualProbability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, residualProbability: e.target.value})} />
-              <Input type="number" placeholder="Res. Impact $" value={bulkRecordUpdateData.residualImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, residualImpactAmount: e.target.value})} />
+            <Input type="number" placeholder="Prob % (0-100)" value={bulkRecordUpdateData.probability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, probability: e.target.value})} />
+            <div className="grid grid-cols-3 gap-4">
+              <Input type="number" placeholder="Min Value $" value={bulkRecordUpdateData.minImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, minImpactAmount: e.target.value})} />
+              <Input type="number" placeholder="Most Likely $" value={bulkRecordUpdateData.mostLikelyImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, mostLikelyImpactAmount: e.target.value})} />
+              <Input type="number" placeholder="Max Value $" value={bulkRecordUpdateData.maxImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, maxImpactAmount: e.target.value})} />
             </div>
           </div>
           <DialogFooter><Button onClick={handleBulkUpdateRecords}>Update</Button></DialogFooter>

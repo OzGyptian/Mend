@@ -198,7 +198,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   const [newChange, setNewChange] = useState({
     changeId: '',
     description: '',
-    type: '',
     status: 'Pending' as Change['status'],
     initiator: '',
     reference: '',
@@ -355,7 +354,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         projectId: project.id,
         changeId: newChange.changeId.trim(),
         description: newChange.description,
-        type: newChange.type || (enterprise.changeTypes?.[0] || ''),
+        type: '',
         status: newChange.status,
         initiator: newChange.initiator.slice(0, 50),
         reference: newChange.reference.slice(0, 50),
@@ -374,7 +373,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       setNewChange({
         changeId: '',
         description: '',
-        type: '',
         status: 'Pending',
         initiator: '',
         reference: '',
@@ -484,7 +482,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       const row: any = {
         'Change ID': c.changeId,
         'Description': c.description,
-        'Type': c.type,
         'Status': c.status,
         'Initiator': c.initiator,
         'Reference': c.reference,
@@ -567,7 +564,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             projectId: project.id,
             changeId: changeId.slice(0, 20),
             description: row['Description'] || '',
-            type: row['Type'] || (enterprise.changeTypes?.[0] || ''),
+            type: '',
             status: row['Status'] || 'Pending',
             initiator: String(row['Initiator'] || '').slice(0, 50),
             reference: String(row['Reference'] || '').slice(0, 50),
@@ -926,17 +923,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       enableRowGroup: true
     },
     {
-      headerName: 'Type',
-      field: 'type',
-      editable: true,
-      width: 150,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: enterprise.changeTypes || []
-      },
-      enableRowGroup: true
-    },
-    {
       headerName: 'Status',
       field: 'status',
       editable: true,
@@ -985,28 +971,28 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       cellStyle: { fontWeight: 'bold' },
       aggFunc: 'sum'
     },
-    {
-      headerName: 'Actions',
-      width: 100,
-      pinned: 'right',
-      cellRenderer: (p: any) => {
-        if (p.node.rowPinned) return null;
-        return (
-          <div className="flex items-center gap-2 h-full">
-            <button 
-              onClick={(e) => {
-                e.stopPropagation();
-                setChangeToDelete(p.data);
-                setIsDeleteChangeOpen(true);
-              }}
-              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        );
+      {
+        headerName: 'Actions',
+        width: 100,
+        pinned: 'right',
+        cellRenderer: (p: any) => {
+          if (p.node.rowPinned) return null;
+          return (
+            <div className="flex items-center gap-2 h-full">
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setChangeToDelete(p.data);
+                  setIsDeleteChangeOpen(true);
+                }}
+                className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        }
       }
-    }
   ];
 
   // Dynamically add enterprise change attributes
@@ -1018,27 +1004,17 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       children: enterpriseChangeAttrs.map((attr, index) => ({
         headerName: attr.title,
         field: `enterpriseAttributes.${attr.id}`,
-        width: 150,
+        width: 200,
         columnGroupShow: index === 0 ? undefined : 'open',
         editable: true,
         cellEditor: 'agRichSelectCellEditor',
         cellEditorParams: {
-          values: attr.values.map(v => v.id),
-          searchType: 'match',
+          values: (attr.values || [])
+            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+            .map(v => `${v.id} | ${v.description}`),
+          searchType: 'matchAny',
           allowTyping: true,
           filterList: true
-        },
-        valueSetter: (params: any) => {
-          if (!params.data || params.newValue === undefined) return false;
-          if (!params.data.enterpriseAttributes) {
-            params.data.enterpriseAttributes = {};
-          }
-          params.data.enterpriseAttributes[attr.id] = params.newValue;
-          return true;
-        },
-        valueFormatter: (params: any) => {
-          const v = attr.values.find(v => v.id === params.value);
-          return v ? `${v.id} - ${v.description}` : params.value;
         },
         enableRowGroup: true
       }))
@@ -1054,27 +1030,17 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       children: projectChangeAttrs.map((attr, index) => ({
         headerName: attr.title,
         field: `projectAttributes.${attr.id}`,
-        width: 150,
+        width: 200,
         columnGroupShow: index === 0 ? undefined : 'open',
         editable: true,
         cellEditor: 'agRichSelectCellEditor',
         cellEditorParams: {
-          values: attr.values.map(v => v.id),
-          searchType: 'match',
+          values: (attr.values || [])
+            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+            .map(v => `${v.id} | ${v.description}`),
+          searchType: 'matchAny',
           allowTyping: true,
           filterList: true
-        },
-        valueSetter: (params: any) => {
-          if (!params.data || params.newValue === undefined) return false;
-          if (!params.data.projectAttributes) {
-            params.data.projectAttributes = {};
-          }
-          params.data.projectAttributes[attr.id] = params.newValue;
-          return true;
-        },
-        valueFormatter: (params: any) => {
-          const v = attr.values.find(v => v.id === params.value);
-          return v ? `${v.id} - ${v.description}` : params.value;
         },
         enableRowGroup: true
       }))
@@ -1119,27 +1085,17 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       children: enterpriseLineItemAttrs.map((attr, index) => ({
         headerName: attr.title,
         field: `enterpriseAttributes.${attr.id}`,
-        width: 150,
+        width: 200,
         columnGroupShow: index === 0 ? undefined : 'open',
         editable: true,
         cellEditor: 'agRichSelectCellEditor',
         cellEditorParams: {
-          values: attr.values.map(v => v.id),
-          searchType: 'match',
+          values: (attr.values || [])
+            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+            .map(v => `${v.id} | ${v.description}`),
+          searchType: 'matchAny',
           allowTyping: true,
           filterList: true
-        },
-        valueSetter: (params: any) => {
-          if (!params.data || params.newValue === undefined) return false;
-          if (!params.data.enterpriseAttributes) {
-            params.data.enterpriseAttributes = {};
-          }
-          params.data.enterpriseAttributes[attr.id] = params.newValue;
-          return true;
-        },
-        valueFormatter: (params: any) => {
-          const v = attr.values.find(v => v.id === params.value);
-          return v ? `${v.id} - ${v.description}` : params.value;
         },
         enableRowGroup: true
       }))
@@ -1150,27 +1106,17 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       children: projectLineItemAttrs.map((attr, index) => ({
         headerName: attr.title,
         field: `projectAttributes.${attr.id}`,
-        width: 150,
+        width: 200,
         columnGroupShow: index === 0 ? undefined : 'open',
         editable: true,
         cellEditor: 'agRichSelectCellEditor',
         cellEditorParams: {
-          values: attr.values.map(v => v.id),
-          searchType: 'match',
+          values: (attr.values || [])
+            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+            .map(v => `${v.id} | ${v.description}`),
+          searchType: 'matchAny',
           allowTyping: true,
           filterList: true
-        },
-        valueSetter: (params: any) => {
-          if (!params.data || params.newValue === undefined) return false;
-          if (!params.data.projectAttributes) {
-            params.data.projectAttributes = {};
-          }
-          params.data.projectAttributes[attr.id] = params.newValue;
-          return true;
-        },
-        valueFormatter: (params: any) => {
-          const v = attr.values.find(v => v.id === params.value);
-          return v ? `${v.id} - ${v.description}` : params.value;
         },
         enableRowGroup: true
       }))
@@ -1724,24 +1670,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                   <SelectContent>
                     {(project.reportingPeriods?.periods || []).map(p => (
                       <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Type</label>
-                <Select 
-                  value={newChange.type} 
-                  onValueChange={v => setNewChange({...newChange, type: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(enterprise.changeTypes || []).map(t => (
-                      <SelectItem key={t} value={t}>{t}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

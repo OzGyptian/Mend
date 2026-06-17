@@ -1,8 +1,11 @@
-import React, { ReactNode } from 'react';
-import { Search, Plus, Trash2, Edit2, Upload, Download, Calculator, ChevronDown, ChevronUp, Hash, Calendar, RefreshCw } from 'lucide-react';
+import React, { ReactNode, useState, useRef, useMemo } from 'react';
+import { Search, Plus, Trash2, Edit2, Upload, Download, Calculator, ChevronDown, ChevronUp, Hash, Calendar, RefreshCw, X, AlertTriangle } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import { cn } from '../lib/utils';
 import { Project } from '../types';
+import * as XLSX from 'xlsx';
+import { motion, AnimatePresence } from 'motion/react';
+import toast from 'react-hot-toast';
 
 interface DataGridModuleProps {
   title: string;
@@ -13,7 +16,9 @@ interface DataGridModuleProps {
   searchPlaceholder?: string;
   quickFilterText?: string;
   onQuickFilterChange?: (text: string) => void;
-  onImport?: () => void;
+  onImport?: () => void; // Legacy / Custom trigger
+  onImportData?: (data: any[]) => void; // Standardized data handler
+  importUniqueKey?: string | string[]; // Key for duplicate checking
   onExport?: () => void;
   onAdd?: () => void;
   onCalculate?: () => void;
@@ -61,6 +66,8 @@ const DataGridModule: React.FC<DataGridModuleProps> = ({
   quickFilterText,
   onQuickFilterChange,
   onImport,
+  onImportData,
+  importUniqueKey = 'id',
   onExport,
   onAdd,
   onCalculate,
@@ -87,6 +94,75 @@ const DataGridModule: React.FC<DataGridModuleProps> = ({
   showCurrentPeriod = false,
   topContent
 }) => {
+  const [importPreview, setImportPreview] = useState<any[] | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = XLSX.utils.sheet_to_json(ws) as any[];
+        
+        if (data.length === 0) {
+          toast.error("The file is empty.");
+          return;
+        }
+
+        setImportPreview(data);
+      } catch (error) {
+        console.error('Error reading import file:', error);
+        toast.error('Failed to read the import file.');
+      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const { duplicateIds, hasImportDuplicates } = useMemo(() => {
+    if (!importPreview || !importUniqueKey) return { duplicateIds: [], hasImportDuplicates: false };
+    
+    const idsInFile = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    const keys = Array.isArray(importUniqueKey) ? importUniqueKey : [importUniqueKey];
+    
+    importPreview.forEach(row => {
+      // Try to find the ID using multiple common naming conventions if a specific key isn't found
+      let idValue: any = null;
+      for (const k of keys) {
+        if (row[k] !== undefined) {
+          idValue = row[k];
+          break;
+        }
+      }
+      
+      // Fallback to common ID field names if specified key not found
+      if (idValue === null) {
+        idValue = row['ID'] || row['id'] || row['Code'] || row['code'] || row['Order ID'] || row['orderId'] || row['Risk ID'] || row['riskId'] || row['Vendor ID'] || row['Vendor Name'] || row['Vendor'];
+      }
+
+      if (idValue !== null && idValue !== undefined) {
+        const normalizedId = idValue.toString().trim().toLowerCase();
+        if (idsInFile.has(normalizedId)) {
+          fileDuplicates.add(idValue.toString().trim());
+        }
+        idsInFile.add(normalizedId);
+      }
+    });
+
+    const duplicateList = Array.from(fileDuplicates);
+    return { 
+      duplicateIds: duplicateList, 
+      hasImportDuplicates: duplicateList.length > 0 
+    };
+  }, [importPreview, importUniqueKey]);
+
   const finalColumnDefs = React.useMemo(() => {
     if (!columnDefs || columnDefs.length === 0) return [];
     
@@ -163,13 +239,38 @@ const DataGridModule: React.FC<DataGridModuleProps> = ({
             </div>
           )}
           
-          {onImport && (
-            <button onClick={onImport} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Import">
-              <Upload className="w-5 h-5" />
-            </button>
+          {(onImport || onImportData) && (
+            <>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                accept=".xlsx,.xls" 
+              />
+              <button 
+                onClick={onImport || (() => fileInputRef.current?.click())} 
+                className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" 
+                title="Import"
+              >
+                <Upload className="w-5 h-5" />
+              </button>
+            </>
           )}
-          {onExport && (
-            <button onClick={onExport} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Export">
+          {(onExport || gridRef) && (
+            <button 
+              onClick={() => {
+                if (onExport) {
+                  onExport();
+                } else if (gridRef?.current?.api) {
+                  gridRef.current.api.exportDataAsExcel({ 
+                    fileName: `${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx` 
+                  });
+                }
+              }} 
+              className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" 
+              title="Export"
+            >
               <Download className="w-5 h-5" />
             </button>
           )}
@@ -192,12 +293,12 @@ const DataGridModule: React.FC<DataGridModuleProps> = ({
           {selectedCount > 1 && (
             <div className="flex gap-2">
               {onBulkUpdate && (
-                <button onClick={onBulkUpdate} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20">
+                <button onClick={onBulkUpdate} className="px-4 py-2 bg-black hover:bg-slate-800 text-white rounded-xl text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-black/20">
                   <Edit2 className="w-4 h-4" /> Bulk Update ({selectedCount})
                 </button>
               )}
               {onBulkDelete && (
-                <button onClick={onBulkDelete} className="px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20">
+                <button onClick={onBulkDelete} className="px-4 py-2 bg-black hover:bg-slate-800 text-white rounded-xl text-sm font-bold flex items-center gap-2 transition-all shadow-lg shadow-black/20">
                   <Trash2 className="w-4 h-4" /> Delete ({selectedCount})
                 </button>
               )}
@@ -336,6 +437,85 @@ const DataGridModule: React.FC<DataGridModuleProps> = ({
           </div>
         </div>
       </div>
+
+      <AnimatePresence>
+        {importPreview && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4 text-left">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col max-h-[90vh]"
+            >
+              <div className="flex justify-between items-start mb-6 shrink-0">
+                <div>
+                  <h2 className="text-2xl font-bold dark:text-white">Review Import: {title}</h2>
+                  <p className="text-gray-900 dark:text-gray-400 text-sm mt-1">
+                    Review records from your file. Existing entries will be updated based on matching IDs.
+                  </p>
+                </div>
+                <button onClick={() => setImportPreview(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              {hasImportDuplicates && (
+                <div className="mb-4 p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl flex flex-col gap-2 shrink-0">
+                  <div className="flex items-center gap-3 text-red-600 dark:text-red-400 text-[10px] font-black uppercase tracking-[0.15em]">
+                    <AlertTriangle className="w-4 h-4" />
+                    Duplicate ID found in file
+                  </div>
+                  <div className="text-sm text-red-600 dark:text-red-400 font-medium leading-relaxed">
+                    The following IDs appear multiple times in your excel: <span className="font-bold underline">{duplicateIds.join(', ')}</span>. Please resolve duplicates before importing.
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-auto border border-gray-100 dark:border-white/10 rounded-2xl mb-6 shadow-inner bg-gray-50/50 dark:bg-black/20">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-white dark:bg-[#1a1a1a] sticky top-0 border-b border-gray-200 dark:border-white/10 shadow-sm z-10">
+                    <tr>
+                      {Object.keys(importPreview[0] || {}).map(key => (
+                        <th key={key} className="px-4 py-3 font-bold text-gray-900 dark:text-white uppercase tracking-widest text-[10px] bg-white dark:bg-[#1a1a1a]">{key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                    {importPreview.map((row, i) => (
+                      <tr key={i} className="hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors">
+                        {Object.values(row).map((val: any, j) => (
+                          <td key={j} className="px-4 py-3 text-gray-900 dark:text-gray-300 font-medium whitespace-nowrap">{val?.toString()}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-4 shrink-0">
+                <button 
+                  onClick={() => setImportPreview(null)}
+                  className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (onImportData) {
+                      onImportData(importPreview);
+                    }
+                    setImportPreview(null);
+                  }}
+                  disabled={hasImportDuplicates}
+                  className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  Complete Import ({importPreview.length} records)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

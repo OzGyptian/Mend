@@ -230,22 +230,18 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     costCodeId: string;
     scope: string;
     probability: string;
-    impactAmount: string;
-    strategy: string;
-    mitigationCost: string;
-    residualProbability: string;
-    residualImpactAmount: string;
+    minImpactAmount: string;
+    mostLikelyImpactAmount: string;
+    maxImpactAmount: string;
     enterpriseAttributes: Record<string, any>;
     projectAttributes: Record<string, any>;
   }>({
     costCodeId: '',
     scope: '',
     probability: '',
-    impactAmount: '',
-    strategy: 'Mitigate',
-    mitigationCost: '',
-    residualProbability: '',
-    residualImpactAmount: '',
+    minImpactAmount: '',
+    mostLikelyImpactAmount: '',
+    maxImpactAmount: '',
     enterpriseAttributes: {},
     projectAttributes: {}
   });
@@ -296,78 +292,32 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     api.setColumnGroupState(newState);
   };
 
+  const [importPreview, setImportPreview] = useState<{ type: 'risks' | 'records', data: any[] } | null>(null);
+
   const handleExport = () => {
-    const exportData = risks.map(r => {
-      const row: any = {
-        'Risk ID': r.riskId,
-        'Description': r.description,
-        'Type': r.type,
-        'Status': r.status,
-        'Strategy': r.strategy,
-        'Initiator': r.initiator,
-        'Reference': r.reference,
-        'Exposure': r.exposure,
-        'Mitigation': r.mitigation,
-        'Residual Exposure': r.residualExposure
-      };
-      enterprise.riskAttributes?.forEach(attr => {
-        const val = r.enterpriseAttributes?.[attr.id];
-        const v = attr.values.find(v => v.id === val);
-        row[`[E] ${attr.title}`] = v ? `${v.id} - ${v.description}` : val || '';
+    if (gridRef.current?.api) {
+      gridRef.current.api.exportDataAsExcel({
+        fileName: `${project.projectCode}_Risks_${new Date().toISOString().split('T')[0]}.xlsx`
       });
-      project.riskAttributes?.forEach(attr => {
-        const val = r.projectAttributes?.[attr.id];
-        const v = attr.values.find(v => v.id === val);
-        row[`[P] ${attr.title}`] = v ? `${v.id} - ${v.description}` : val || '';
-      });
-      return row;
-    });
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Risks");
-    XLSX.writeFile(wb, `Risks_${project.projectName}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    }
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (evt) => {
+    reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-        const batch = writeBatch(db);
-        let addedCount = 0;
-        for (const row of data) {
-          const riskId = String(row['Risk ID'] || '').trim();
-          if (!riskId || risks.some(r => r.riskId.toLowerCase() === riskId.toLowerCase())) continue;
-          const newRiskRef = doc(collection(db, 'risks'));
-          batch.set(newRiskRef, {
-            projectId: project.id,
-            riskId: riskId.slice(0, 20),
-            description: row['Description'] || '',
-            type: row['Type'] || (enterprise.riskTypes?.[0] || ''),
-            status: row['Status'] || 'Open',
-            strategy: row['Strategy'] || 'Mitigate',
-            initiator: String(row['Initiator'] || '').slice(0, 50),
-            reference: String(row['Reference'] || '').slice(0, 50),
-            exposure: 0,
-            mitigation: 0,
-            residualExposure: 0,
-            enterpriseAttributes: {},
-            projectAttributes: {},
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-          addedCount++;
+        if (data.length === 0) {
+          toast.error("The file is empty.");
+          return;
         }
-        if (addedCount > 0) {
-          await batch.commit();
-          toast.success(`Imported ${addedCount} risks`);
-        }
+        setImportPreview({ type: 'risks', data });
       } catch (error) { toast.error("Import failed"); }
     };
     reader.readAsBinaryString(file);
@@ -375,21 +325,11 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   };
 
   const handleExportRecords = () => {
-    if (riskRecords.length === 0) return;
-    const exportData = riskRecords.map(r => ({
-      'Risk ID': risks.find(x => x.id === r.riskId)?.riskId || 'Unknown',
-      'Cost Code': r.costCodeId,
-      'Scope': r.scope,
-      'Prob %': (r.probability || 0) * 100,
-      'Impact $': r.impactAmount,
-      'Mitigation Cost $': r.mitigationCost,
-      'Res. Prob %': (r.residualProbability || 0) * 100,
-      'Res. Impact $': r.residualImpactAmount
-    }));
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Risk Records");
-    XLSX.writeFile(wb, `Risk_Records_${selectedRiskId}.xlsx`);
+    if (recordsGridRef.current?.api) {
+      recordsGridRef.current.api.exportDataAsExcel({
+        fileName: `${project.projectCode}_Risk_Records_${selectedRiskId}_${new Date().toISOString().split('T')[0]}.xlsx`
+      });
+    }
   };
 
   const handleImportRecords = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -397,50 +337,116 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async (evt) => {
+    reader.onload = (evt) => {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
-        const batch = writeBatch(db);
-        let addedCount = 0;
-        for (const row of data) {
-          const newRecordRef = doc(collection(db, 'riskRecords'));
-          batch.set(newRecordRef, {
-            riskId: selectedRiskId,
-            projectId: project.id,
-            costCodeId: String(row['Cost Code'] || '').trim(),
-            scope: String(row['Scope'] || ''),
-            probability: (Number(row['Prob %']) || 100) / 100,
-            impactAmount: Number(row['Impact $']) || 0,
-            mitigationCost: Number(row['Mitigation Cost $']) || 0,
-            residualProbability: (Number(row['Res. Prob %']) || 100) / 100,
-            residualImpactAmount: Number(row['Res. Impact $']) || 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-          addedCount++;
+        if (data.length === 0) {
+          toast.error("The file is empty.");
+          return;
         }
-        if (addedCount > 0) {
-          await batch.commit();
-          await updateParentTotals(selectedRiskId);
-          toast.success(`Imported ${addedCount} records`);
-        }
+        setImportPreview({ type: 'records', data });
       } catch (error) { toast.error("Import failed"); }
     };
     reader.readAsBinaryString(file);
     e.target.value = '';
   };
 
+  const completeImport = async () => {
+    if (!importPreview) return;
+    const { type, data } = importPreview;
+    try {
+      const batch = writeBatch(db);
+      let count = 0;
+
+      if (type === 'risks') {
+        for (const row of data) {
+          const riskId = String(row['Risk ID'] || row.riskId || row.ID || row.id || '').trim();
+          if (!riskId) continue;
+          
+          const existing = risks.find(r => r.riskId.toLowerCase() === riskId.toLowerCase());
+          const riskData = {
+            projectId: project.id,
+            riskId: riskId.slice(0, 20),
+            description: String(row['Description'] || row.description || ''),
+            type: String(row['Type'] || row.type || (enterprise.riskTypes?.[0] || '')),
+            status: String(row['Status'] || row.status || 'Open'),
+            strategy: String(row['Strategy'] || row.strategy || 'Mitigate'),
+            initiator: String(row['Initiator'] || row.initiator || '').slice(0, 50),
+            reference: String(row['Reference'] || row.reference || '').slice(0, 50),
+            updatedAt: new Date().toISOString()
+          };
+
+          if (existing) {
+            batch.update(doc(db, 'risks', existing.id), riskData);
+          } else {
+            const newRiskRef = doc(collection(db, 'risks'));
+            batch.set(newRiskRef, {
+              ...riskData,
+              exposure: 0,
+              minImpactTotal: 0,
+              mostLikelyImpactTotal: 0,
+              maxImpactTotal: 0,
+              mitigation: 0,
+              residualExposure: 0,
+              enterpriseAttributes: {},
+              projectAttributes: {},
+              createdAt: new Date().toISOString()
+            });
+          }
+          count++;
+        }
+        await batch.commit();
+        toast.success(`Processed ${count} risks`);
+      } else if (type === 'records' && selectedRiskId) {
+        for (const row of data) {
+          const costCodeId = String(row['Cost Code'] || row.costCodeId || '').trim();
+          if (!costCodeId) continue;
+
+          const newRecordRef = doc(collection(db, 'riskRecords'));
+          const min = Number(row['Min Value $'] || row.minImpactAmount || 0);
+          const mostLikely = Number(row['Most Likely $'] || row.mostLikelyImpactAmount || 0);
+          const max = Number(row['Max Value $'] || row.maxImpactAmount || 0);
+          const prob = Number(row['Prob %'] || row.probability || 100) / 100;
+          const betaPert = ((min + 4 * mostLikely + max) / 6) * prob;
+
+          batch.set(newRecordRef, {
+            riskId: selectedRiskId,
+            projectId: project.id,
+            costCodeId,
+            scope: String(row['Scope'] || row.scope || ''),
+            probability: prob,
+            minImpactAmount: min,
+            mostLikelyImpactAmount: mostLikely,
+            maxImpactAmount: max,
+            betaPertImpactAmount: betaPert,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          });
+          count++;
+        }
+        await batch.commit();
+        await updateParentTotals(selectedRiskId);
+        toast.success(`Imported ${count} records`);
+      }
+    } catch (error) {
+      console.error('Import commit error:', error);
+      toast.error("Failed to finish import");
+    }
+    setImportPreview(null);
+  };
+
   const riskPinnedBottomRowData = useMemo(() => {
     if (risks.length === 0) return [];
     return [{
       riskId: 'TOTALS',
-      exposure: risks.reduce((sum, r) => sum + (r.exposure || 0), 0),
-      mitigation: risks.reduce((sum, r) => sum + (r.mitigation || 0), 0),
-      residualExposure: risks.reduce((sum, r) => sum + (r.residualExposure || 0), 0)
+      minImpactTotal: risks.reduce((sum, r) => sum + (r.minImpactTotal || 0), 0),
+      mostLikelyImpactTotal: risks.reduce((sum, r) => sum + (r.mostLikelyImpactTotal || 0), 0),
+      maxImpactTotal: risks.reduce((sum, r) => sum + (r.maxImpactTotal || 0), 0),
+      exposure: risks.reduce((sum, r) => sum + (r.exposure || 0), 0)
     }];
   }, [risks]);
 
@@ -448,13 +454,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     if (riskRecords.length === 0) return [];
     return [{
       costCodeId: 'TOTALS',
-      impactAmount: riskRecords.reduce((sum, r) => sum + (r.impactAmount || 0), 0),
-      mitigationCost: riskRecords.reduce((sum, r) => sum + (r.mitigationCost || 0), 0),
-      residualImpactAmount: riskRecords.reduce((sum, r) => sum + (r.residualImpactAmount || 0), 0),
-      // Computed EMVs
-      probability: null, // EMV is what matters for totals
-      initialEMV: riskRecords.reduce((sum, r) => sum + ((r.probability || 0) * (r.impactAmount || 0)), 0),
-      residualEMV: riskRecords.reduce((sum, r) => sum + ((r.residualProbability || 0) * (r.residualImpactAmount || 0)), 0)
+      minImpactAmount: riskRecords.reduce((sum, r) => sum + (r.minImpactAmount || 0), 0),
+      mostLikelyImpactAmount: riskRecords.reduce((sum, r) => sum + (r.mostLikelyImpactAmount || 0), 0),
+      maxImpactAmount: riskRecords.reduce((sum, r) => sum + (r.maxImpactAmount || 0), 0),
+      betaPertImpactAmount: riskRecords.reduce((sum, r) => sum + (r.betaPertImpactAmount || 0), 0)
     }];
   }, [riskRecords]);
 
@@ -501,12 +504,8 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     const data = periods.map((p, index) => {
       const periodRisks = risks.filter(r => r.periodId === p.id);
       const exposure = periodRisks.reduce((sum, r) => sum + (r.exposure || 0), 0);
-      const mitigation = periodRisks.reduce((sum, r) => sum + (r.mitigation || 0), 0);
-      const residual = periodRisks.reduce((sum, r) => sum + (r.residualExposure || 0), 0);
       
       cumulativeExposure += exposure;
-      cumulativeMitigation += mitigation;
-      cumulativeResidual += residual;
 
       const date = new Date(p.startDate);
       const month = date.toLocaleString('en-US', { month: 'short' });
@@ -516,11 +515,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       return {
         name: `P${index + 1} (${dateLabel})`,
         exposure,
-        mitigation,
-        residualExposure: residual,
-        cumulativeExposure,
-        cumulativeMitigation,
-        cumulativeResidual
+        cumulativeExposure
       };
     });
 
@@ -595,6 +590,9 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         initiator: newRisk.initiator.slice(0, 50),
         reference: newRisk.reference.slice(0, 50),
         exposure: 0,
+        minImpactTotal: 0,
+        mostLikelyImpactTotal: 0,
+        maxImpactTotal: 0,
         mitigation: 0,
         residualExposure: 0,
         periodId: newRisk.periodId,
@@ -633,14 +631,16 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     try {
       const recordsSnap = await getDocs(query(collection(db, 'riskRecords'), where('riskId', '==', riskId)));
       const records = recordsSnap.docs.map(d => d.data() as RiskRecord);
-      const totalInitialExposure = records.reduce((sum, r) => sum + ((Number(r.probability) || 0) * (Number(r.impactAmount) || 0)), 0);
-      const totalMitigation = records.reduce((sum, r) => sum + (Number(r.mitigationCost) || 0), 0);
-      const totalResidualExposure = records.reduce((sum, r) => sum + ((Number(r.residualProbability) || 0) * (Number(r.residualImpactAmount) || 0)), 0);
+      const totalBetaPert = records.reduce((sum, r) => sum + (Number(r.betaPertImpactAmount) || 0), 0);
+      const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
+      const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
+      const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
       
       await updateDoc(doc(db, 'risks', riskId), {
-        exposure: totalInitialExposure,
-        mitigation: totalMitigation,
-        residualExposure: totalResidualExposure,
+        exposure: totalBetaPert,
+        minImpactTotal: totalMin,
+        mostLikelyImpactTotal: totalLikely,
+        maxImpactTotal: totalMax,
         updatedAt: new Date().toISOString()
       });
     } catch (error) {
@@ -681,9 +681,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         headerName: 'Strategy', field: 'strategy', editable: true, width: 130,
         cellEditor: 'agSelectCellEditor', cellEditorParams: { values: ['Avoid', 'Mitigate', 'Transfer', 'Accept'] }
       },
-      { headerName: 'Initial Exposure (EMV)', field: 'exposure', width: 160, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn', cellStyle: { fontWeight: 'bold', color: '#dc2626' } },
-      { headerName: 'Mitigation Cost', field: 'mitigation', width: 140, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn', cellStyle: { fontWeight: 'bold' } },
-      { headerName: 'Residual Exposure', field: 'residualExposure', width: 160, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn', cellStyle: { fontWeight: 'bold', color: '#2563eb' } },
+      { headerName: 'Min Value $', field: 'minImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
+      { headerName: 'Most Likely $', field: 'mostLikelyImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
+      { headerName: 'Max Value $', field: 'maxImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
+      { headerName: 'Beta Pert Exposure', field: 'exposure', width: 160, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn', cellStyle: { fontWeight: 'bold', color: '#dc2626' } },
       {
         headerName: 'Actions', width: 80, pinned: 'right',
         cellRenderer: (p: any) => p.node.rowPinned ? null : (
@@ -703,18 +704,16 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         children: enterpriseRiskAttrs.map(attr => ({
           headerName: attr.title,
           field: `enterpriseAttributes.${attr.id}`,
-          width: 150,
+          width: 200,
           editable: true,
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: attr.values.map(v => v.id),
-            searchType: 'match',
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
             allowTyping: true,
             filterList: true
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
           }
         }))
       });
@@ -729,18 +728,16 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         children: projectRiskAttrs.map(attr => ({
           headerName: attr.title,
           field: `projectAttributes.${attr.id}`,
-          width: 150,
+          width: 200,
           editable: true,
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: attr.values.map(v => v.id),
-            searchType: 'match',
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
             allowTyping: true,
             filterList: true
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
           }
         }))
       });
@@ -772,12 +769,29 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       { headerName: '', checkboxSelection: true, headerCheckboxSelection: true, headerCheckboxSelectionFilteredOnly: true, width: 50, pinned: 'left' },
       {
         headerName: 'Cost Code', field: 'costCodeId', editable: true, width: 180,
-        cellEditor: 'agRichSelectCellEditor', cellEditorParams: { values: costCodes.map(c => c.code), searchType: 'match', allowTyping: true, filterList: true },
-        cellRenderer: (params: any) => params.node.rowPinned ? <span className="font-bold">{params.value}</span> : params.value
+        cellEditor: 'agSelectCellEditor', 
+        cellEditorParams: { 
+          values: ['', ...costCodes.map(c => c.id)],
+          valueListGap: 0,
+          formatValue: (id: string) => {
+            if (!id) return 'Select Cost Code...';
+            const cc = costCodes.find(c => c.id === id);
+            return cc ? `${cc.code} - ${cc.name}` : id;
+          }
+        },
+        valueFormatter: (params) => {
+          if (!params.value) return '';
+          const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
+          return cc ? cc.code : params.value;
+        },
+        tooltipValueGetter: (params) => {
+          const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
+          return cc ? `${cc.code} - ${cc.name}` : params.value;
+        }
       },
       { headerName: 'Scope', field: 'scope', editable: true, width: 250 },
       {
-        headerName: 'Initial Risk Analysis',
+        headerName: 'Risk Impact Analysis',
         openByDefault: true,
         children: [
           {
@@ -788,47 +802,30 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
             valueParser: (p) => Number(p.newValue) > 1 ? Number(p.newValue) / 100 : Number(p.newValue)
           },
           {
-            headerName: 'Impact $', field: 'impactAmount', editable: true, width: 130, type: 'numericColumn',
+            headerName: 'Min Value $', field: 'minImpactAmount', editable: true, width: 130, type: 'numericColumn',
             valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
           },
           {
-            headerName: 'EMV', width: 120, type: 'numericColumn',
+            headerName: 'Most Likely $', field: 'mostLikelyImpactAmount', editable: true, width: 130, type: 'numericColumn',
+            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
+          },
+          {
+            headerName: 'Maximum Value $', field: 'maxImpactAmount', editable: true, width: 130, type: 'numericColumn',
+            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
+          },
+          {
+            headerName: 'Beta Pert', width: 120, type: 'numericColumn',
+            field: 'betaPertImpactAmount',
             valueGetter: (p) => {
-              if (p.node.rowPinned) return p.data.initialEMV;
-              return (Number(p.data.probability) || 0) * (Number(p.data.impactAmount) || 0);
+              if (p.node.rowPinned) return p.data.betaPertImpactAmount;
+              const prob = Number(p.data.probability) || 0;
+              const min = Number(p.data.minImpactAmount) || 0;
+              const ml = Number(p.data.mostLikelyImpactAmount) || 0;
+              const max = Number(p.data.maxImpactAmount) || 0;
+              return ((min + 4 * ml + max) / 6) * prob;
             },
             valueFormatter: (p) => formatCurrency(p.value),
             cellStyle: { backgroundColor: 'rgba(220, 38, 38, 0.05)', fontWeight: 'bold' }
-          }
-        ]
-      },
-      {
-        headerName: 'Mitigation Cost $', field: 'mitigationCost', editable: true, width: 160, type: 'numericColumn',
-        valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-      },
-      {
-        headerName: 'Residual Risk Analysis',
-        openByDefault: true,
-        children: [
-          {
-            headerName: 'Res. Prob %', field: 'residualProbability', editable: true, width: 110,
-            valueFormatter: (p) => p.value === null ? '' : `${((p.value || 0) * 100).toFixed(0)}%`,
-            cellEditor: 'agNumberCellEditor',
-            cellEditorParams: { min: 0, max: 1 },
-            valueParser: (p) => Number(p.newValue) > 1 ? Number(p.newValue) / 100 : Number(p.newValue)
-          },
-          {
-            headerName: 'Res. Impact $', field: 'residualImpactAmount', editable: true, width: 130, type: 'numericColumn',
-            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-          },
-          {
-            headerName: 'Res. EMV', width: 120, type: 'numericColumn',
-            valueGetter: (p) => {
-              if (p.node.rowPinned) return p.data.residualEMV;
-              return (Number(p.data.residualProbability) || 0) * (Number(p.data.residualImpactAmount) || 0);
-            },
-            valueFormatter: (p) => formatCurrency(p.value),
-            cellStyle: { backgroundColor: 'rgba(37, 99, 235, 0.05)', fontWeight: 'bold' }
           }
         ]
       },
@@ -853,8 +850,19 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     if (!data.id) return;
     try {
       let updates: any = { [colDef.field!]: params.newValue, updatedAt: new Date().toISOString() };
+      
+      // If any PERT input changes, update betaPertImpactAmount
+      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
+        const prob = Number(colDef.field === 'probability' ? params.newValue : data.probability) || 0;
+        const min = Number(colDef.field === 'minImpactAmount' ? params.newValue : data.minImpactAmount) || 0;
+        const ml = Number(colDef.field === 'mostLikelyImpactAmount' ? params.newValue : data.mostLikelyImpactAmount) || 0;
+        const max = Number(colDef.field === 'maxImpactAmount' ? params.newValue : data.maxImpactAmount) || 0;
+        const betaPert = ((min + 4 * ml + max) / 6) * prob;
+        updates.betaPertImpactAmount = betaPert;
+      }
+      
       await updateDoc(doc(db, 'riskRecords', data.id), updates);
-      if (['probability', 'impactAmount', 'mitigationCost', 'residualProbability', 'residualImpactAmount'].includes(colDef.field!)) {
+      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
         updateParentTotals(data.riskId);
       }
     } catch (error) {
@@ -871,13 +879,14 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         costCodeId: '',
         scope: '',
         probability: 1.0,
-        impactAmount: 0,
-        mitigationCost: 0,
-        residualProbability: 1.0,
-        residualImpactAmount: 0,
+        minImpactAmount: 0,
+        mostLikelyImpactAmount: 0,
+        maxImpactAmount: 0,
+        betaPertImpactAmount: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
+      await updateParentTotals(selectedRiskId);
       toast.success("Record added (Default Prob 100%)");
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'riskRecords');
@@ -889,16 +898,34 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     try {
       const batch = writeBatch(db);
       const updates: any = { updatedAt: new Date().toISOString() };
-      if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
+      if (bulkRecordUpdateData.costCodeId) {
+        updates.costCodeId = bulkRecordUpdateData.costCodeId === '_' ? '' : bulkRecordUpdateData.costCodeId;
+      }
       if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope;
       if (bulkRecordUpdateData.probability) updates.probability = Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability);
-      if (bulkRecordUpdateData.impactAmount) updates.impactAmount = Number(bulkRecordUpdateData.impactAmount);
-      if (bulkRecordUpdateData.mitigationCost) updates.mitigationCost = Number(bulkRecordUpdateData.mitigationCost);
-      if (bulkRecordUpdateData.residualProbability) updates.residualProbability = Number(bulkRecordUpdateData.residualProbability) > 1 ? Number(bulkRecordUpdateData.residualProbability) / 100 : Number(bulkRecordUpdateData.residualProbability);
-      if (bulkRecordUpdateData.residualImpactAmount) updates.residualImpactAmount = Number(bulkRecordUpdateData.residualImpactAmount);
+      
+      const hasMinChange = bulkRecordUpdateData.minImpactAmount !== '';
+      const hasMLChange = bulkRecordUpdateData.mostLikelyImpactAmount !== '';
+      const hasMaxChange = bulkRecordUpdateData.maxImpactAmount !== '';
+      
+      if (hasMinChange) updates.minImpactAmount = Number(bulkRecordUpdateData.minImpactAmount);
+      if (hasMLChange) updates.mostLikelyImpactAmount = Number(bulkRecordUpdateData.mostLikelyImpactAmount);
+      if (hasMaxChange) updates.maxImpactAmount = Number(bulkRecordUpdateData.maxImpactAmount);
 
       selectedRecordIds.forEach(id => {
-        batch.update(doc(db, 'riskRecords', id), updates);
+        const record = riskRecords.find(r => r.id === id);
+        if (record) {
+          const finalUpdates = { ...updates };
+          const hasProbChange = bulkRecordUpdateData.probability !== '';
+          if (hasMinChange || hasMLChange || hasMaxChange || hasProbChange) {
+            const prob = hasProbChange ? (Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability)) : (record.probability || 0);
+            const min = hasMinChange ? Number(bulkRecordUpdateData.minImpactAmount) : (record.minImpactAmount || 0);
+            const ml = hasMLChange ? Number(bulkRecordUpdateData.mostLikelyImpactAmount) : (record.mostLikelyImpactAmount || 0);
+            const max = hasMaxChange ? Number(bulkRecordUpdateData.maxImpactAmount) : (record.maxImpactAmount || 0);
+            finalUpdates.betaPertImpactAmount = ((min + 4 * ml + max) / 6) * prob;
+          }
+          batch.update(doc(db, 'riskRecords', id), finalUpdates);
+        }
       });
       await batch.commit();
       await updateParentTotals(selectedRiskId);
@@ -926,6 +953,24 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       handleFirestoreError(error, OperationType.DELETE, 'riskRecords/bulk');
     }
   };
+
+  const { duplicateIds, hasImportDuplicates } = useMemo(() => {
+    if (!importPreview) return { duplicateIds: [], hasImportDuplicates: false };
+    const idsInFile = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    importPreview.data.forEach(row => {
+      const id = importPreview.type === 'risks' 
+        ? (row['Risk ID'] || row.riskId || row.ID || row.id)
+        : (row['Cost Code'] || row.costCodeId);
+      if (id) {
+        const normalizedId = id.toString().trim().toLowerCase();
+        if (idsInFile.has(normalizedId)) fileDuplicates.add(id.toString().trim());
+        idsInFile.add(normalizedId);
+      }
+    });
+    const duplicateList = Array.from(fileDuplicates);
+    return { duplicateIds: duplicateList, hasImportDuplicates: duplicateList.length > 0 };
+  }, [importPreview]);
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
@@ -986,43 +1031,45 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
             )}
           </div>
         </div>
-        <div className="grid grid-cols-4 gap-4 p-6 bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 shrink-0">
+
+        <AnimatePresence>
+          {isChartsVisible && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 300, opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="flex gap-4 p-8 border-b border-gray-100 dark:border-white/10 shrink-0 overflow-hidden">
+              <div className="flex-1">
+                <h4 className="text-xs font-bold text-gray-400 uppercase mb-4 px-2">Risk Exposure Trend (Beta Pert)</h4>
+                <div className="h-48">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={chartData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'} />
+                      <XAxis dataKey="name" stroke={theme === 'dark' ? '#94a3b8' : '#64748b'} fontSize={10} axisLine={false} tickLine={false} />
+                      <YAxis stroke={theme === 'dark' ? '#94a3b8' : '#64748b'} fontSize={10} axisLine={false} tickLine={false} tickFormatter={(val) => `$${(val / 1000)}k`} />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: theme === 'dark' ? '#1a1a1a' : '#fff', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
+                        formatter={(value: number) => [formatCurrency(value), '']}
+                      />
+                      <Bar dataKey="exposure" fill="#dc2626" radius={[4, 4, 0, 0]} barSize={30} />
+                      <Line type="monotone" dataKey="cumulativeExposure" stroke="#dc2626" strokeWidth={2} dot={{ r: 4 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="grid grid-cols-2 gap-4 p-6 bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 shrink-0">
           <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
-            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Initial EMV</h4>
+            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Beta Pert Exposure</h4>
             <div className="flex items-center justify-between">
               <span className="text-xl font-bold text-red-600">{formatCurrency(risks.reduce((sum, r) => sum + (r.exposure || 0), 0))}</span>
               <AlertTriangle className="w-5 h-5 text-red-500 opacity-20" />
             </div>
           </div>
           <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
-            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Mitigation Cost</h4>
+            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Impact Reduction Factor</h4>
             <div className="flex items-center justify-between">
-              <span className="text-xl font-bold dark:text-white">{formatCurrency(risks.reduce((sum, r) => sum + (r.mitigation || 0), 0))}</span>
-              <ShieldCheck className="w-5 h-5 text-emerald-500 opacity-20" />
-            </div>
-          </div>
-          <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
-            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Residual EMV</h4>
-            <div className="flex items-center justify-between">
-              <span className="text-xl font-bold text-blue-600">{formatCurrency(risks.reduce((sum, r) => sum + (r.residualExposure || 0), 0))}</span>
-              <Activity className="w-5 h-5 text-blue-500 opacity-20" />
-            </div>
-          </div>
-          <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
-            <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Risk Reduction</h4>
-            <div className="flex items-center justify-between">
-              {(() => {
-                const initial = risks.reduce((sum, r) => sum + (r.exposure || 0), 0);
-                const residual = risks.reduce((sum, r) => sum + (r.residualExposure || 0), 0);
-                const reduction = initial - residual;
-                const percent = initial > 0 ? (reduction / initial) * 100 : 0;
-                return (
-                  <>
-                    <span className="text-xl font-bold text-emerald-600">+{percent.toFixed(1)}%</span>
-                    <TrendingUp className="w-5 h-5 text-emerald-500 opacity-20" />
-                  </>
-                );
-              })()}
+              <span className="text-xl font-bold text-emerald-600">Active Monitoring</span>
+              <Activity className="w-5 h-5 text-emerald-500 opacity-20" />
             </div>
           </div>
         </div>
@@ -1077,6 +1124,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
                     <button onClick={() => setIsBulkRecordDeleteOpen(true)} className="px-2 py-1 bg-red-600 text-white rounded text-[10px] font-bold shadow-lg shadow-red-600/20 hover:bg-red-700">Delete ({selectedRecordIds.size})</button>
                   </div>
                 )}
+                <button onClick={() => updateParentTotals(selectedRiskId!)} className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800 transition-colors">
+                  <RefreshCw className="w-3 h-3" />
+                  Recalculate
+                </button>
                 <button onClick={handleAddRecord} className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"><Plus className="w-3 h-3" /> Add Impact</button>
                 <button onClick={() => setSelectedRiskId(null)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-lg transition-colors"><X className="w-4 h-4 dark:text-white" /></button>
               </div>
@@ -1174,15 +1225,27 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Update Risk Records</DialogTitle></DialogHeader>
           <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto pr-2">
+            <Select onValueChange={v => setBulkRecordUpdateData({...bulkRecordUpdateData, costCodeId: v})} value={bulkRecordUpdateData.costCodeId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Cost Code">
+                  {bulkRecordUpdateData.costCodeId === '_' ? 'Clear Cost Code' : 
+                   costCodes.find(cc => cc.id === bulkRecordUpdateData.costCodeId)?.code || 
+                   (bulkRecordUpdateData.costCodeId && "Selected")}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_">Clear Cost Code</SelectItem>
+                {costCodes.map(cc => (
+                  <SelectItem key={cc.id} value={cc.id}>{cc.code} - {cc.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Input placeholder="Scope" value={bulkRecordUpdateData.scope} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, scope: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <Input type="number" placeholder="Prob % (0-100)" value={bulkRecordUpdateData.probability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, probability: e.target.value})} />
-              <Input type="number" placeholder="Impact $" value={bulkRecordUpdateData.impactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, impactAmount: e.target.value})} />
-            </div>
-            <Input type="number" placeholder="Mitigation Cost $" value={bulkRecordUpdateData.mitigationCost} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, mitigationCost: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <Input type="number" placeholder="Res. Prob % (0-100)" value={bulkRecordUpdateData.residualProbability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, residualProbability: e.target.value})} />
-              <Input type="number" placeholder="Res. Impact $" value={bulkRecordUpdateData.residualImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, residualImpactAmount: e.target.value})} />
+            <Input type="number" placeholder="Prob % (0-100)" value={bulkRecordUpdateData.probability} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, probability: e.target.value})} />
+            <div className="grid grid-cols-3 gap-4">
+              <Input type="number" placeholder="Min Value $" value={bulkRecordUpdateData.minImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, minImpactAmount: e.target.value})} />
+              <Input type="number" placeholder="Most Likely $" value={bulkRecordUpdateData.mostLikelyImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, mostLikelyImpactAmount: e.target.value})} />
+              <Input type="number" placeholder="Max Value $" value={bulkRecordUpdateData.maxImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, maxImpactAmount: e.target.value})} />
             </div>
           </div>
           <DialogFooter><Button onClick={handleBulkUpdateRecords}>Update</Button></DialogFooter>
@@ -1201,6 +1264,80 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AnimatePresence>
+        {importPreview && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-[110] p-4 font-sans">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-4xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col max-h-[90vh]"
+            >
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h2 className="text-2xl font-bold dark:text-white">Review {importPreview.type === 'risks' ? 'Risks' : 'Records'} Import</h2>
+                  <p className="text-gray-900 dark:text-gray-400 text-sm mt-1">
+                    Review the data from your file below. {importPreview.type === 'risks' ? 'Existing Risk IDs will be updated.' : 'New records will be added to the selected risk.'}
+                  </p>
+                </div>
+                <button onClick={() => setImportPreview(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-white/10 rounded-full transition-colors">
+                  <X className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+
+              {hasImportDuplicates && (
+                <div className="mb-4 p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl flex flex-col gap-2">
+                  <div className="flex items-center gap-3 text-red-600 dark:text-red-400 text-[10px] font-black uppercase tracking-[0.15em]">
+                    <AlertTriangle className="w-4 h-4" />
+                    Duplicate ID found in file
+                  </div>
+                  <div className="text-sm text-red-600 dark:text-red-400 font-medium leading-relaxed">
+                    The following IDs appear multiple times in your excel: <span className="font-bold underline">{duplicateIds.join(', ')}</span>. Please resolve duplicates before importing.
+                  </div>
+                </div>
+              )}
+
+              <div className="flex-1 overflow-auto border border-gray-100 dark:border-white/10 rounded-2xl mb-6 shadow-inner bg-gray-50/50 dark:bg-black/20">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-white dark:bg-[#1a1a1a] sticky top-0 border-b border-gray-200 dark:border-white/10 shadow-sm z-10">
+                    <tr>
+                      {Object.keys(importPreview.data[0] || {}).map(key => (
+                        <th key={key} className="px-4 py-3 font-bold text-gray-900 dark:text-white uppercase tracking-widest text-[10px] bg-white dark:bg-[#1a1a1a]">{key}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                    {importPreview.data.map((row, i) => (
+                      <tr key={i} className="hover:bg-gray-100/50 dark:hover:bg-white/5 transition-colors">
+                        {Object.values(row).map((val: any, j) => (
+                          <td key={j} className="px-4 py-3 text-gray-900 dark:text-gray-300 font-medium whitespace-nowrap">{val?.toString()}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setImportPreview(null)}
+                  className="flex-1 py-4 border border-gray-200 dark:border-white/10 rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={completeImport}
+                  disabled={hasImportDuplicates}
+                  className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  Complete Import ({importPreview.data.length} records)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

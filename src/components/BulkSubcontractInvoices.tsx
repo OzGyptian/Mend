@@ -377,7 +377,93 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
         rowData={rowData}
         columnDefs={columnDefs}
         pinnedBottomRowData={pinnedBottomRowData}
-        onImport={() => fileInputRef.current?.click()}
+        gridRef={gridRef}
+        onImportData={(excelData) => {
+          const processImport = async () => {
+            const toastId = toast.loading('Importing invoices...');
+            try {
+              // Duplicate check in file
+              const idsInFile = new Set<string>();
+              const duplicates = [];
+              excelData.forEach((row, idx) => {
+                const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '').trim();
+                if (orderId && invoiceNo) {
+                  const key = `${orderId.toLowerCase()}_${invoiceNo.toLowerCase()}`;
+                  if (idsInFile.has(key)) duplicates.push({ row: idx + 1, key });
+                  idsInFile.add(key);
+                }
+              });
+
+              if (duplicates.length > 0) {
+                toast.error(`Duplicate invoices found in file: ${duplicates.map(d => d.key).join(', ')}`, { id: toastId });
+                return;
+              }
+
+              const chunkSize = 400;
+              const totalChunks = Math.ceil(excelData.length / chunkSize);
+              let importedCount = 0;
+
+              for (let i = 0; i < totalChunks; i++) {
+                const chunk = excelData.slice(i * chunkSize, (i + 1) * chunkSize);
+                const batch = writeBatch(db);
+
+                for (const row of chunk) {
+                  const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                  const targetSub = subcontracts.find(s => s.orderId === orderId);
+                  if (!targetSub) continue;
+
+                  const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '');
+                  if (!invoiceNo) continue;
+
+                  const existingInvoice = invoices.find(i => i.subcontractId === targetSub.id && i.invoiceId === invoiceNo);
+                  
+                  if (existingInvoice) {
+                    const updateProps: any = { updatedAt: new Date().toISOString() };
+                    if (row['Description'] || row.description) updateProps.description = String(row['Description'] || row.description);
+                    if (row['Status'] || row.status) updateProps.status = row['Status'] || row.status;
+                    if (row['Initiator'] || row.initiator) updateProps.initiator = row['Initiator'] || row.initiator;
+                    if (row['Submitted Date'] || row.submittedDate) updateProps.submittedDate = dateToISO(new Date(row['Submitted Date'] || row.submittedDate));
+                    if (row['Certified Date'] || row.certifiedDate) updateProps.certifiedDate = dateToISO(new Date(row['Certified Date'] || row.certifiedDate));
+                    if (row['Payment Date'] || row.paymentDate) updateProps.paymentDate = dateToISO(new Date(row['Payment Date'] || row.paymentDate));
+
+                    batch.update(doc(db, 'invoices', existingInvoice.id), updateProps);
+                  } else {
+                    const newInvRef = doc(collection(db, 'invoices'));
+                    const newInv: Invoice = {
+                      id: newInvRef.id,
+                      subcontractId: targetSub.id,
+                      projectId: project.id,
+                      enterpriseId: enterprise.id,
+                      invoiceId: invoiceNo,
+                      description: String(row['Description'] || row.description || ''),
+                      status: (row['Status'] || row.status || 'Draft') as any,
+                      initiator: String(row['Initiator'] || row.initiator || ''),
+                      vendorId: targetSub.vendorId,
+                      vendorName: targetSub.vendorName,
+                      totalAmount: 0,
+                      certifiedAmount: 0,
+                      items: [],
+                      submittedDate: (row['Submitted Date'] || row.submittedDate) ? dateToISO(new Date(row['Submitted Date'] || row.submittedDate)) : undefined,
+                      certifiedDate: (row['Certified Date'] || row.certifiedDate) ? dateToISO(new Date(row['Certified Date'] || row.certifiedDate)) : undefined,
+                      paymentDate: (row['Payment Date'] || row.paymentDate) ? dateToISO(new Date(row['Payment Date'] || row.paymentDate)) : undefined,
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                    };
+                    batch.set(newInvRef, newInv);
+                  }
+                  importedCount++;
+                }
+                await batch.commit();
+              }
+              toast.success(`Imported ${importedCount} invoices.`, { id: toastId });
+            } catch (error: any) {
+              console.error("Import error:", error);
+              toast.error("Failed to import invoices: " + error.message, { id: toastId });
+            }
+          };
+          processImport();
+        }}
         selectedCount={selectedIds.length}
         onBulkUpdate={() => setIsBulkUpdateOpen(true)}
         onBulkDelete={() => setIsBulkDeleteOpen(true)}

@@ -8,6 +8,7 @@ import RiskManagementSubPane from './RiskManagementSubPane';
 import SubcontractManagement from './SubcontractManagement';
 import ProcurementManagementSubPane from './ProcurementManagementSubPane';
 import ProgressManagementSubPane from './ProgressManagementSubPane';
+import TimeSchedule from './TimeSchedule';
 import Invoicing from './Invoicing';
 import ErrorBoundary from './ErrorBoundary';
 import { cn } from '../lib/utils';
@@ -257,6 +258,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
             setIsSidebarCollapsed={setIsSidebarCollapsed}
           />
         );
+      case 'schedule':
+        return (
+          <TimeSchedule 
+            project={project}
+            enterprise={enterprise}
+            theme={theme}
+          />
+        );
       default:
         return (
           <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">
@@ -275,14 +284,14 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
   return (
     <div className={cn(
       "flex-1 flex flex-col w-full h-full transition-colors duration-300",
-      (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'risk' || currentModule === 'procurement' || currentModule === 'progress') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
+      (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'risk' || currentModule === 'procurement' || currentModule === 'progress' || currentModule === 'schedule') ? "p-0 overflow-hidden" : "p-4 md:p-8 overflow-auto"
     )}>
       <div className={cn(
         "w-full flex-1 flex flex-col min-h-0",
-        (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'bulk-change-records' || currentModule === 'risk' || currentModule === 'procurement' || currentModule === 'progress') ? "" : "max-w-[1600px] mx-auto"
+        (currentModule === 'cost' || currentModule === 'change' || currentModule === 'subcontract' || currentModule === 'bulk-change-records' || currentModule === 'risk' || currentModule === 'procurement' || currentModule === 'progress' || currentModule === 'schedule') ? "" : "max-w-[1600px] mx-auto"
       )}>
         {/* Project Hero Section */}
-        {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'bulk-change-records' && (
+        {project.photoURL && currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'bulk-change-records' && currentModule !== 'schedule' && (
           <div className="relative h-64 w-full rounded-3xl overflow-hidden shadow-2xl group mb-10 shrink-0">
             <img 
               src={project.photoURL} 
@@ -308,7 +317,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
           </div>
         )}
 
-        {currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'risk' && currentModule !== 'procurement' && (
+        {currentModule !== 'cost' && currentModule !== 'change' && currentModule !== 'subcontract' && currentModule !== 'risk' && currentModule !== 'procurement' && currentModule !== 'schedule' && (
           <div className="flex justify-between items-start mb-10 shrink-0">
             <div>
               {!project.photoURL && (

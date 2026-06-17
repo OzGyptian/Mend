@@ -322,17 +322,17 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
     const costCodeAttrCols: ColDef[] = enterpriseCostCodeAttrs.map(attr => ({
       headerName: `Cost Code: ${attr.title}`,
       field: `enterpriseCostCodeAttributes.${attr.id}`,
-      width: 150,
+      width: 200,
       editable: true,
       filter: 'agSetColumnFilter',
-      cellEditor: 'agSelectCellEditor',
+      cellEditor: 'agRichSelectCellEditor',
       cellEditorParams: {
-        values: ['', ...(attr.values?.map(v => v.id) || [])]
-      },
-      valueFormatter: (params: ValueFormatterParams) => {
-        if (!params.value) return '';
-        const match = attr.values?.find(v => v.id === params.value);
-        return match ? `${match.id} - ${match.description}` : params.value;
+        values: (attr.values || [])
+          .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+          .map(v => `${v.id} | ${v.description}`),
+        searchType: 'matchAny',
+        allowTyping: true,
+        filterList: true
       }
     }));
 
@@ -341,17 +341,17 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
     const lineItemAttrCols: ColDef[] = enterpriseLineItemAttrs.map(attr => ({
       headerName: `Line Item: ${attr.title}`,
       field: `enterpriseLineItemAttributes.${attr.id}`,
-      width: 150,
+      width: 200,
       editable: true,
       filter: 'agSetColumnFilter',
-      cellEditor: 'agSelectCellEditor',
+      cellEditor: 'agRichSelectCellEditor',
       cellEditorParams: {
-        values: ['', ...(attr.values?.map(v => v.id) || [])]
-      },
-      valueFormatter: (params: ValueFormatterParams) => {
-        if (!params.value) return '';
-        const match = attr.values?.find(v => v.id === params.value);
-        return match ? `${match.id} - ${match.description}` : params.value;
+        values: (attr.values || [])
+          .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+          .map(v => `${v.id} | ${v.description}`),
+        searchType: 'matchAny',
+        allowTyping: true,
+        filterList: true
       }
     }));
 

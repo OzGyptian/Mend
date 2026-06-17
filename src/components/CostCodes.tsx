@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord, Subcontract } from '../types';
+import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord, Subcontract, ScheduleItem } from '../types';
 import { db, auth } from '../firebase';
 import { 
   doc, 
@@ -57,7 +57,8 @@ import {
   DollarSign,
   Database,
   CheckCircle2,
-  BarChart3
+  BarChart3,
+  AlertTriangle
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -347,6 +348,7 @@ const ActionsCellRenderer = (params: any) => {
 export default function CostCodes({ project, enterprise, theme = 'light' }: CostCodesProps) {
   const navigate = useNavigate();
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+  const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
   const [loading, setLoading] = useState(true);
   
@@ -394,6 +396,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [isCalculated, setIsCalculated] = useState(false);
   const [isCalculating, setIsCalculating] = useState(false);
   const [isChangesLoading, setIsChangesLoading] = useState(false);
+  const [importPreview, setImportPreview] = useState<{ data: any[] } | null>(null);
 
   const handleRecalculateAll = async () => {
     if (!project.id) return;
@@ -498,11 +501,43 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [isTimephasingChartVisible, setIsTimephasingChartVisible] = useState(false);
   const [timephasingChartMode, setTimephasingChartMode] = useState<'value' | 'percent'>('value');
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
-  const [forecastingGranularity, setForecastingGranularity] = useState<'monthly' | 'weekly' | 'daily'>('monthly');
-  const [weekEndingDay, setWeekEndingDay] = useState<number>(0); // 0: Sun, 5: Fri, 6: Sat
+  const [weekEndingDay] = useState<number>(0); // 0: Sun, 5: Fri, 6: Sat
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [selectedSubcontractBreakdownCode, setSelectedSubcontractBreakdownCode] = useState<string | null>(null);
   const [subcontractQuickFilterText, setSubcontractQuickFilterText] = useState('');
+
+  const dateFormatter = useCallback((params: any) => {
+    if (!params.value) return '';
+    const date = params.value instanceof Date ? params.value : new Date(params.value);
+    if (isNaN(date.getTime())) return '';
+    
+    // Use local time for display to avoid UTC shifts
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  }, []);
+
+  const safeDateSetter = useCallback((field: string) => (params: any) => {
+    const val = params.newValue;
+    if (!val) {
+      params.data[field] = '';
+      return true;
+    }
+    
+    const date = val instanceof Date ? val : new Date(val);
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid date entered:', val);
+      return false;
+    }
+
+    // Convert to YYYY-MM-DD in local time to avoid UTC shifts
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    params.data[field] = `${y}-${m}-${d}`;
+    return true;
+  }, []);
 
   const subcontractBreakdownRows = useMemo(() => {
     if (!selectedSubcontractBreakdownCode) return [];
@@ -677,106 +712,32 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const periods = project.reportingPeriods.periods.slice(currentPeriodIndex + 1);
     let cumulative = initialActualCost;
     
-    if (forecastingGranularity === 'monthly') {
-      return periods.map(p => {
-        const periodCost = etcRows.reduce((sum, row) => {
-          const qty = row.periodValues?.[p.id] || 0;
-          const rate = row.rate || 0;
-          return sum + (qty * rate);
-        }, 0);
-        const periodQty = etcRows.reduce((sum, row) => {
-          return sum + (row.periodValues?.[p.id] || 0);
-        }, 0);
-        cumulative += periodCost;
-        
-        // Format date for Monthly
-        const date = new Date(p.endDate);
-        const month = date.toLocaleString('default', { month: 'short' });
-        const year = date.getFullYear().toString().slice(-2);
-        const periodNumber = periods.indexOf(p) + 1;
-        const dateStr = `P${periodNumber} (${month}'${year})`;
-
-        return {
-          name: dateStr,
-          cost: Math.round(periodCost * 100) / 100,
-          qty: Math.round(periodQty * 100) / 100,
-          cumulative: Math.round(cumulative * 100) / 100
-        };
-      });
-    } else if (forecastingGranularity === 'weekly') {
-      const allWeeks: { id: string; name: string }[] = [];
-      periods.forEach(p => {
-        const startDate = new Date(p.startDate);
-        const endDate = new Date(p.endDate);
-        let current = new Date(startDate);
-        let weekCount = 1;
-        while (current <= endDate) {
-          const weekEnd = new Date(current);
-          const diff = (weekEndingDay - weekEnd.getDay() + 7) % 7;
-          weekEnd.setDate(weekEnd.getDate() + diff);
-          const displayEnd = weekEnd > endDate ? endDate : weekEnd;
-          const dateStr = displayEnd.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
-          allWeeks.push({ id: `${p.id}_w${weekCount}`, name: dateStr });
-          current = new Date(displayEnd);
-          current.setDate(current.getDate() + 1);
-          weekCount++;
-        }
-      });
+    return periods.map(p => {
+      const periodCost = etcRows.reduce((sum, row) => {
+        const qty = row.periodValues?.[p.id] || 0;
+        const rate = row.rate || 0;
+        return sum + (qty * rate);
+      }, 0);
+      const periodQty = etcRows.reduce((sum, row) => {
+        return sum + (row.periodValues?.[p.id] || 0);
+      }, 0);
+      cumulative += periodCost;
       
-      return allWeeks.map(w => {
-        const periodCost = etcRows.reduce((sum, row) => {
-          const qty = row.periodValues?.[w.id] || 0;
-          const rate = row.rate || 0;
-          return sum + (qty * rate);
-        }, 0);
-        const periodQty = etcRows.reduce((sum, row) => {
-          return sum + (row.periodValues?.[w.id] || 0);
-        }, 0);
-        cumulative += periodCost;
-        return {
-          name: w.name,
-          cost: Math.round(periodCost * 100) / 100,
-          qty: Math.round(periodQty * 100) / 100,
-          cumulative: Math.round(cumulative * 100) / 100
-        };
-      });
-    } else {
-      // Daily
-      const allDays: { id: string; name: string }[] = [];
-      periods.forEach(p => {
-        const startDate = new Date(p.startDate);
-        const endDate = new Date(p.endDate);
-        let current = new Date(startDate);
-        while (current <= endDate) {
-          const dayStr = current.getDate().toString().padStart(2, '0');
-          const monthStr = (current.getMonth() + 1).toString().padStart(2, '0');
-          allDays.push({
-            id: `${p.id}_d${dayStr}${monthStr}`,
-            name: `${dayStr}/${monthStr}`
-          });
-          current.setDate(current.getDate() + 1);
-        }
-      });
+      // Format date for Monthly
+      const date = new Date(p.endDate);
+      const month = date.toLocaleString('default', { month: 'short' });
+      const year = date.getFullYear().toString().slice(-2);
+      const periodNumber = periods.indexOf(p) + 1;
+      const dateStr = `P${periodNumber} (${month}'${year})`;
 
-      return allDays.map(d => {
-        const periodCost = etcRows.reduce((sum, row) => {
-          const qty = row.periodValues?.[d.id] || 0;
-          const rate = row.rate || 0;
-          return sum + (qty * rate);
-        }, 0);
-        const periodQty = etcRows.reduce((sum, row) => {
-          return sum + (row.periodValues?.[d.id] || 0);
-        }, 0);
-        cumulative += periodCost;
-        return {
-          name: d.name,
-          cost: Math.round(periodCost * 100) / 100,
-          qty: Math.round(periodQty * 100) / 100,
-          cumulative: Math.round(cumulative * 100) / 100
-        };
-      });
-    }
-  }, [etcRows, project.reportingPeriods, forecastingGranularity, weekEndingDay, costCodes, selectedEtcCode]);
+      return {
+        name: dateStr,
+        cost: Math.round(periodCost * 100) / 100,
+        qty: Math.round(periodQty * 100) / 100,
+        cumulative: Math.round(cumulative * 100) / 100
+      };
+    });
+  }, [etcRows, project.reportingPeriods, costCodes, selectedEtcCode]);
   const [isEtcChartVisible, setIsEtcChartVisible] = useState(false);
   const [addRowsCount, setAddRowsCount] = useState(1);
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
@@ -1139,17 +1100,32 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
         // 4. Construct Rows
         const selectedCodeData = costCodes.find(c => c.code === selectedTimephasingCode);
+        const eacMethod = selectedCodeData?.eacMethod;
+
+        const getPhasingSource = (doc: any, type: string) => {
+          const savedSource = doc?.phasingSource;
+          if (type === 'eac') {
+            // If EAC Method is not ETC Details, Phasing Source cannot be ETC Details
+            if (savedSource === 'ETC Details' && eacMethod !== 'ETC Details') {
+              return 'Manual';
+            }
+            return savedSource || (eacMethod === 'ETC Details' ? 'ETC Details' : 'Manual');
+          }
+          return savedSource || 'Manual';
+        };
+
         const rows: any[] = [
           {
             id: 'baseline',
             type: 'Baseline Budget',
             costCode: selectedTimephasingCode,
-            phasingSource: baselineDoc?.phasingSource || 'Manual',
+            phasingSource: getPhasingSource(baselineDoc, 'baseline'),
+            activityId: baselineDoc?.activityId || null,
             startDate: baselineDoc?.startDate ? new Date(baselineDoc.startDate) : '',
             endDate: baselineDoc?.endDate ? new Date(baselineDoc.endDate) : '',
             distribution: baselineDoc?.distribution || 'Even',
             periodValues: periods.reduce((acc, p) => {
-              const source = baselineDoc?.phasingSource || 'Manual';
+              const source = getPhasingSource(baselineDoc, 'baseline');
               if (source === 'SubContract') {
                 acc[p.id] = subphasingByPeriod[p.id] || 0;
               } else {
@@ -1158,18 +1134,20 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               return acc;
             }, {} as Record<string, number>),
             totalFromCode: selectedCodeData?.baselineBudget || 0,
-            docId: baselineDoc?.id
+            docId: baselineDoc?.id,
+            eacMethod
           },
           {
             id: 'approved',
             type: 'Approved Budget',
             costCode: selectedTimephasingCode,
-            phasingSource: approvedDoc?.phasingSource || 'Manual',
+            phasingSource: getPhasingSource(approvedDoc, 'approved'),
+            activityId: approvedDoc?.activityId || null,
             startDate: approvedDoc?.startDate ? new Date(approvedDoc.startDate) : '',
             endDate: approvedDoc?.endDate ? new Date(approvedDoc.endDate) : '',
             distribution: approvedDoc?.distribution || 'Even',
             periodValues: periods.reduce((acc, p) => {
-              const source = approvedDoc?.phasingSource || 'Manual';
+              const source = getPhasingSource(approvedDoc, 'approved');
               if (source === 'SubContract') {
                 acc[p.id] = subphasingByPeriod[p.id] || 0;
               } else {
@@ -1178,20 +1156,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               return acc;
             }, {} as Record<string, number>),
             totalFromCode: selectedCodeData?.approvedBudget || 0,
-            docId: approvedDoc?.id
+            docId: approvedDoc?.id,
+            eacMethod
           },
           {
             id: 'eac',
             type: 'Estimate At Completion',
             costCode: selectedTimephasingCode,
-            phasingSource: eacDoc?.phasingSource || 'ETC Details',
+            phasingSource: getPhasingSource(eacDoc, 'eac'),
+            activityId: eacDoc?.activityId || null,
             startDate: eacDoc?.startDate ? new Date(eacDoc.startDate) : '',
             endDate: eacDoc?.endDate ? new Date(eacDoc.endDate) : '',
             distribution: eacDoc?.distribution || 'Even',
             totalFromCode: selectedCodeData?.estimateAtCompletion || 0,
             docId: eacDoc?.id,
+            eacMethod,
             periodValues: periods.reduce((acc, p, idx) => {
-              const phasingSource = eacDoc?.phasingSource || 'ETC Details';
+              const phasingSource = getPhasingSource(eacDoc, 'eac');
               
               if (phasingSource === 'ETC Details') {
                 if (idx <= currentPeriodIndex) {
@@ -1420,7 +1401,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         'phasingMethod', 'phasingStartDate', 'phasingEndDate', 
         'phasingUnit', 'phasingQty', 'calendarId', 'periodValues',
         'enterpriseAttributes', 'projectAttributes', 'userDefined',
-        'source', 'isEnterpriseResource', 'externalId'
+        'source', 'isEnterpriseResource', 'externalId', 'activityId'
       ];
 
       allowedFields.forEach(field => {
@@ -1480,80 +1461,245 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const allPeriods = project.reportingPeriods.periods;
     const currentPeriodId = project.reportingPeriods.currentPeriodId;
     const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
-    
-    // Include current period and future periods
-    const eligiblePeriods = currentIndex !== -1 ? allPeriods.slice(currentIndex) : allPeriods;
 
-    if (eligiblePeriods.length === 0) {
-      toast.error("No periods available for phasing");
+    // Clearing periods (starting from current period to ensure no old forecast pollution)
+    const periodsToClear = currentIndex !== -1 ? allPeriods.slice(currentIndex) : allPeriods;
+    // Distribution periods (starting from next period)
+    const distributionPeriods = currentIndex !== -1 ? allPeriods.slice(currentIndex + 1) : allPeriods;
+
+    if (distributionPeriods.length === 0) {
+      toast.error("No future periods available for phasing");
       return;
     }
 
     const batch = writeBatch(db);
     let updatedCount = 0;
 
-    const parseDate = (val: any): Date | null => {
+    const parseDateToUTCMidnight = (val: any): Date | null => {
       if (!val) return null;
-      if (val instanceof Date) return val;
-      if (typeof val === 'object' && 'toDate' in val) return val.toDate();
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? null : d;
+      let d: Date;
+      if (val instanceof Date) d = val;
+      else if (typeof val === 'object' && 'toDate' in val) d = val.toDate();
+      else d = new Date(val);
+      if (isNaN(d.getTime())) return null;
+      return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
     };
 
     for (const row of rowsToPhase) {
-      const phasingQty = Number(row.phasingQty) || 0;
-      if (!phasingQty || !row.phasingUnit) continue;
+        const phasingQty = Number(row.phasingQty) || 0;
+        if (!phasingQty || !row.phasingUnit) continue;
 
-      // Validate inputs
-      const userStartRaw = parseDate(row.phasingStartDate);
-      const userEndRaw = parseDate(row.phasingEndDate);
+        const userStartRaw = parseDateToUTCMidnight(row.phasingStartDate);
+        const userEndRaw = parseDateToUTCMidnight(row.phasingEndDate);
 
-      const newPeriodValues: Record<string, number> = { ...row.periodValues };
+        const newPeriodValues: Record<string, number> = { ...(row.periodValues as Record<string, number> || {}) };
+        
+        // Retain past periods but clear out all distribution periods before writing new values
+        periodsToClear.forEach(p => {
+          delete newPeriodValues[p.id];
+          Object.keys(newPeriodValues).forEach(k => { if (k.startsWith(p.id + '_')) delete newPeriodValues[k]; });
+        });
 
-      // Clear existing values for eligible periods
-      eligiblePeriods.forEach(p => {
-        delete newPeriodValues[p.id];
-        Object.keys(newPeriodValues).forEach(key => {
-          if (key.startsWith(p.id + '_')) {
-            delete newPeriodValues[key];
+        if (row.phasingUnit === 'Profile' && (!userStartRaw || !userEndRaw)) {
+          const existingPeriodValues = (row.periodValues || {}) as Record<string, number>;
+          let totalWeight = 0;
+          const periodWeights: Record<string, number> = {};
+          
+          distributionPeriods.forEach(p => {
+            let pWeight = Number(existingPeriodValues[p.id]) || 0;
+            Object.entries(existingPeriodValues).forEach(([key, val]) => {
+              if (key.startsWith(p.id + '_')) pWeight += Number(val) || 0;
+            });
+            periodWeights[p.id] = pWeight;
+            totalWeight += pWeight;
+          });
+
+          if (totalWeight > 0) {
+            let sumDistributed = 0;
+            distributionPeriods.forEach((p, idx) => {
+              if (idx === distributionPeriods.length - 1) {
+                newPeriodValues[p.id] = Math.round((phasingQty - sumDistributed) * 10000) / 10000;
+              } else {
+                const weight = (periodWeights[p.id] || 0) / totalWeight;
+                const periodQty = Math.round(phasingQty * weight * 10000) / 10000;
+                newPeriodValues[p.id] = periodQty;
+                sumDistributed += periodQty;
+              }
+            });
+          } else {
+            let sumDistributed = 0;
+            const evenQty = Math.round((phasingQty / distributionPeriods.length) * 10000) / 10000;
+            distributionPeriods.forEach((p, idx) => {
+              if (idx === distributionPeriods.length - 1) {
+                newPeriodValues[p.id] = Math.round((phasingQty - sumDistributed) * 10000) / 10000;
+              } else {
+                newPeriodValues[p.id] = evenQty;
+                sumDistributed += evenQty;
+              }
+            });
           }
-        });
-      });
 
-      // Special case for Profile without dates
-      if (row.phasingUnit === 'Profile' && (!userStartRaw || !userEndRaw)) {
-        const existingPeriodValues = (row.periodValues || {}) as Record<string, number>;
-        
-        // Calculate total weight including sub-periods for eligible periods
-        let totalWeight = 0;
-        const periodWeights: Record<string, number> = {};
-        
-        eligiblePeriods.forEach(p => {
-          let pWeight = Number(existingPeriodValues[p.id]) || 0;
-          // Also check for sub-periods (weeks/days)
-          Object.entries(existingPeriodValues).forEach(([key, val]) => {
-            if (key.startsWith(p.id + '_')) {
-              pWeight += Number(val) || 0;
-            }
+          batch.update(doc(db, 'etcDetails', row.id), {
+            periodValues: newPeriodValues,
+            qty: Object.keys(newPeriodValues)
+              .filter(key => distributionPeriods.some(dp => dp.id === key)) 
+              .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
+            updatedAt: new Date().toISOString()
           });
-          periodWeights[p.id] = pWeight;
-          totalWeight += pWeight;
-        });
-
-        if (totalWeight > 0) {
-          eligiblePeriods.forEach(p => {
-            const weight = periodWeights[p.id] || 0;
-            newPeriodValues[p.id] = (weight / totalWeight) * phasingQty;
-          });
-        } else {
-          // Fallback to even distribution if no profile exists
-          const evenQty = phasingQty / eligiblePeriods.length;
-          eligiblePeriods.forEach(p => {
-            newPeriodValues[p.id] = evenQty;
-          });
+          updatedCount++;
+          continue;
         }
 
-        // Round all values
+        if (!userStartRaw || !userEndRaw) continue;
+
+        let userStart = new Date(userStartRaw.getTime());
+        let userEnd = new Date(userEndRaw.getTime());
+
+        // Constrain distribution to future periods
+        if (distributionPeriods.length > 0) {
+          const futureStartRaw = parseDateToUTCMidnight(distributionPeriods[0].startDate);
+          if (futureStartRaw) {
+            if (userStart < futureStartRaw) userStart = new Date(futureStartRaw.getTime());
+            if (userEnd < futureStartRaw) userEnd = new Date(futureStartRaw.getTime());
+          }
+        }
+
+        if (userEnd < userStart) continue;
+
+        const calendar = calendars.find(c => c.id === row.calendarId);
+        const isWorkingDay = (date: Date) => {
+          if (!calendar) return true;
+          const day = date.getUTCDay();
+          const dateStr = date.toISOString().split('T')[0];
+          if (Array.isArray(calendar.weekends) && calendar.weekends.includes(day)) return false;
+          if (Array.isArray(calendar.holidays) && calendar.holidays.includes(dateStr)) return false;
+          return true;
+        };
+
+        const workingDaysInPeriod: Record<string, number> = {};
+        const distributionPeriodIds: string[] = [];
+        let totalWorkingDaysInRange = 0;
+
+        let tempStep = new Date(userStart.getTime());
+        while (tempStep <= userEnd) {
+          if (isWorkingDay(tempStep)) {
+            totalWorkingDaysInRange++;
+            const period = distributionPeriods.find(p => {
+              const ps = parseDateToUTCMidnight(p.startDate);
+              const pe = parseDateToUTCMidnight(p.endDate);
+              return ps && pe && tempStep >= ps && tempStep <= pe;
+            });
+            if (period) {
+              if (!workingDaysInPeriod[period.id]) {
+                distributionPeriodIds.push(period.id);
+                workingDaysInPeriod[period.id] = 0;
+              }
+              workingDaysInPeriod[period.id]++;
+            }
+          }
+          tempStep.setUTCDate(tempStep.getUTCDate() + 1);
+        }
+
+        if (totalWorkingDaysInRange === 0 || distributionPeriodIds.length === 0) continue;
+
+        if (row.phasingUnit === 'Total') {
+          const dailyQty = phasingQty / totalWorkingDaysInRange;
+          let sumDistributed = 0;
+          distributionPeriodIds.forEach((pid, idx) => {
+            if (idx === distributionPeriodIds.length - 1) {
+              newPeriodValues[pid] = Math.round((phasingQty - sumDistributed) * 10000) / 10000;
+            } else {
+              const periodQty = Math.round(dailyQty * workingDaysInPeriod[pid] * 10000) / 10000;
+              newPeriodValues[pid] = periodQty;
+              sumDistributed += periodQty;
+            }
+          });
+        } else {
+          // Legacy Day-by-Day for Daily/Weekly
+          let current = new Date(userStart.getTime());
+          while (current <= userEnd) {
+            if (!isWorkingDay(current)) {
+              current.setUTCDate(current.getUTCDate() + 1);
+              continue;
+            }
+
+            const dayStr = current.getUTCDate().toString().padStart(2, '0');
+            const monthStr = (current.getUTCMonth() + 1).toString().padStart(2, '0');
+            
+            const period = distributionPeriods.find(p => {
+              const ps = parseDateToUTCMidnight(p.startDate);
+              const pe = parseDateToUTCMidnight(p.endDate);
+              return ps && pe && current >= ps && current <= pe;
+            });
+
+            if (period) {
+              let dailyQtyAmt = 0;
+              if (row.phasingUnit === 'Daily') {
+                dailyQtyAmt = phasingQty;
+              } else if (row.phasingUnit === 'Weekly') {
+                let weekWorkingDays = 0;
+                let weekEnd = new Date(current.getTime());
+                let diff = (weekEndingDay - weekEnd.getUTCDay() + 7) % 7;
+                weekEnd.setUTCDate(weekEnd.getUTCDate() + diff);
+                let weekStart = new Date(weekEnd.getTime());
+                weekStart.setUTCDate(weekStart.getUTCDate() - 6);
+                let weekTemp = new Date(weekStart.getTime());
+                while (weekTemp <= weekEnd) {
+                  if (isWorkingDay(weekTemp)) weekWorkingDays++;
+                  weekTemp.setUTCDate(weekTemp.getUTCDate() + 1);
+                }
+                dailyQtyAmt = weekWorkingDays > 0 ? phasingQty / weekWorkingDays : 0;
+              } else if (row.phasingUnit === 'Monthly') {
+                let monthWorkingDays = 0;
+                let monthStart = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+                let monthEnd = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 0));
+                let monthTemp = new Date(monthStart.getTime());
+                while (monthTemp <= monthEnd) {
+                  if (isWorkingDay(monthTemp)) monthWorkingDays++;
+                  monthTemp.setUTCDate(monthTemp.getUTCDate() + 1);
+                }
+                dailyQtyAmt = monthWorkingDays > 0 ? phasingQty / monthWorkingDays : 0;
+              }
+
+              newPeriodValues[period.id] = (newPeriodValues[period.id] || 0) + dailyQtyAmt;
+
+              // Also handle weekly and daily buckets
+              let weekId = '';
+              let weekStart = new Date(current.getTime());
+              let wEnd = new Date(current.getTime());
+              let wDiff = (weekEndingDay - wEnd.getUTCDay() + 7) % 7;
+              wEnd.setUTCDate(wEnd.getUTCDate() + wDiff);
+              
+              // Find which week this is in the period
+              const pStart = parseDateToUTCMidnight(period.startDate);
+              if (pStart) {
+                let weekCounter = 1;
+                let tempW = new Date(pStart.getTime());
+                while (tempW <= parseDateToUTCMidnight(period.endDate)!) {
+                  let twEnd = new Date(tempW.getTime());
+                  let twDiff = (weekEndingDay - twEnd.getUTCDay() + 7) % 7;
+                  twEnd.setUTCDate(twEnd.getUTCDate() + twDiff);
+                  if (current >= tempW && current <= twEnd) {
+                    weekId = `${period.id}_w${weekCounter}`;
+                    break;
+                  }
+                  tempW = new Date(twEnd.getTime());
+                  tempW.setUTCDate(tempW.getUTCDate() + 1);
+                  weekCounter++;
+                }
+              }
+
+              if (weekId) {
+                newPeriodValues[weekId] = (newPeriodValues[weekId] || 0) + dailyQtyAmt;
+              }
+              const dayId = `${period.id}_d${dayStr}${monthStr}`;
+              newPeriodValues[dayId] = (newPeriodValues[dayId] || 0) + dailyQtyAmt;
+            }
+            current.setUTCDate(current.getUTCDate() + 1);
+          }
+        }
+
+        // Final rounding for all period values
         Object.keys(newPeriodValues).forEach(key => {
           newPeriodValues[key] = Math.round(newPeriodValues[key] * 10000) / 10000;
         });
@@ -1561,191 +1707,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         batch.update(doc(db, 'etcDetails', row.id), {
           periodValues: newPeriodValues,
           qty: Object.keys(newPeriodValues)
-            .filter(key => !key.includes('_'))
+            .filter(key => distributionPeriods.some(dp => dp.id === key)) 
             .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
           updatedAt: new Date().toISOString()
         });
         updatedCount++;
-        continue;
       }
-
-      if (!userStartRaw || !userEndRaw) {
-        continue; // Skip invalid rows for other units
-      }
-
-      // Normalize to UTC midnight based on calendar dates to prevent boundary issues
-      const userStart = new Date(Date.UTC(userStartRaw.getFullYear(), userStartRaw.getMonth(), userStartRaw.getDate()));
-      const userEnd = new Date(Date.UTC(userEndRaw.getFullYear(), userEndRaw.getMonth(), userEndRaw.getDate()));
-
-      if (userEnd < userStart) continue;
-
-      const calendar = calendars.find(c => c.id === row.calendarId);
-      const isWorkingDay = (date: Date) => {
-        if (!calendar) return true;
-        const day = date.getUTCDay();
-        const dateStr = date.toISOString().split('T')[0];
-        if (calendar.weekends?.includes(day)) return false;
-        if (calendar.holidays?.includes(dateStr)) return false;
-        return true;
-      };
-
-      // Calculate total working days for 'Total' phasing unit
-      let totalWorkingDaysInRange = 0;
-      if (row.phasingUnit === 'Total' || row.phasingUnit === 'Profile') {
-        let temp = new Date(userStart.getTime());
-        while (temp <= userEnd) {
-          if (isWorkingDay(temp)) totalWorkingDaysInRange++;
-          temp.setUTCDate(temp.getUTCDate() + 1);
-        }
-      }
-
-      let current = new Date(userStart.getTime());
-      while (current <= userEnd) {
-        if (!isWorkingDay(current)) {
-          current.setUTCDate(current.getUTCDate() + 1);
-          continue;
-        }
-
-        const dayStr = current.getUTCDate().toString().padStart(2, '0');
-        const monthStr = (current.getUTCMonth() + 1).toString().padStart(2, '0');
-        
-        const period = eligiblePeriods.find(p => {
-          const ps = parseDate(p.startDate);
-          const pe = parseDate(p.endDate);
-          if (!ps || !pe) return false;
-          const s = Date.UTC(ps.getFullYear(), ps.getMonth(), ps.getDate());
-          const e = Date.UTC(pe.getFullYear(), pe.getMonth(), pe.getDate());
-          const d = current.getTime();
-          return d >= s && d <= e;
-        });
-
-        if (period) {
-          let dailyQty = 0;
-          const phasingQty = Number(row.phasingQty) || 0;
-          
-          if (row.phasingUnit === 'Daily') {
-            dailyQty = phasingQty;
-          } else if (row.phasingUnit === 'Weekly') {
-            // Calculate working days in the FULL week containing 'current'
-            let weekWorkingDays = 0;
-            let weekEnd = new Date(current.getTime());
-            let diff = (weekEndingDay - weekEnd.getUTCDay() + 7) % 7;
-            weekEnd.setUTCDate(weekEnd.getUTCDate() + diff);
-            
-            let weekStart = new Date(weekEnd.getTime());
-            weekStart.setUTCDate(weekStart.getUTCDate() - 6);
-            
-            let weekTemp = new Date(weekStart.getTime());
-            while (weekTemp <= weekEnd) {
-              if (isWorkingDay(weekTemp)) weekWorkingDays++;
-              weekTemp.setUTCDate(weekTemp.getUTCDate() + 1);
-            }
-            dailyQty = weekWorkingDays > 0 ? phasingQty / weekWorkingDays : 0;
-          } else if (row.phasingUnit === 'Monthly') {
-            // Calculate working days in the FULL month containing 'current'
-            let monthWorkingDays = 0;
-            let monthStart = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
-            let monthEnd = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 0));
-            
-            let monthTemp = new Date(monthStart.getTime());
-            while (monthTemp <= monthEnd) {
-              if (isWorkingDay(monthTemp)) monthWorkingDays++;
-              monthTemp.setUTCDate(monthTemp.getUTCDate() + 1);
-            }
-            dailyQty = monthWorkingDays > 0 ? phasingQty / monthWorkingDays : 0;
-          } else if (row.phasingUnit === 'Total') {
-            dailyQty = totalWorkingDaysInRange > 0 ? phasingQty / totalWorkingDaysInRange : 0;
-          } else if (row.phasingUnit === 'Profile') {
-            const existingPeriodValues = (row.periodValues || {}) as Record<string, number>;
-            
-            // Calculate total weight including sub-periods for eligible periods
-            let totalWeight = 0;
-            const periodWeights: Record<string, number> = {};
-            
-            eligiblePeriods.forEach(p => {
-              let pWeight = Number(existingPeriodValues[p.id]) || 0;
-              Object.entries(existingPeriodValues).forEach(([key, val]) => {
-                if (key.startsWith(p.id + '_')) {
-                  pWeight += Number(val) || 0;
-                }
-              });
-              periodWeights[p.id] = pWeight;
-              totalWeight += pWeight;
-            });
-            
-            if (totalWeight > 0) {
-              const currentPeriodWeight = periodWeights[period.id] || 0;
-              // Calculate how many working days in this period
-              let periodWorkingDays = 0;
-              let ps = parseDate(period.startDate);
-              let pe = parseDate(period.endDate);
-              if (ps && pe) {
-                let temp = new Date(Date.UTC(ps.getFullYear(), ps.getMonth(), ps.getDate()));
-                let end = new Date(Date.UTC(pe.getFullYear(), pe.getMonth(), pe.getDate()));
-                while (temp <= end) {
-                  if (isWorkingDay(temp)) periodWorkingDays++;
-                  temp.setUTCDate(temp.getUTCDate() + 1);
-                }
-              }
-              
-              const periodTotalQty = (currentPeriodWeight / totalWeight) * phasingQty;
-              dailyQty = periodWorkingDays > 0 ? periodTotalQty / periodWorkingDays : 0;
-            } else {
-              // Fallback to even distribution if no profile exists
-              dailyQty = totalWorkingDaysInRange > 0 ? phasingQty / totalWorkingDaysInRange : 0;
-            }
-          }
-
-          // 1. Add to monthly bucket
-          newPeriodValues[period.id] = (newPeriodValues[period.id] || 0) + dailyQty;
-
-          // 2. Add to weekly bucket
-          const ps = parseDate(period.startDate);
-          const pe = parseDate(period.endDate);
-          const pStart = ps ? Date.UTC(ps.getFullYear(), ps.getMonth(), ps.getDate()) : 0;
-          const pEnd = pe ? Date.UTC(pe.getFullYear(), pe.getMonth(), pe.getDate()) : 0;
-          
-          let weekCurrent = new Date(pStart);
-          let weekCount = 1;
-          let weekId = '';
-          while (weekCurrent.getTime() <= pEnd) {
-            const wEnd = new Date(weekCurrent.getTime());
-            const wDiff = (weekEndingDay - wEnd.getUTCDay() + 7) % 7;
-            wEnd.setUTCDate(wEnd.getUTCDate() + wDiff);
-            const displayEnd = wEnd.getTime() > pEnd ? pEnd : wEnd.getTime();
-            if (current.getTime() <= displayEnd) {
-              weekId = `${period.id}_w${weekCount}`;
-              break;
-            }
-            weekCurrent = new Date(displayEnd);
-            weekCurrent.setUTCDate(weekCurrent.getUTCDate() + 1);
-            weekCount++;
-          }
-          if (weekId) {
-            newPeriodValues[weekId] = (newPeriodValues[weekId] || 0) + dailyQty;
-          }
-
-          // 3. Add to daily bucket
-          const dayId = `${period.id}_d${dayStr}${monthStr}`;
-          newPeriodValues[dayId] = (newPeriodValues[dayId] || 0) + dailyQty;
-        }
-        current.setUTCDate(current.getUTCDate() + 1);
-      }
-
-      // Round all values in newPeriodValues to 4 decimal places to preserve precision during distribution
-      Object.keys(newPeriodValues).forEach(key => {
-        newPeriodValues[key] = Math.round(newPeriodValues[key] * 10000) / 10000;
-      });
-
-      batch.update(doc(db, 'etcDetails', row.id), {
-        periodValues: newPeriodValues,
-        qty: Object.keys(newPeriodValues)
-          .filter(key => !key.includes('_')) // Only sum monthly buckets
-          .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
-        updatedAt: new Date().toISOString()
-      });
-      updatedCount++;
-    }
 
     if (updatedCount > 0) {
       try {
@@ -1865,6 +1832,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     const data = etcRows.map(row => {
       const exportRow: any = {
+        'Activity ID': row.activityId || '',
         'Item': row.item,
         'Description': row.description,
         'Category': row.category,
@@ -1954,6 +1922,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           batch.set(newRowRef, {
             projectId: project.id,
             costCode: selectedEtcCode,
+            activityId: row['Activity ID'] || '',
             item: row['Item'] || '',
             description: row['Description'] || '',
             orderNumber: row['Order Number'] || '',
@@ -2390,128 +2359,81 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           cellClass: 'font-medium'
         },
         {
+          headerName: 'Activity ID',
+          field: 'activityId',
+          width: 150,
+          editable: true,
+          cellEditor: 'agRichSelectCellEditor',
+          cellEditorParams: {
+            values: [null, ...scheduleItems.map(item => item.activityId).sort()],
+            formatValue: (val: string) => {
+              const item = scheduleItems.find(i => i.activityId === val);
+              return item ? `${item.activityId} - ${item.description}` : val || 'None';
+            },
+            searchType: 'match',
+            allowTyping: true,
+            filterList: true,
+            highlightMatch: true
+          },
+          onCellValueChanged: (params) => {
+            const newActivityId = params.newValue;
+            if (newActivityId) {
+              const scheduleItem = scheduleItems.find(s => s.activityId === newActivityId);
+              if (scheduleItem) {
+                params.data.phasingStartDate = scheduleItem.currentStartDate;
+                params.data.phasingEndDate = scheduleItem.currentEndDate;
+                params.data.phasingMethod = 'Auto-Phase';
+                // Force refresh of the row to update UI
+                params.api.refreshCells({ rowNodes: [params.node], force: true });
+                handleUpdateEtcRow(params.data.id, params.data);
+              }
+            } else {
+              handleUpdateEtcRow(params.data.id, params.data);
+            }
+          },
+          cellClass: 'bg-emerald-50/10 dark:bg-emerald-900/10'
+        },
+        {
           field: 'phasingStartDate',
           headerName: 'Start Date',
           width: 120,
           columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase',
+          editable: (params) => params.data.phasingMethod === 'Auto-Phase' && !params.data.activityId,
           cellEditor: 'agDateCellEditor',
           valueGetter: (params) => {
             const val = params.data.phasingStartDate;
             if (!val) return null;
-            if (val && typeof val === 'object' && 'toDate' in val) {
-              return (val as any).toDate();
-            }
-            if (val instanceof Date) return val;
             const d = new Date(val);
             return isNaN(d.getTime()) ? null : d;
           },
-          valueSetter: (params) => {
-            if (!params.newValue) {
-              params.data.phasingStartDate = '';
-              return true;
-            }
-            const val = params.newValue;
-            if (val instanceof Date) {
-              params.data.phasingStartDate = val.toISOString();
-              return true;
-            }
-            if (typeof val === 'string') {
-              const trimmed = val.trim();
-              if (!trimmed) {
-                params.data.phasingStartDate = '';
-                return true;
-              }
-              const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-              if (dmyMatch) {
-                let day = parseInt(dmyMatch[1]);
-                let month = parseInt(dmyMatch[2]);
-                let year = parseInt(dmyMatch[3]);
-                if (year < 100) year += 2000;
-                const date = new Date(year, month - 1, day);
-                if (!isNaN(date.getTime())) {
-                  params.data.phasingStartDate = date.toISOString();
-                  return true;
-                }
-              }
-              const parsed = new Date(trimmed);
-              if (!isNaN(parsed.getTime())) {
-                params.data.phasingStartDate = parsed.toISOString();
-                return true;
-              }
-            }
-            params.data.phasingStartDate = val;
-            return true;
-          },
-          valueFormatter: (params) => {
-            if (!params.value) return '';
-            const date = params.value instanceof Date ? params.value : new Date(params.value);
-            if (isNaN(date.getTime())) return params.value;
-            return date.toLocaleDateString('en-GB'); // dd/mm/yyyy
-          },
-          cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
+          valueSetter: safeDateSetter('phasingStartDate'),
+          valueFormatter: dateFormatter,
+          cellClass: (params) => {
+            if (params.data.phasingMethod !== 'Auto-Phase') return 'bg-gray-100 dark:bg-white/5 text-gray-400';
+            if (params.data.activityId) return 'bg-amber-50/30 dark:bg-amber-900/10 text-gray-500 italic';
+            return 'bg-white dark:bg-transparent';
+          }
         },
         {
           field: 'phasingEndDate',
           headerName: 'End Date',
           width: 120,
           columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase',
+          editable: (params) => params.data.phasingMethod === 'Auto-Phase' && !params.data.activityId,
           cellEditor: 'agDateCellEditor',
           valueGetter: (params) => {
             const val = params.data.phasingEndDate;
             if (!val) return null;
-            if (val && typeof val === 'object' && 'toDate' in val) {
-              return (val as any).toDate();
-            }
-            if (val instanceof Date) return val;
             const d = new Date(val);
             return isNaN(d.getTime()) ? null : d;
           },
-          valueSetter: (params) => {
-            if (!params.newValue) {
-              params.data.phasingEndDate = '';
-              return true;
-            }
-            const val = params.newValue;
-            if (val instanceof Date) {
-              params.data.phasingEndDate = val.toISOString();
-              return true;
-            }
-            if (typeof val === 'string') {
-              const trimmed = val.trim();
-              if (!trimmed) {
-                params.data.phasingEndDate = '';
-                return true;
-              }
-              const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
-              if (dmyMatch) {
-                let day = parseInt(dmyMatch[1]);
-                let month = parseInt(dmyMatch[2]);
-                let year = parseInt(dmyMatch[3]);
-                if (year < 100) year += 2000;
-                const date = new Date(year, month - 1, day);
-                if (!isNaN(date.getTime())) {
-                  params.data.phasingEndDate = date.toISOString();
-                  return true;
-                }
-              }
-              const parsed = new Date(trimmed);
-              if (!isNaN(parsed.getTime())) {
-                params.data.phasingEndDate = parsed.toISOString();
-                return true;
-              }
-            }
-            params.data.phasingEndDate = val;
-            return true;
-          },
-          valueFormatter: (params) => {
-            if (!params.value) return '';
-            const date = params.value instanceof Date ? params.value : new Date(params.value);
-            if (isNaN(date.getTime())) return params.value;
-            return date.toLocaleDateString('en-GB'); // dd/mm/yyyy
-          },
-          cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
+          valueSetter: safeDateSetter('phasingEndDate'),
+          valueFormatter: dateFormatter,
+          cellClass: (params) => {
+            if (params.data.phasingMethod !== 'Auto-Phase') return 'bg-gray-100 dark:bg-white/5 text-gray-400';
+            if (params.data.activityId) return 'bg-amber-50/30 dark:bg-amber-900/10 text-gray-500 italic';
+            return 'bg-white dark:bg-transparent';
+          }
         },
         {
           field: 'phasingUnit',
@@ -2539,203 +2461,47 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     });
 
     if (periods.length > 0) {
-      if (forecastingGranularity === 'monthly') {
-        defs.push({
-          headerName: 'Resource Forecasting',
-          openByDefault: true,
-          children: periods.map((p, idx) => {
-            const date = new Date(p.endDate);
-            const month = date.getUTCMonth();
-            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const monthName = monthNames[month];
-            const year = date.getUTCFullYear().toString().slice(-2);
-            const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
-            const headerName = `P${periodNumber}\n(${monthName}'${year})`;
-
-            return {
-              headerName,
-              field: `periodValues.${p.id}`,
-              width: 120,
-              minWidth: 110,
-              type: 'numericColumn',
-              aggFunc: 'sum',
-              editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
-              cellStyle: (params: any) => ({
-                backgroundColor: params.data?.phasingMethod === 'Auto-Phase' ? '#f3f4f6' : 'white',
-                fontWeight: params.data?.phasingMethod === 'Auto-Phase' ? 'bold' : 'normal',
-                color: 'black'
-              }),
-              valueGetter: (params: any) => {
-                if (!params.data) return 0;
-                return params.data.periodValues?.[p.id] || 0;
-              },
-              valueFormatter: (params: any) => formatNumber(params.value, 2),
-              valueSetter: (params: any) => {
-                if (!params.data) return false;
-                const val = Number(params.newValue);
-                if (isNaN(val)) return false;
-                const periodValues = { ...(params.data.periodValues || {}), [p.id]: val };
-                params.data.periodValues = periodValues;
-                return true;
-              }
-            };
-          })
-        });
-      } else if (forecastingGranularity === 'weekly') {
-        // Generate weekly columns for each future reporting period
-        periods.forEach((p, pIdx) => {
-          const startDate = new Date(p.startDate);
-          const endDate = new Date(p.endDate);
-          const weeks: { id: string; name: string }[] = [];
-          
-          let current = new Date(startDate);
-          let weekCount = 1;
-          while (current <= endDate) {
-            // Calculate week ending date
-            const weekEnd = new Date(current);
-            const diff = (weekEndingDay - weekEnd.getUTCDay() + 7) % 7;
-            weekEnd.setUTCDate(weekEnd.getUTCDate() + diff);
-            
-            // If weekEnd is beyond period endDate, cap it for display but use it for identification
-            const displayEnd = weekEnd > endDate ? endDate : weekEnd;
-            const dateStr = displayEnd.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit' });
-
-            weeks.push({
-              id: `${p.id}_w${weekCount}`,
-              name: `WE ${dateStr}`
-            });
-            
-            // Move to next week start
-            current = new Date(displayEnd);
-            current.setUTCDate(current.getUTCDate() + 1);
-            weekCount++;
-          }
-
+      defs.push({
+        headerName: 'Resource Forecasting',
+        openByDefault: true,
+        children: periods.map((p, idx) => {
           const date = new Date(p.endDate);
+          const month = date.getUTCMonth();
           const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthName = monthNames[date.getUTCMonth()];
+          const monthName = monthNames[month];
           const year = date.getUTCFullYear().toString().slice(-2);
           const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
+          const headerName = `P${periodNumber}\n(${monthName}'${year})`;
 
-          defs.push({
-            headerName: `P${periodNumber}\n(${monthName}'${year}) (Weekly)`,
-            children: weeks.map((w, wIdx) => ({
-              headerName: w.name,
-              field: `periodValues.${w.id}`,
-              width: 80,
-              type: 'numericColumn',
-              aggFunc: 'sum',
-              editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
-              cellStyle: (params: any) => ({
-                backgroundColor: params.data?.phasingMethod === 'Auto-Phase' ? '#f3f4f6' : 'white',
-                fontWeight: params.data?.phasingMethod === 'Auto-Phase' ? 'bold' : 'normal',
-                color: 'black'
-              }),
-              valueGetter: (params: any) => {
-                if (!params.data) return 0;
-                const periodValues = params.data.periodValues || {};
-                return periodValues[w.id] || 0;
-              },
-              valueFormatter: (params: any) => formatNumber(params.value, 2),
-              valueSetter: (params: any) => {
-                if (!params.data) return false;
-                const val = Number(params.newValue);
-                if (isNaN(val)) return false;
-                
-                const periodValues = { ...(params.data.periodValues || {}) };
-                
-                // Smart migration: if sub-periods are empty but monthly has value, move it to first sub-period
-                const hasAnySubPeriod = weeks.some(week => periodValues[week.id] !== undefined);
-                if (!hasAnySubPeriod && periodValues[p.id] !== undefined) {
-                  periodValues[weeks[0].id] = periodValues[p.id];
-                }
-                
-                periodValues[w.id] = val;
-                
-                // Recalculate monthly sum from all weeks
-                const periodSum = weeks.reduce((sum, week) => {
-                  return sum + (periodValues[week.id] || 0);
-                }, 0);
-                
-                periodValues[p.id] = periodSum;
-                params.data.periodValues = periodValues;
-                return true;
-              }
-            }))
-          });
-        });
-      } else if (forecastingGranularity === 'daily') {
-        // Generate daily columns for each future reporting period
-        periods.forEach((p) => {
-          const startDate = new Date(p.startDate);
-          const endDate = new Date(p.endDate);
-          const days: { id: string; name: string }[] = [];
-          
-          let current = new Date(startDate);
-          while (current <= endDate) {
-            const dayStr = current.getUTCDate().toString().padStart(2, '0');
-            const monthStr = (current.getUTCMonth() + 1).toString().padStart(2, '0');
-            days.push({
-              id: `${p.id}_d${dayStr}${monthStr}`,
-              name: `${dayStr}/${monthStr}`
-            });
-            current.setUTCDate(current.getUTCDate() + 1);
-          }
-
-          const date = new Date(p.endDate);
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthName = monthNames[date.getUTCMonth()];
-          const year = date.getUTCFullYear().toString().slice(-2);
-          const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
-
-          defs.push({
-            headerName: `P${periodNumber}\n(${monthName}'${year}) (Daily)`,
-            children: days.map((d, dIdx) => ({
-              headerName: d.name,
-              field: `periodValues.${d.id}`,
-              width: 70,
-              type: 'numericColumn',
-              aggFunc: 'sum',
-              editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
-              cellStyle: (params: any) => ({
-                backgroundColor: params.data?.phasingMethod === 'Auto-Phase' ? '#f3f4f6' : 'white',
-                fontWeight: params.data?.phasingMethod === 'Auto-Phase' ? 'bold' : 'normal',
-                color: 'black'
-              }),
-              valueGetter: (params: any) => {
-                if (!params.data) return 0;
-                const periodValues = params.data.periodValues || {};
-                return periodValues[d.id] || 0;
-              },
-              valueFormatter: (params: any) => formatNumber(params.value, 2),
-              valueSetter: (params: any) => {
-                if (!params.data) return false;
-                const val = Number(params.newValue);
-                if (isNaN(val)) return false;
-                
-                const periodValues = { ...(params.data.periodValues || {}) };
-                
-                // Smart migration: if sub-periods are empty but monthly has value, move it to first sub-period
-                const hasAnySubPeriod = days.some(day => periodValues[day.id] !== undefined);
-                if (!hasAnySubPeriod && periodValues[p.id] !== undefined) {
-                  periodValues[days[0].id] = periodValues[p.id];
-                }
-                
-                periodValues[d.id] = val;
-                
-                // Update main period value
-                const periodSum = days.reduce((sum, day) => {
-                  return sum + (periodValues[day.id] || 0);
-                }, 0);
-                
-                periodValues[p.id] = periodSum;
-                params.data.periodValues = periodValues;
-                return true;
-              }
-            }))
-          });
-        });
-      }
+          return {
+            headerName,
+            field: `periodValues.${p.id}`,
+            width: 120,
+            minWidth: 110,
+            type: 'numericColumn',
+            aggFunc: 'sum',
+            editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
+            cellStyle: (params: any) => ({
+              backgroundColor: params.data?.phasingMethod === 'Auto-Phase' ? '#f3f4f6' : 'white',
+              fontWeight: params.data?.phasingMethod === 'Auto-Phase' ? 'bold' : 'normal',
+              color: 'black'
+            }),
+            valueGetter: (params: any) => {
+              if (!params.data) return 0;
+              return params.data.periodValues?.[p.id] || 0;
+            },
+            valueFormatter: (params: any) => formatNumber(params.value, 2),
+            valueSetter: (params: any) => {
+              if (!params.data) return false;
+              const val = Number(params.newValue);
+              if (isNaN(val)) return false;
+              const periodValues = { ...(params.data.periodValues || {}), [p.id]: val };
+              params.data.periodValues = periodValues;
+              return true;
+            }
+          };
+        })
+      });
     }
 
     // Add Actions column at the very end
@@ -2766,14 +2532,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     etcColumnDefsRef.current = defs;
     return defs;
   }, [
-    JSON.stringify(project.reportingPeriods), 
-    JSON.stringify(enterprise.resourceRates), 
-    forecastingGranularity, 
-    weekEndingDay, 
-    theme, 
-    JSON.stringify(calendars), 
-    JSON.stringify(enterpriseLineItemAttrs), 
-    JSON.stringify(projectLineItemAttrs)
+    project.reportingPeriods, 
+    etcRows,
+    theme,
+    calendars,
+    scheduleItems,
+    enterpriseLineItemAttrs,
+    projectLineItemAttrs
   ]);
 
   const timephasingColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
@@ -2801,11 +2566,47 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         cellEditor: 'agSelectCellEditor',
         cellEditorParams: (params: any) => {
           if (params.data.id === 'eac') {
-            return { values: ['ETC Details', 'SubContract', 'Manual', 'Auto'] };
+            const values = ['SubContract', 'Manual', 'Auto'];
+            if (params.data.eacMethod === 'ETC Details') {
+              values.unshift('ETC Details');
+            }
+            return { values };
           }
           return { values: ['Manual', 'Auto'] };
         },
         cellClass: 'bg-white dark:bg-slate-900',
+      },
+      {
+        headerName: 'Activity ID',
+        field: 'activityId',
+        width: 150,
+        editable: true,
+        cellEditor: 'agRichSelectCellEditor',
+        cellEditorParams: {
+          values: [null, ...scheduleItems.map(item => item.activityId).sort()],
+          formatValue: (val: string) => {
+            const item = scheduleItems.find(i => i.activityId === val);
+            return item ? `${item.activityId} - ${item.description}` : val || 'None';
+          },
+          searchType: 'match',
+          allowTyping: true,
+          filterList: true,
+          highlightMatch: true
+        },
+        onCellValueChanged: (params: any) => {
+          const newActivityId = params.newValue;
+          if (newActivityId) {
+            const scheduleItem = scheduleItems.find(s => s.activityId === newActivityId);
+            if (scheduleItem) {
+              params.data.startDate = scheduleItem.currentStartDate;
+              params.data.endDate = scheduleItem.currentEndDate;
+              params.data.phasingSource = 'Auto';
+              // Force refresh of the row to update UI
+              params.api.refreshCells({ rowNodes: [params.node], force: true });
+            }
+          }
+        },
+        cellClass: 'bg-emerald-50/10 dark:bg-emerald-900/10'
       },
       {
         headerName: 'Start Date',
@@ -2815,15 +2616,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         valueGetter: (params) => {
           const val = params.data.startDate;
           if (!val) return null;
-          if (val instanceof Date) return val;
           const d = new Date(val);
           return isNaN(d.getTime()) ? null : d;
         },
-        valueFormatter: (params) => {
-          if (!params.value) return '';
-          const d = params.value instanceof Date ? params.value : new Date(params.value);
-          return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-        },
+        valueFormatter: dateFormatter,
+        valueSetter: safeDateSetter('startDate'),
         cellEditor: 'agDateCellEditor',
         cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
       },
@@ -2835,15 +2632,11 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         valueGetter: (params) => {
           const val = params.data.endDate;
           if (!val) return null;
-          if (val instanceof Date) return val;
           const d = new Date(val);
           return isNaN(d.getTime()) ? null : d;
         },
-        valueFormatter: (params) => {
-          if (!params.value) return '';
-          const d = params.value instanceof Date ? params.value : new Date(params.value);
-          return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
-        },
+        valueFormatter: dateFormatter,
+        valueSetter: safeDateSetter('endDate'),
         cellEditor: 'agDateCellEditor',
         cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
       },
@@ -2942,7 +2735,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     ];
 
     return defs;
-  }, [project.reportingPeriods?.periods, project.reportingPeriods?.currentPeriodId]);
+  }, [project.reportingPeriods?.periods, project.reportingPeriods?.currentPeriodId, scheduleItems]);
 
   const calculatePhasing = useCallback((
     total: number,
@@ -3271,6 +3064,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         costCodeId: selectedTimephasingCode,
         type: data.id,
         phasingSource: data.phasingSource || 'Manual',
+        activityId: data.activityId || null,
         startDate: startDateStr,
         endDate: endDateStr,
         distribution: data.distribution || 'Even',
@@ -3312,7 +3106,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       headerName: 'Date', 
       field: 'date', 
       width: 120,
-      valueFormatter: (params) => params.value ? new Date(params.value).toLocaleDateString() : '',
+      valueGetter: params => params.data?.date ? new Date(params.data.date) : null,
+      valueFormatter: dateFormatter,
       cellRenderer: (params: any) => {
         if (params.node.rowPinned === 'top') return <span className="font-bold text-blue-800 dark:text-blue-200">TOTAL</span>;
         return params.valueFormatted || params.value;
@@ -3642,7 +3437,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       toast.error("Failed to fetch cost codes. Check permissions.");
       setLoading(false);
     });
-    return () => unsubscribe();
+
+    const qSch = query(collection(db, 'scheduleItems'), where('projectId', '==', project.id));
+    const unsubSch = onSnapshot(qSch, (snapshot) => {
+      setScheduleItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ScheduleItem)));
+    });
+
+    return () => {
+      unsubscribe();
+      unsubSch();
+    };
   }, [project.id, project.users]);
 
   useEffect(() => {
@@ -3711,18 +3515,18 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
               return params.value;
             },
           },
-          {
-            headerName: 'Cost Code Description',
-            field: 'name',
-            width: 250,
-            pinned: 'left',
-            filter: 'agTextColumnFilter',
-            sortable: true,
-            editable: true,
-            cellStyle: { backgroundColor: 'white', color: 'black' },
-            enableRowGroup: true,
+          { 
+            field: 'name', 
+            headerName: 'Cost Code Description', 
+            width: 250, 
+            pinned: 'left', 
+            filter: 'agTextColumnFilter', 
+            sortable: true, 
+            editable: true, 
+            cellStyle: { backgroundColor: 'white', color: 'black' }, 
+            enableRowGroup: true, 
           },
-          {
+          { 
             headerName: 'EAC Method',
             field: 'eacMethod',
             width: 150,
@@ -4491,70 +4295,123 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: 'array' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as any[];
+        const rows = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
-        let currentMaxOrder = costCodes.length > 0 ? Math.max(...costCodes.map(c => c.sortOrder)) : -1;
-        
-        data.forEach(row => {
-          const code = row.code || row.Code || row['Cost Code ID'];
-          const name = row.name || row.Name || row['Cost Code Name'] || '';
-          const eacMethod = row.eacMethod || row.EACMethod || row['EAC Method'] || 'Manual';
-
-          if (code) {
-            const entAttrs: Record<string, string> = {};
-            const prjAttrs: Record<string, string> = {};
-
-            enterpriseAttrs.forEach(attr => {
-              const val = row[attr.title];
-              if (val) {
-                const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
-                if (match) entAttrs[attr.id] = match.id;
-              }
-            });
-
-            projectAttrs.forEach(attr => {
-              const val = row[attr.title];
-              if (val) {
-                const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
-                if (match) prjAttrs[attr.id] = match.id;
-              }
-            });
-
-            const existing = costCodes.find(c => c.code.toLowerCase() === String(code).toLowerCase());
-            const costCodeData = {
-              code: String(code),
-              name: String(name),
-              eacMethod: String(eacMethod),
-              projectId: project.id,
-              enterpriseAttributes: entAttrs,
-              projectAttributes: prjAttrs
-            };
-            
-            if (existing) {
-              batch.update(doc(db, 'costCodes', existing.id), costCodeData);
-            } else {
-              currentMaxOrder++;
-              const newRef = doc(collection(db, 'costCodes'));
-              batch.set(newRef, { ...costCodeData, sortOrder: currentMaxOrder });
-            }
-          }
-        });
-
-        await batch.commit();
-        toast.success('Import successful.');
+        setImportPreview({ data: rows });
       } catch (error) {
-        console.error('Error importing:', error);
-        toast.error('Failed to import. Check format.');
+        console.error("Error reading import file:", error);
+        toast.error("Failed to read the excel file.");
       }
-      if (fileInputRef.current) fileInputRef.current.value = '';
     };
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
+
+  const confirmImport = async () => {
+    if (!importPreview || !project.id) return;
+    
+    const toastId = toast.loading('Importing cost codes...');
+    try {
+      const batch = writeBatch(db);
+      let currentMaxOrder = costCodes.length > 0 ? Math.max(...costCodes.map(c => c.sortOrder)) : -1;
+      let importCount = 0;
+      let updateCount = 0;
+      
+      const { data } = importPreview;
+
+      for (const row of data) {
+        const code = row.code || row.Code || row['Cost Code ID'] || row['Code'];
+        const name = row.name || row.Name || row['Cost Code Name'] || row['Description'] || '';
+        const eacMethod = row.eacMethod || row.EACMethod || row['EAC Method'] || 'Manual';
+
+        if (code) {
+          const entAttrs: Record<string, string> = {};
+          const prjAttrs: Record<string, string> = {};
+
+          enterpriseAttrs.forEach(attr => {
+            const val = row[attr.title];
+            if (val) {
+              const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
+              if (match) entAttrs[attr.id] = match.id;
+            }
+          });
+
+          projectAttrs.forEach(attr => {
+            const val = row[attr.title];
+            if (val) {
+              const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
+              if (match) prjAttrs[attr.id] = match.id;
+            }
+          });
+
+          const existing = costCodes.find(c => c.code.toLowerCase() === String(code).toLowerCase());
+          const costCodeData: any = {
+            code: String(code),
+            name: String(name),
+            eacMethod: String(eacMethod),
+            projectId: project.id,
+            enterpriseAttributes: entAttrs,
+            projectAttributes: prjAttrs,
+            updatedAt: new Date().toISOString()
+          };
+          
+          if (existing) {
+            batch.update(doc(db, 'costCodes', existing.id), costCodeData);
+            updateCount++;
+          } else {
+            currentMaxOrder++;
+            const newRef = doc(collection(db, 'costCodes'));
+            batch.set(newRef, { 
+              ...costCodeData, 
+              sortOrder: currentMaxOrder,
+              createdAt: new Date().toISOString(),
+              actualCostToDate: 0,
+              baselineBudget: 0,
+              approvedChanges: 0,
+              subcontractAmount: 0
+            });
+            importCount++;
+          }
+        }
+      }
+
+      await batch.commit();
+      toast.success(`Import complete: ${importCount} new, ${updateCount} updated.`, { id: toastId });
+      setImportPreview(null);
+    } catch (error) {
+      console.error("Import error:", error);
+      toast.error("Failed to complete import.", { id: toastId });
+    }
+  };
+
+  const { duplicateIds, hasImportDuplicates } = useMemo(() => {
+    if (!importPreview) return { duplicateIds: [], hasImportDuplicates: false };
+    
+    // Check for duplicates within the file itself
+    const idsInFile = new Set<string>();
+    const duplicates = new Set<string>();
+    
+    importPreview.data.forEach(row => {
+      const id = row.code || row.Code || row['Cost Code ID'] || row['Code'];
+      if (id) {
+        const normalizedId = id.toString().trim().toLowerCase();
+        if (idsInFile.has(normalizedId)) {
+          duplicates.add(id.toString().trim());
+        }
+        idsInFile.add(normalizedId);
+      }
+    });
+
+    const duplicateList = Array.from(duplicates);
+    return { 
+      duplicateIds: duplicateList, 
+      hasImportDuplicates: duplicateList.length > 0 
+    };
+  }, [importPreview]);
 
   const handleExport = () => {
     const exportData = costCodes.map(c => ({
@@ -4828,56 +4685,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                   />
                 </div>
                 <div className="h-4 w-px bg-gray-200 dark:border-white/10 mx-1" />
-                <div className="flex items-center gap-2 bg-gray-100 dark:bg-white/5 p-1 rounded-xl">
-                  <button 
-                    onClick={() => setForecastingGranularity('monthly')}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      forecastingGranularity === 'monthly' 
-                        ? "bg-white dark:bg-[#141414] text-black dark:text-white shadow-sm" 
-                        : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    )}
-                  >
-                    Monthly
-                  </button>
-                  <button 
-                    onClick={() => setForecastingGranularity('weekly')}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      forecastingGranularity === 'weekly' 
-                        ? "bg-white dark:bg-[#141414] text-black dark:text-white shadow-sm" 
-                        : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    )}
-                  >
-                    Weekly
-                  </button>
-                  {forecastingGranularity === 'weekly' && (
-                    <div className="flex items-center gap-1 border-l border-gray-200 dark:border-white/10 pl-2 ml-1">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase">WE:</span>
-                      <select 
-                        value={weekEndingDay}
-                        onChange={(e) => setWeekEndingDay(parseInt(e.target.value))}
-                        className="bg-transparent text-[10px] font-bold focus:outline-none dark:text-white"
-                      >
-                        <option value={0}>Sun</option>
-                        <option value={5}>Fri</option>
-                        <option value={6}>Sat</option>
-                      </select>
-                    </div>
-                  )}
-                  <button 
-                    onClick={() => setForecastingGranularity('daily')}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
-                      forecastingGranularity === 'daily' 
-                        ? "bg-white dark:bg-[#141414] text-black dark:text-white shadow-sm" 
-                        : "text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-                    )}
-                  >
-                    Daily
-                  </button>
-                </div>
-                <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
                 <input 
                   type="file" 
                   ref={etcFileInputRef} 
@@ -4915,8 +4722,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 >
                   <Minimize2 className="w-4 h-4" />
                 </button>
-                <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
-                
                 <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
                 {selectedEtcIds.size > 0 && (
                   <>
@@ -6464,6 +6269,112 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           </>
         )}
       </AnimatePresence>
+
+      <Dialog open={!!importPreview} onOpenChange={(open) => !open && setImportPreview(null)}>
+        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 border-b border-gray-100 dark:border-white/10 shrink-0">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl font-bold dark:text-white flex items-center gap-2">
+                   <Upload className="w-5 h-5 text-blue-600" />
+                   Review Cost Codes Import
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  Previewing {importPreview?.data.length || 0} cost codes from your file.
+                </DialogDescription>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button 
+                   variant="outline" 
+                   onClick={() => setImportPreview(null)}
+                   className="font-bold h-10 rounded-xl"
+                >
+                  Cancel
+                </Button>
+                <Button 
+                   onClick={confirmImport} 
+                   disabled={hasImportDuplicates}
+                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold h-10 rounded-xl px-6 shadow-lg shadow-blue-600/20"
+                >
+                  Import Selected
+                </Button>
+              </div>
+            </div>
+            
+            {hasImportDuplicates && (
+              <div className="mt-4 p-3 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 rounded-xl flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+                <div className="text-xs text-red-800 dark:text-red-400">
+                  <span className="font-bold">Duplicate IDs detected! </span>
+                  The following codes appear multiple times in your file: {duplicateIds.join(', ')}.
+                  Please fix your Excel file and try again.
+                </div>
+              </div>
+            )}
+          </DialogHeader>
+
+          <div className="flex-1 overflow-auto bg-gray-50/30 dark:bg-black/20 p-6">
+            <div className="bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-gray-50 dark:bg-white/5 border-b border-gray-200 dark:border-white/10">
+                    <th className="p-4 font-bold uppercase tracking-widest text-gray-500">Code</th>
+                    <th className="p-4 font-bold uppercase tracking-widest text-gray-500">Name</th>
+                    <th className="p-4 font-bold uppercase tracking-widest text-gray-500">EAC Method</th>
+                    <th className="p-4 font-bold uppercase tracking-widest text-gray-500">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                  {importPreview?.data.slice(0, 100).map((row, idx) => {
+                    const code = row.code || row.Code || row['Cost Code ID'] || row['Code'];
+                    const existing = costCodes.find(c => c.code.toLowerCase() === String(code || '').toLowerCase());
+                    const isDuplicate = code && duplicateIds.includes(String(code));
+
+                    return (
+                      <tr key={idx} className={cn(
+                        "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors",
+                        isDuplicate && "bg-red-50/30 dark:bg-red-500/5"
+                      )}>
+                        <td className="p-4">
+                          <span className={cn("font-mono font-bold", isDuplicate ? "text-red-600" : "text-blue-600")}>
+                            {code || 'MISSING'}
+                          </span>
+                        </td>
+                        <td className="p-4 text-gray-700 dark:text-gray-300">
+                           {row.name || row.Name || row['Cost Code Name'] || row['Description'] || '-'}
+                        </td>
+                        <td className="p-4">
+                           <span className="px-2 py-1 bg-gray-100 dark:bg-white/10 rounded text-[10px] font-bold">
+                             {row.eacMethod || row.EACMethod || row['EAC Method'] || 'Manual'}
+                           </span>
+                        </td>
+                        <td className="p-4">
+                           {existing ? (
+                             <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 font-bold">
+                               <RefreshCw className="w-3 h-3" /> Update Existing
+                             </span>
+                           ) : (
+                             <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 font-bold">
+                               <Plus className="w-3 h-3" /> New Code
+                             </span>
+                           )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {(importPreview?.data.length || 0) > 100 && (
+                    <tr>
+                       <td colSpan={4} className="p-4 text-center text-gray-400 italic">
+                         ... and {(importPreview?.data.length || 0) - 100} more rows
+                       </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

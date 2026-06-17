@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Project } from '../types';
-import { db, auth } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { 
   doc, 
   updateDoc, 
@@ -8,15 +8,25 @@ import {
   query, 
   where, 
   getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { Calendar, Save, Calculator, Trash2, Lock, Unlock, Plus, AlertTriangle, RefreshCw, Eye, FileText, CheckCircle2 } from 'lucide-react';
 import { addMonths, addWeeks, subDays, format, parseISO, isWithinInterval } from 'date-fns';
 import { toast } from 'sonner';
+import { 
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 interface ProgressReportingPeriodProps {
   project: Project;
+  isAdmin?: boolean;
 }
 
 interface Period {
@@ -27,7 +37,7 @@ interface Period {
   status: 'open' | 'closed';
 }
 
-const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ project }) => {
+const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ project, isAdmin: isAdminProp }) => {
   const [baseDate, setBaseDate] = useState(project.progressPeriods?.baseDate || '');
   const [duration, setDuration] = useState<'week' | 'month'>(project.progressPeriods?.duration || 'week');
   const [numberOfPeriods, setNumberOfPeriods] = useState<number>(project.progressPeriods?.numberOfPeriods || 12);
@@ -35,8 +45,9 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
   const [currentPeriodId, setCurrentPeriodId] = useState<string | undefined>(project.progressPeriods?.currentPeriodId);
   const [saving, setSaving] = useState(false);
   const [isRollingOver, setIsRollingOver] = useState(false);
+  const [isRollOverConfirmOpen, setIsRollOverConfirmOpen] = useState(false);
 
-  const isAdmin = project.users?.[auth.currentUser?.uid || ''] === 'Project Admin' || (auth.currentUser?.email?.toLowerCase() === 'tarek.guindy@gmail.com');
+  const isAdmin = isAdminProp ?? (project.users?.[auth.currentUser?.uid || ''] === 'Project Admin' || (auth.currentUser?.email?.toLowerCase() === 'tarek.guindy@gmail.com'));
   const hasClosedPeriods = periods.some(p => p.status === 'closed');
 
   useEffect(() => {
@@ -192,11 +203,65 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
       return;
     }
 
-    if (!window.confirm('Are you sure you want to close the current period? This action cannot be undone.')) return;
-
     setIsRollingOver(true);
+    setIsRollOverConfirmOpen(false);
+    const toastId = toast.loading('Rolling over period and capturing progress actuals...');
     try {
       const firstOpenPeriod = openPeriods[0];
+      
+      // Store actuals for all progress items before closing the period
+      // Note: the app uses 'progressItems' collection for commodities
+      const itemsSnap = await getDocs(query(collection(db, 'progressItems'), where('projectId', '==', project.id)));
+      
+      if (itemsSnap.empty) {
+        toast.loading('No progress items to process. Proceeding with period update...', { id: toastId });
+      } else {
+        toast.loading(`Processing ${itemsSnap.size} items...`, { id: toastId });
+      }
+      
+      const rocSnap = await getDocs(query(collection(db, 'rulesOfCredit'), where('projectId', '==', project.id)));
+      const rocs = rocSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+
+      let batch = writeBatch(db);
+      let opCount = 0;
+
+      if (!itemsSnap.empty) {
+        for (const docSnap of itemsSnap.docs) {
+          const item = docSnap.data();
+          const roc = rocs.find(r => r.id === item.ruleOfCreditId || r.ruleId === item.ruleOfCreditId);
+          
+          let earned = 0;
+          if (roc?.steps) {
+            const progress = item.ruleOfCreditProgress || {};
+            const percent = roc.steps.reduce((sum: number, step: any) => {
+              const stepProgress = progress[step.id] || 0;
+              return sum + (stepProgress * step.weight / 100);
+            }, 0);
+            earned = (percent / 100) * (item.totalQty || 0);
+          }
+
+          const prevEarned = item.earnedQtyPrevious || 0;
+          const currentActual = Math.max(0, earned - prevEarned);
+
+          const actualPeriodValues = { ...(item.actualPeriodValues || {}) };
+          actualPeriodValues[firstOpenPeriod.id] = currentActual;
+
+          batch.update(docSnap.ref, {
+            actualPeriodValues,
+            earnedQtyPrevious: earned,
+            updatedAt: new Date().toISOString()
+          });
+          
+          opCount++;
+          if (opCount >= 400) {
+            await batch.commit();
+            batch = writeBatch(db);
+            opCount = 0;
+          }
+        }
+        await batch.commit();
+      }
+
       const nextOpenPeriod = openPeriods[1];
 
       const newPeriods = periods.map(p => 
@@ -206,21 +271,45 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
       let newCurrentId = currentPeriodId;
       if (nextOpenPeriod) {
         newCurrentId = nextOpenPeriod.id;
+      } else {
+        newCurrentId = undefined;
       }
 
-      await handleSave(newPeriods, baseDate, duration, numberOfPeriods, newCurrentId);
+      // Update project document
+      toast.loading('Saving period updates to project...', { id: toastId });
+      await updateDoc(doc(db, 'projects', project.id), {
+        progressPeriods: {
+          baseDate: baseDate,
+          duration: duration,
+          numberOfPeriods: numberOfPeriods,
+          periods: newPeriods,
+          currentPeriodId: newCurrentId || null
+        }
+      });
       
       setPeriods(newPeriods);
       setCurrentPeriodId(newCurrentId);
 
       if (nextOpenPeriod) {
-        toast.success(`${firstOpenPeriod.name} closed. Current period is now ${nextOpenPeriod.name}.`);
+        toast.success(`${firstOpenPeriod.name} closed. Current period is now ${nextOpenPeriod.name}.`, { id: toastId });
       } else {
-        toast.success(`${firstOpenPeriod.name} closed. No more open periods.`);
+        toast.success(`${firstOpenPeriod.name} closed. No more open periods.`, { id: toastId });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error during roll over:', error);
-      toast.error('Failed to roll over period.');
+      // Catch permission errors or other critical Firestore failures for diagnosis
+      const shouldLog = error.code === 'permission-denied' || 
+                        error.code === 'invalid-argument' || 
+                        error.code === 'resource-exhausted' ||
+                        (error.message && error.message.includes('permissions'));
+      if (shouldLog) {
+        try {
+          handleFirestoreError(error, OperationType.WRITE, 'progress_roll_over');
+        } catch (e) {
+          // ensure we still show the toast
+        }
+      }
+      toast.error(`Failed to roll over period: ${error.message || 'Unknown error'}`, { id: toastId });
     } finally {
       setIsRollingOver(false);
     }
@@ -264,12 +353,6 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
     toast.info('All periods cleared and saved.');
   };
 
-  const onSetCurrent = async (id: string) => {
-    setCurrentPeriodId(id);
-    await handleSave(periods, baseDate, duration, numberOfPeriods, id);
-    toast.success('Current period updated.');
-  };
-
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] overflow-hidden">
       <div className="p-6 border-b border-gray-100 dark:border-white/10 flex justify-between items-center bg-gray-50/50 dark:bg-white/5 shrink-0">
@@ -279,7 +362,7 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
         </div>
         <div className="flex gap-2">
           <Button 
-            onClick={handleRollOver}
+            onClick={() => setIsRollOverConfirmOpen(true)}
             disabled={periods.length === 0 || !periods.some(p => p.status === 'open') || !isAdmin || isRollingOver}
             className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-600/20 disabled:opacity-50 border-none"
           >
@@ -288,6 +371,44 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
           </Button>
         </div>
       </div>
+
+      {/* Roll Over Confirmation Dialog */}
+      <Dialog open={isRollOverConfirmOpen} onOpenChange={setIsRollOverConfirmOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              Confirm Period Roll Over
+            </DialogTitle>
+            <DialogDescription className="pt-2">
+              Are you sure you want to close the current period: <span className="font-bold text-gray-900 dark:text-white">{periods.find(p => p.status === 'open')?.name}</span>?
+              <br /><br />
+              This will:
+              <ul className="list-disc pl-5 mt-2 space-y-1 text-xs">
+                <li>Capture and lock current physical progress for all items</li>
+                <li>Archive the period and move to the next reporting interval</li>
+                <li>This action <strong>cannot be undone</strong></li>
+              </ul>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-6 flex gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setIsRollOverConfirmOpen(false)}
+              className="rounded-xl font-bold"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRollOver}
+              className="bg-emerald-600 text-white hover:bg-emerald-700 rounded-xl font-bold shadow-lg shadow-emerald-600/20 px-8"
+              disabled={isRollingOver}
+            >
+              {isRollingOver ? 'Rolling Over...' : 'Yes, Roll Over Period'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-8">
@@ -451,14 +572,7 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
                           </div>
                         </td>
                         <td className="p-4 text-right">
-                          {currentPeriodId !== period.id && period.status === 'open' && (
-                            <button 
-                              onClick={() => onSetCurrent(period.id)}
-                              className="text-[10px] font-bold uppercase tracking-widest text-blue-600 hover:text-blue-700 dark:text-blue-400 hover:underline transition-all"
-                            >
-                              Set as Current
-                            </button>
-                          )}
+                          {/* Actions removed - roll over only */}
                         </td>
                       </tr>
                     ))}

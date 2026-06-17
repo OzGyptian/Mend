@@ -6,6 +6,7 @@ import { cn } from '../lib/utils';
 import { auth } from '../firebase';
 import ChangeManagement from './ChangeManagement';
 import BulkChangeRecords from './BulkChangeRecords';
+import ProjectChangeAttributes from './ProjectChangeAttributes';
 import ErrorBoundary from './ErrorBoundary';
 
 interface ChangeManagementSubPaneProps {
@@ -14,7 +15,7 @@ interface ChangeManagementSubPaneProps {
   setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-type ChangeTab = 'standard' | 'bulk-records';
+type ChangeTab = 'standard' | 'bulk-records' | 'project-change-attributes';
 
 const ChangeManagementSubPane: React.FC<ChangeManagementSubPaneProps> = ({ 
   project, 
@@ -50,6 +51,7 @@ const ChangeManagementSubPane: React.FC<ChangeManagementSubPaneProps> = ({
       visible: isProjectAdmin,
       items: [
         { id: 'bulk-records', label: 'Bulk Change Records', icon: <ClipboardList className="w-4 h-4" /> },
+        { id: 'project-change-attributes', label: 'Project Change Attributes', icon: <Layout className="w-4 h-4" /> },
       ]
     }
   ];
@@ -145,6 +147,15 @@ const ChangeManagementSubPane: React.FC<ChangeManagementSubPaneProps> = ({
                 <BulkChangeRecords 
                   project={project} 
                   enterprise={enterprise}
+                />
+              </ErrorBoundary>
+            </div>
+          )}
+          {activeTab === 'project-change-attributes' && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <ErrorBoundary>
+                <ProjectChangeAttributes 
+                  project={project} 
                 />
               </ErrorBoundary>
             </div>

@@ -115,6 +115,7 @@
         "code": { "type": "string", "description": "User-defined cost code ID" },
         "projectId": { "type": "string" },
         "name": { "type": "string" },
+        "activityId": { "type": "string", "description": "Reference to Schedule Activity ID" },
         "enterpriseAttributes": { "type": "object" },
         "projectAttributes": { "type": "object" },
         "eacMethod": { "type": "string", "enum": ["Manual", "Change Management", "ETC Details", "Sub-Contract Management"] },
@@ -129,6 +130,7 @@
       "properties": {
         "projectId": { "type": "string" },
         "costCode": { "type": "string" },
+        "activityId": { "type": "string", "description": "Reference to Schedule Activity ID" },
         "calendarId": { "type": "string", "description": "Reference to a project calendar" },
         "item": { "type": "string" },
         "description": { "type": "string" },
@@ -262,6 +264,7 @@
       "properties": {
         "subcontractId": { "type": "string" },
         "projectId": { "type": "string" },
+        "activityId": { "type": "string", "description": "Reference to Schedule Activity ID" },
         "itemNo": { "type": "string", "description": "Sequential ID (e.g., 001)" },
         "description": { "type": "string" },
         "qty": { "type": "number" },
@@ -409,6 +412,7 @@
         "itemId": { "type": "string", "description": "Unique Item ID within package" },
         "description": { "type": "string" },
         "costCodeId": { "type": "string", "description": "Reference to Project Cost Code" },
+        "activityId": { "type": "string", "description": "Reference to Schedule Activity ID" },
         "totalQty": { "type": "number" },
         "unit": { "type": "string" },
         "plannedStartDate": { "type": "string", "format": "date" },
@@ -486,9 +490,29 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["projectId", "ruleId", "description"]
+    },
+    "ScheduleItem": {
+      "title": "Schedule Item",
+      "description": "A single activity from a project schedule (P6/MS Project).",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "activityId": { "type": "string", "description": "Unique Activity ID from schedule" },
+        "description": { "type": "string" },
+        "currentStartDate": { "type": "string", "format": "date" },
+        "currentEndDate": { "type": "string", "format": "date" },
+        "plannedStartDate": { "type": "string", "format": "date" },
+        "plannedEndDate": { "type": "string", "format": "date" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "activityId", "description"]
     }
   },
   "firestore": {
+    "/scheduleItems/{itemId}": {
+      "schema": "ScheduleItem",
+      "description": "Master project schedule activities"
+    },
     "/enterprises/{enterpriseId}": {
       "schema": "Enterprise",
       "description": "Enterprise root documents"

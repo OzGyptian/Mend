@@ -269,6 +269,20 @@ service cloud.firestore {
              (!('createdAt' in data) || isValidTimestamp(data.createdAt));
     }
 
+    function isValidScheduleItem(data) {
+      return data.projectId is string &&
+             data.activityId is string && data.activityId.size() <= 128 &&
+             data.description is string && data.description.size() <= 2000 &&
+             (!('baselineStartDate' in data) || data.baselineStartDate is string) &&
+             (!('baselineEndDate' in data) || data.baselineEndDate is string) &&
+             (!('currentStartDate' in data) || data.currentStartDate is string) &&
+             (!('currentEndDate' in data) || data.currentEndDate is string) &&
+             (!('plannedStartDate' in data) || data.plannedStartDate is string) &&
+             (!('plannedEndDate' in data) || data.plannedEndDate is string) &&
+             (!('updatedAt' in data) || isValidTimestamp(data.updatedAt)) &&
+             (!('createdAt' in data) || isValidTimestamp(data.createdAt));
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -505,6 +519,13 @@ service cloud.firestore {
       allow read: if canAccessProject(resource.data.projectId);
       allow create: if canAccessProject(request.resource.data.projectId) && isValidRuleOfCredit(request.resource.data);
       allow update: if canAccessProject(resource.data.projectId) && isValidRuleOfCredit(request.resource.data);
+      allow delete: if canAccessProject(resource.data.projectId);
+    }
+
+    match /scheduleItems/{itemId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canAccessProject(request.resource.data.projectId) && isValidScheduleItem(request.resource.data);
+      allow update: if canAccessProject(resource.data.projectId) && isValidScheduleItem(request.resource.data);
       allow delete: if canAccessProject(resource.data.projectId);
     }
   }

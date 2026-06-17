@@ -57,58 +57,59 @@ const AttributeTitleInput = ({ attr, type, onSave }: { attr: any, type: any, onS
 
 interface EnterpriseAdminProps {
   enterprise: Enterprise;
+  setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
+export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: EnterpriseAdminProps) {
   const [activeTab, setActiveTab] = useState<string>('users');
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['General Admin', 'Cost Admin', 'Safety Admin', 'Quality Admin', 'Document Admin']));
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['General', 'Cost', 'Change', 'Risk', 'Sub-Contract', 'Procurement', 'Progress', 'Schedule']));
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   const adminSections = [
     {
-      title: 'General Admin',
+      title: 'General',
       icon: <Settings className="w-4 h-4" />,
       items: [
         { id: 'enterpriseSettings', label: 'Enterprise Settings', icon: <Settings className="w-4 h-4" /> },
         { id: 'users', label: 'Enterprise Users', icon: <Users className="w-4 h-4" /> },
         { id: 'projects', label: 'Enterprise Projects', icon: <Briefcase className="w-4 h-4" /> },
         { id: 'projectAttributes', label: 'Enterprise Project Attributes', icon: <Settings className="w-4 h-4" /> },
+        { id: 'lineItemAttributes', label: 'Enterprise Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'enterpriseCalendars', label: 'Enterprise Calendars', icon: <Calendar className="w-4 h-4" /> },
       ]
     },
     {
-      title: 'Cost Management',
+      title: 'Cost',
       icon: <DollarSign className="w-4 h-4" />,
       items: [
-        { id: 'lineItemAttributes', label: 'Enterprise Line-Item Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'costCodeAttributes', label: 'Enterprise Cost Code Attributes', icon: <Tag className="w-4 h-4" /> },
         { id: 'resourceRates', label: 'Enterprise Resources Rates', icon: <DollarSign className="w-4 h-4" /> },
       ]
     },
     {
-      title: 'Progress Management',
-      icon: <Activity className="w-4 h-4" />,
-      items: [
-        { id: 'progressAttributes', label: 'Enterprise Progress Attributes', icon: <Tag className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Schedule Management',
-      icon: <Calendar className="w-4 h-4" />,
-      items: [
-        { id: 'scheduleMgmt', label: 'Schedule Settings', icon: <Calendar className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Change Management',
+      title: 'Change',
       icon: <RefreshCw className="w-4 h-4" />,
       items: [
         { id: 'changeAttributes', label: 'Enterprise Change Attributes', icon: <Tag className="w-4 h-4" /> },
-        { id: 'changeMgmt', label: 'Change Settings', icon: <RefreshCw className="w-4 h-4" /> },
       ]
     },
     {
-      title: 'Procurement Management',
+      title: 'Risk',
+      icon: <ShieldAlert className="w-4 h-4" />,
+      items: [
+        { id: 'riskAttributes', label: 'Enterprise Risk Attributes', icon: <Tag className="w-4 h-4" /> },
+      ]
+    },
+    {
+      title: 'Sub-Contract',
+      icon: <Briefcase className="w-4 h-4" />,
+      items: [
+        { id: 'subcontractAttributes', label: 'Enterprise Sub-Contract Attributes', icon: <Tag className="w-4 h-4" /> },
+        { id: 'vendors', label: 'Enterprise Vendors', icon: <Building2 className="w-4 h-4" /> },
+      ]
+    },
+    {
+      title: 'Procurement',
       icon: <ShoppingCart className="w-4 h-4" />,
       items: [
         { id: 'procurementAttributes', label: 'Enterprise Procurement Attributes', icon: <Tag className="w-4 h-4" /> },
@@ -116,27 +117,10 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       ]
     },
     {
-      title: 'Risk Management',
-      icon: <ShieldAlert className="w-4 h-4" />,
+      title: 'Progress',
+      icon: <Activity className="w-4 h-4" />,
       items: [
-        { id: 'riskAttributes', label: 'Enterprise Risk Attributes', icon: <Tag className="w-4 h-4" /> },
-        { id: 'riskMgmt', label: 'Risk Settings', icon: <ShieldAlert className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Sub-Contract Management',
-      icon: <Briefcase className="w-4 h-4" />,
-      items: [
-        { id: 'subcontractAttributes', label: 'Enterprise Sub-Contract Attributes', icon: <Tag className="w-4 h-4" /> },
-        { id: 'subContractMgmt', label: 'Sub-Contract Settings', icon: <Briefcase className="w-4 h-4" /> },
-        { id: 'vendors', label: 'Enterprise Vendors', icon: <Building2 className="w-4 h-4" /> },
-      ]
-    },
-    {
-      title: 'Invoicing',
-      icon: <Receipt className="w-4 h-4" />,
-      items: [
-        { id: 'invoicing', label: 'Invoicing Settings', icon: <Receipt className="w-4 h-4" /> },
+        { id: 'progressAttributes', label: 'Enterprise Progress Attributes', icon: <Tag className="w-4 h-4" /> },
       ]
     }
   ];
@@ -166,8 +150,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(new Set());
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [selectedVendorIds, setSelectedVendorIds] = useState<Set<string>>(new Set());
-  const [selectedChangeTypeIds, setSelectedChangeTypeIds] = useState<Set<string>>(new Set());
-  const [selectedRiskTypeIds, setSelectedRiskTypeIds] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'user' | 'project' | 'attr-value' | 'rate' | 'costElement' | 'vendor', id: string } | null>(null);
   const [selectedAttrId, setSelectedAttrId] = useState<string>('01');
   const [selectedAttrValueIds, setSelectedAttrValueIds] = useState<Set<string>>(new Set());
@@ -176,7 +158,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [projectSort, setProjectSort] = useState<{ field: 'dateCreated' | 'dateLastModified' | 'projectName' | 'projectCode', direction: 'asc' | 'desc' }>({ field: 'dateCreated', direction: 'desc' });
   
   // Modal States
-  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'bulk-user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement' | 'vendor' | 'bulk-vendor' | 'bulk-changeType' | 'bulk-riskType', id?: string, name?: string, count?: number } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'user' | 'bulk-user' | 'project' | 'bulk-project' | 'bulk-attr-value' | 'rate' | 'bulk-rate' | 'costElement' | 'bulk-costElement' | 'vendor' | 'bulk-vendor', id?: string, name?: string, count?: number } | null>(null);
   const [inviteModal, setInviteModal] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
   const [isInviting, setIsInviting] = useState(false);
@@ -189,6 +171,9 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [newProjectData, setNewProjectData] = useState({ name: '', code: '' });
   const [newProjectCode, setNewProjectCode] = useState('');
+  const [isEditProjectDetailsOpen, setIsEditProjectDetailsOpen] = useState(false);
+  const [projectToEdit, setProjectToEdit] = useState<Project | null>(null);
+  const [editingProjectDetails, setEditingProjectDetails] = useState<Record<string, any>>({});
   const [isReplacing, setIsReplacing] = useState(false);
   const [replaceError, setReplaceError] = useState('');
   const [projectToReplace, setProjectToReplace] = useState<Project | null>(null);
@@ -216,6 +201,13 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const projectPhotoInputRef = useRef<HTMLInputElement>(null);
   const enterpriseLogoInputRef = useRef<HTMLInputElement>(null);
+  
+  // Grid Refs
+  const usersGridRef = useRef<AgGridReact>(null);
+  const projectsGridRef = useRef<AgGridReact>(null);
+  const resourceRatesGridRef = useRef<AgGridReact>(null);
+  const vendorsGridRef = useRef<AgGridReact>(null);
+  const attrValueGridRef = useRef<AgGridReact>(null);
 
   // Table Control States
   const [visibleColumns, setVisibleColumns] = useState<Record<string, string[]>>({
@@ -243,18 +235,23 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     resourceRates: true,
     vendors: true
   });
-  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'subcontractAttributes' | 'procurementAttributes' | 'changeAttributes' | 'riskAttributes' | 'progressAttributes', data: any[], attrId?: string } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ type: 'users' | 'projects' | 'lineItemAttributes' | 'costCodeAttributes' | 'projectAttributes' | 'resourceRates' | 'subcontractAttributes' | 'procurementAttributes' | 'changeAttributes' | 'riskAttributes' | 'progressAttributes' | 'vendors', data: any[], attrId?: string } | null>(null);
   const [userSort, setUserSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'name', direction: 'asc' });
   const [attrSort, setAttrSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'sortOrder', direction: 'asc' });
   const [resourceSort, setResourceSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
   const [costElementSort, setCostElementSort] = useState<{ field: string, direction: 'asc' | 'desc' }>({ field: 'id', direction: 'asc' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const isDuplicateVendorCode = useMemo(() => {
+    if (!vendorFormData.id) return false;
+    const currentVendors = enterprise.vendors || [];
+    const updatedVendorId = isEditingVendor?.id;
+    return currentVendors.some(v => v.id !== updatedVendorId && v.id.toLowerCase() === vendorFormData.id.toLowerCase());
+  }, [vendorFormData.id, enterprise.vendors, isEditingVendor?.id]);
   const [showImportSuccessModal, setShowImportSuccessModal] = useState(false);
   const [newViewName, setNewViewName] = useState('');
   const [isSavedViewMenuOpen, setIsSavedViewMenuOpen] = useState<string | null>(null);
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
-  const [newChangeType, setNewChangeType] = useState('');
-  const [newRiskType, setNewRiskType] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, Record<string, string>>>({
     users: {},
     projects: {},
@@ -409,15 +406,30 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
 
   const saveVendor = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!enterprise.id || !vendorFormData.name) return;
+    if (!enterprise.id || !vendorFormData.name || !vendorFormData.id) return;
+
+    if (vendorFormData.id.length > 50) {
+      alert('Vendor ID cannot be more than 50 characters.');
+      return;
+    }
+
+    if (isDuplicateVendorCode) {
+      alert(`Vendor ID "${vendorFormData.id}" is already in use.`);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const currentVendors = enterprise.vendors || [];
+      const updatedVendorId = isEditingVendor?.id;
+      
       let newVendors;
-      if (isEditingVendor?.id) {
-        newVendors = currentVendors.map(v => v.id === isEditingVendor.id ? { ...vendorFormData } : v);
+      if (updatedVendorId) {
+        // When editing, preserve the original ID but update other fields
+        newVendors = currentVendors.map(v => v.id === updatedVendorId ? { ...vendorFormData } : v);
       } else {
-        newVendors = [...currentVendors, { ...vendorFormData, id: vendorFormData.id || Math.random().toString(36).substring(2, 9) }];
+        // When adding new, use the inputed ID
+        newVendors = [...currentVendors, { ...vendorFormData }];
       }
       await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
       setIsEditingVendor(null);
@@ -490,32 +502,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     } catch (error) {
       console.error('Bulk delete users failed', error);
       alert('Failed to delete users.');
-    }
-  };
-
-  const bulkDeleteChangeTypes = async () => {
-    if (!enterprise.id || selectedChangeTypeIds.size === 0) return;
-    try {
-      const newTypes = (enterprise.changeTypes || []).filter(t => !selectedChangeTypeIds.has(t));
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { changeTypes: newTypes });
-      setSelectedChangeTypeIds(new Set());
-      setDeleteConfirm(null);
-    } catch (error) {
-      console.error('Bulk delete change types failed', error);
-      alert('Failed to delete change types.');
-    }
-  };
-
-  const bulkDeleteRiskTypes = async () => {
-    if (!enterprise.id || selectedRiskTypeIds.size === 0) return;
-    try {
-      const newTypes = (enterprise.riskTypes || []).filter(t => !selectedRiskTypeIds.has(t));
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { riskTypes: newTypes });
-      setSelectedRiskTypeIds(new Set());
-      setDeleteConfirm(null);
-    } catch (error) {
-      console.error('Bulk delete risk types failed', error);
-      alert('Failed to delete risk types.');
     }
   };
 
@@ -671,17 +657,24 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   };
 
   const deleteAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk' | 'progress', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : type === 'progress' ? 'progressAttributes' : 'lineItemAttributes';
-    const currentAttrs = getAttributes(type);
-    const newAttrs = currentAttrs.map(a => {
-      if (a.id === attrId) {
-        return { ...a, values: (a.values || []).filter(v => v.id !== valueId) };
-      }
-      return a;
-    });
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      [field]: newAttrs
-    });
+    try {
+      const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : type === 'progress' ? 'progressAttributes' : 'lineItemAttributes';
+      const currentAttrs = getAttributes(type);
+      const newAttrs = currentAttrs.map(a => {
+        if (a.id === attrId) {
+          const values = (a.values || []).filter(v => v.id !== valueId);
+          return { ...a, values };
+        }
+        return a;
+      });
+      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        [field]: newAttrs
+      });
+      toast.success('Value deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete attribute value', error);
+      toast.error('Failed to delete value');
+    }
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -913,6 +906,89 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     }));
   };
 
+  const exportProjectImportTemplate = () => {
+    const activeAttrs = (enterprise.projectAttributes || []).filter(attr => attr.title);
+    
+    const data = projects.map(p => {
+      const row: any = {
+        'Project ID': p.projectCode,
+        'Project Name': p.projectName
+      };
+      
+      activeAttrs.forEach(attr => {
+        row[attr.title] = p.attributes?.[attr.id] || '';
+      });
+      
+      return row;
+    });
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Import_Template');
+    XLSX.writeFile(wb, 'Enterprise_Projects_Import_Template.xlsx');
+    toast.success('Import template exported successfully.');
+  };
+
+  const handleBulkUpdateProjectsImport = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        
+        if (rows.length === 0) {
+          toast.error("The file is empty.");
+          return;
+        }
+
+        setImportPreview({ type: 'projects', data: rows });
+      } catch (error) {
+        console.error("Bulk update import error:", error);
+        toast.error("Failed to process the import file.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleImportVendorsExcel = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+        
+        if (rows.length === 0) {
+          toast.error("The file is empty.");
+          return;
+        }
+
+        setImportPreview({ type: 'vendors', data: rows });
+      } catch (error) {
+        console.error("Vendor import error:", error);
+        toast.error("Failed to process the import file.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const exportVendorsExcel = () => {
+    const data = (enterprise.vendors || []).map(v => ({
+      'Vendor ID': v.id,
+      'Vendor Name': v.name,
+      'Code': v.code,
+      'Contact Name': v.contactName,
+      'Contact Email': v.contactEmail
+    }));
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Vendors');
+    XLSX.writeFile(wb, 'Enterprise_Vendors.xlsx');
+  };
+
   const exportProjects = () => {
     const data = filteredProjects.map(p => ({
       'Project Name': p.projectName,
@@ -1034,59 +1110,116 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   ], []);
 
   const projectColumnDefs = useMemo(() => [
-    {
-      headerName: 'Photo',
-      field: 'photoURL',
-      width: 80,
-      cellRenderer: (params: any) => (
-        <div className="w-8 h-8 rounded-full overflow-hidden bg-gray-100 dark:bg-white/5 flex items-center justify-center border border-gray-200 dark:border-white/10">
-          {params.value ? <img src={params.value} alt="" className="w-full h-full object-cover" /> : <Briefcase className="w-4 h-4 text-gray-400" />}
-        </div>
-      )
+    { 
+      headerName: 'Project Code', 
+      field: 'projectCode', 
+      width: 150, 
+      pinned: 'left',
+      lockPosition: 'left',
+      cellStyle: { fontWeight: 'bold' },
+      editable: false 
     },
     {
       headerName: 'Project Name',
       field: 'projectName',
       flex: 1,
+      minWidth: 200,
       editable: true,
-      cellStyle: (params: any) => ({ fontWeight: 'bold', color: selectedProjectId === params.data.id ? '#2563eb' : undefined })
-    },
-    { headerName: 'Project Code', field: 'projectCode', width: 150, editable: true },
-    {
-      headerName: 'Status',
-      field: 'status',
-      width: 150,
-      cellRenderer: (params: any) => (
-        <select 
-          value={params.value || 'Active'}
-          onChange={(e) => handleUpdateProjectStatus(params.data.id, e.target.value)}
-          className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-white/5 border-none rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <option value="Active">Active</option>
-          <option value="On Hold">On Hold</option>
-          <option value="Closed">Closed</option>
-          <option value="Archived">Archived</option>
-        </select>
-      )
+      cellStyle: (params: any) => ({ color: selectedProjectId === params.data.id ? '#2563eb' : undefined })
     },
     {
-      headerName: 'Created',
-      field: 'dateCreated',
-      width: 120,
-      valueFormatter: (params: any) => params.value ? new Date(params.value).toLocaleDateString() : 'N/A'
+      headerName: 'Enterprise Project Attributes',
+      openByDefault: true,
+      children: (enterprise.projectAttributes || [])
+        .filter(attr => attr.title)
+        .map(attr => ({
+          headerName: attr.title,
+          field: `attributes.${attr.id}`,
+          width: 200,
+          editable: true,
+          cellEditor: 'agRichSelectCellEditor',
+          cellEditorParams: {
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
+            allowTyping: true,
+            filterList: true
+          },
+          valueParser: (params: any) => {
+            if (typeof params.newValue === 'string') {
+              const val = params.newValue.split(' | ')[0].trim();
+              return val;
+            }
+            return params.newValue;
+          },
+          valueSetter: (params: any) => {
+            const val = params.newValue;
+            if (!params.data.attributes) {
+              params.data.attributes = {};
+            }
+            params.data.attributes[attr.id] = val;
+            return true;
+          },
+          valueFormatter: (params: any) => {
+            if (!params.value) return '';
+            const match = attr.values?.find(v => v.id === params.value);
+            return match ? `${match.id} | ${match.description}` : params.value;
+          }
+        }))
     },
     {
-      headerName: 'Users',
-      field: 'users',
-      width: 100,
-      valueGetter: (params: any) => Object.keys(params.value || {}).length
-    },
-    {
-      headerName: 'Sheets',
-      field: 'id',
-      width: 100,
-      valueGetter: (params: any) => sheets.filter(s => s.projectId === params.data.id).length
+      headerName: 'System Columns',
+      children: [
+        {
+          headerName: 'Status',
+          field: 'status',
+          width: 120,
+          cellRenderer: (params: any) => (
+            <select 
+              value={params.value || 'Active'}
+              onChange={(e) => handleUpdateProjectStatus(params.data.id, e.target.value)}
+              className="text-[10px] font-bold uppercase tracking-widest bg-gray-100 dark:bg-white/5 border-none rounded-lg px-2 py-1 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none w-full"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <option value="Active">Active</option>
+              <option value="On Hold">On Hold</option>
+              <option value="Closed">Closed</option>
+              <option value="Archived">Archived</option>
+            </select>
+          )
+        },
+        {
+          headerName: 'Created Date',
+          field: 'dateCreated',
+          width: 130,
+          valueFormatter: (params: any) => params.value ? new Date(params.value).toLocaleDateString() : 'N/A'
+        },
+        {
+          headerName: 'Created By',
+          field: 'createdByEmail',
+          width: 180,
+          cellClass: 'text-gray-500'
+        },
+        {
+          headerName: 'Modified Date',
+          field: 'dateLastModified',
+          width: 130,
+          valueFormatter: (params: any) => params.value ? new Date(params.value).toLocaleDateString() : 'N/A'
+        },
+        {
+          headerName: 'Modified By',
+          field: 'modifiedByEmail',
+          width: 180,
+          cellClass: 'text-gray-500'
+        },
+        {
+          headerName: 'Users',
+          field: 'users',
+          width: 80,
+          valueGetter: (params: any) => Object.keys(params.value || {}).length
+        }
+      ]
     },
     {
       headerName: '',
@@ -1107,9 +1240,18 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         );
       }
     }
-  ], [selectedProjectId, activeMenuId, sheets]);
+  ], [selectedProjectId, activeMenuId, enterprise.projectAttributes]);
 
   const attributeValueColumnDefs = useMemo(() => [
+    {
+      headerName: 'ID',
+      field: 'id',
+      width: 120,
+      pinned: 'left',
+      lockPosition: 'left',
+      cellStyle: { fontWeight: 'bold' },
+      editable: false
+    },
     {
       headerName: 'Description',
       field: 'description',
@@ -1142,9 +1284,18 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         );
       }
     }
-  ], [activeTab, selectedAttrId]);
+  ], [activeTab, selectedAttrId, enterprise]);
 
   const resourceRateColumnDefs = useMemo(() => [
+    { 
+      headerName: 'Resource ID', 
+      field: 'id', 
+      width: 150, 
+      pinned: 'left',
+      lockPosition: 'left',
+      cellStyle: { fontWeight: 'bold' },
+      editable: false 
+    },
     { headerName: 'Resource Name', field: 'name', flex: 1, editable: true },
     { headerName: 'Category', field: 'category', width: 150, editable: true },
     { headerName: 'Unit', field: 'unit', width: 100, editable: true },
@@ -1191,7 +1342,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
   const vendorColumnDefs = useMemo(() => [
     { headerName: 'Vendor ID', field: 'id', width: 150, editable: false },
     { headerName: 'Vendor Name', field: 'name', flex: 1, editable: true },
-    { headerName: 'Code', field: 'code', width: 120, editable: true },
     { headerName: 'Contact Name', field: 'contactName', width: 150, editable: true },
     { headerName: 'Contact Email', field: 'contactEmail', width: 200, editable: true },
     {
@@ -1299,20 +1449,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const removeAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk' | 'progress', attrId: string, valueId: string) => {
-    const field = type === 'project' ? 'projectAttributes' : type === 'costCode' ? 'costCodeAttributes' : type === 'subcontract' ? 'subcontractAttributes' : type === 'procurement' ? 'procurementAttributes' : type === 'change' ? 'changeAttributes' : type === 'risk' ? 'riskAttributes' : type === 'progress' ? 'progressAttributes' : 'lineItemAttributes';
-    const currentAttrs = getAttributes(type);
-    const newAttrs = currentAttrs.map(a => {
-      if (a.id === attrId) {
-        return { ...a, values: (a.values || []).filter(v => v.id !== valueId) };
-      }
-      return a;
-    });
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      [field]: newAttrs
-    });
   };
 
   const updateAttributeValue = async (type: 'project' | 'lineItem' | 'costCode' | 'subcontract' | 'procurement' | 'change' | 'risk' | 'progress', attrId: string, valueId: string, updates: Partial<ProjectAttributeValue>) => {
@@ -1465,19 +1601,37 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       });
       await updateDoc(doc(db, 'enterprises', enterprise.id), { users: currentUsers });
     } else if (type === 'projects') {
+      const activeAttrs = (enterprise.projectAttributes || []).filter(attr => attr.title);
+      const batch = writeBatch(db);
+
       for (const row of data) {
-        const code = row.Code?.toString() || row.code?.toString() || row.ProjectCode?.toString() || row.projectCode?.toString();
-        const name = row.Name?.toString() || row.name?.toString() || row.ProjectName?.toString() || row.projectName?.toString() || '';
+        const code = row.Code?.toString() || row.code?.toString() || row.ProjectCode?.toString() || row.projectCode?.toString() || row['Project ID']?.toString();
+        const name = row.Name?.toString() || row.name?.toString() || row.ProjectName?.toString() || row.projectName?.toString() || row['Project Name']?.toString() || '';
         if (!code) continue;
 
         const existingProject = projects.find(p => p.projectCode === code);
+        const updates: any = {};
+        if (name) updates.projectName = name;
+        
+        // Attributes
+        const newAttributes: any = existingProject?.attributes ? { ...existingProject.attributes } : {};
+        activeAttrs.forEach(attr => {
+          if (row[attr.title] !== undefined) {
+            newAttributes[attr.id] = row[attr.title].toString();
+          }
+        });
+        updates.attributes = newAttributes;
+
         if (existingProject) {
-          await updateDoc(doc(db, 'projects', existingProject.id), { projectName: name || existingProject.projectName });
+          updates.dateLastModified = new Date().toISOString();
+          batch.update(doc(db, 'projects', existingProject.id), updates);
         } else {
-          await addDoc(collection(db, 'projects'), {
+          const newProjRef = doc(collection(db, 'projects'));
+          batch.set(newProjRef, {
             enterpriseId: enterprise.id,
             projectCode: code,
             projectName: name,
+            attributes: newAttributes,
             dateCreated: new Date().toISOString(),
             dateLastModified: new Date().toISOString(),
             users: { [auth.currentUser?.uid || '']: 'Project Admin' },
@@ -1485,6 +1639,26 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           });
         }
       }
+      await batch.commit();
+    } else if (type === 'vendors') {
+      const currentVendors = [...(enterprise.vendors || [])];
+      data.forEach(row => {
+        const id = (row['Vendor ID'] || row.id || row.ID || row.Code || row.code)?.toString();
+        const name = (row['Vendor Name'] || row.name || row.Name)?.toString() || '';
+        const code = (row.Code || row.code || row['Vendor ID'] || row.id || row.ID)?.toString() || '';
+        const contactName = (row['Contact Name'] || row.contactName || row.ContactName)?.toString() || '';
+        const contactEmail = (row['Contact Email'] || row.contactEmail || row.ContactEmail)?.toString() || '';
+        
+        if (!id) return;
+        
+        const existingIndex = currentVendors.findIndex(v => v.id === id);
+        if (existingIndex > -1) {
+          currentVendors[existingIndex] = { id, name, code, contactName, contactEmail };
+        } else {
+          currentVendors.push({ id, name, code, contactName, contactEmail });
+        }
+      });
+      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: currentVendors });
     }
 
     setImportPreview(null);
@@ -1505,6 +1679,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
       setIsSubmitting(true);
       const now = new Date().toISOString();
       const finalName = newProjectData.name.trim() || 'Project Name';
+      const user = auth.currentUser;
       await addDoc(collection(db, 'projects'), {
         enterpriseId: enterprise.id,
         projectName: finalName,
@@ -1513,9 +1688,13 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
         startDate: now.split('T')[0],
         endDate: now.split('T')[0],
         cutoffDate: now.split('T')[0],
-        users: { [auth.currentUser?.uid || '']: 'Project Admin' },
+        users: { [user?.uid || '']: 'Project Admin' },
         dateCreated: now,
         dateLastModified: now,
+        createdBy: user?.uid || '',
+        createdByEmail: user?.email || '',
+        modifiedBy: user?.uid || '',
+        modifiedByEmail: user?.email || '',
         sheets: [],
         status: 'Active'
       });
@@ -1582,80 +1761,177 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
     });
   };
 
+  const { duplicateIds, hasImportDuplicates, systemDuplicateIds } = useMemo(() => {
+    if (!importPreview) return { duplicateIds: [], hasImportDuplicates: false, systemDuplicateIds: [] };
+    
+    const idsInFile = new Set<string>();
+    const fileDuplicates = new Set<string>();
+    const sysDuplicates = new Set<string>();
+    
+    const currentVendors = enterprise.vendors || [];
+
+    importPreview.data.forEach(row => {
+      let id: string | undefined;
+      
+      if (importPreview.type === 'users') {
+        id = row.Email?.toString() || row.email?.toString();
+      } else if (importPreview.type === 'projects') {
+        id = row.Code?.toString() || row.code?.toString() || row.ProjectCode?.toString() || row.projectCode?.toString() || row['Project ID']?.toString();
+      } else if (importPreview.type === 'vendors') {
+        id = (row['Vendor ID'] || row.id || row.ID || row.Code || row.code)?.toString();
+        if (id && currentVendors.some(v => v.id === id)) {
+          sysDuplicates.add(id.toString().trim());
+        }
+      } else {
+        // Line items, cost codes, etc. usually use ID or id
+        id = row.ID?.toString() || row.id?.toString();
+        
+        // Fallback for common ID fields if the standard ones aren't found
+        if (!id) {
+          const commonIdFields = ['Code', 'code', 'Project ID', 'ProjectCode', 'Identifier'];
+          for (const field of commonIdFields) {
+            if (row[field]) {
+              id = row[field].toString();
+              break;
+            }
+          }
+        }
+      }
+      
+      if (id) {
+        const normalizedId = id.toString().trim().toLowerCase();
+        if (idsInFile.has(normalizedId)) {
+          fileDuplicates.add(id.toString().trim());
+        }
+        idsInFile.add(normalizedId);
+      }
+    });
+
+    const duplicateList = Array.from(fileDuplicates);
+    const systemDuplicateList = Array.from(sysDuplicates);
+    return { 
+      duplicateIds: duplicateList, 
+      systemDuplicateIds: systemDuplicateList,
+      hasImportDuplicates: duplicateList.length > 0 || (importPreview.type === 'vendors' && systemDuplicateList.length > 0)
+    };
+  }, [importPreview, enterprise.vendors]);
+
   return (
     <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] overflow-hidden transition-colors duration-300">
-      {/* Admin Sidebar */}
-      <motion.aside 
-        initial={false}
-        animate={{ width: isSidebarOpen ? 280 : 0, opacity: isSidebarOpen ? 1 : 0 }}
-        className="bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col h-full overflow-hidden transition-all duration-300"
-      >
-        <div className="p-4 border-b border-gray-200 dark:border-white/10 flex items-center justify-between">
-          {isSidebarOpen && (
-            <div>
-              <h1 className="text-xl font-bold dark:text-white">Enterprise Admin</h1>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mt-1">Console</p>
+      <div className={`${isSidebarOpen ? 'w-72' : 'w-16'} bg-white dark:bg-[#141414] border-r border-gray-200 dark:border-white/10 flex flex-col h-full shrink-0 transition-all duration-300`}>
+        <div className="p-6 border-b border-gray-200 dark:border-white/10">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-black dark:bg-white rounded-xl flex items-center justify-center shadow-lg shadow-black/10 dark:shadow-white/10">
+              <Settings className="w-6 h-6 text-white dark:text-black" />
             </div>
-          )}
-          <button 
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500 dark:text-gray-400"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
+            {isSidebarOpen && (
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold dark:text-white truncate">Enterprise Admin</h2>
+                <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Organization Console</p>
+              </div>
+            )}
+          </div>
         </div>
 
-        <ScrollArea className="flex-1 py-4">
-          <div className="px-4 space-y-6">
-            {adminSections.map((section) => (
-              <div key={section.title} className="space-y-1">
+        <nav className="flex-1 overflow-y-auto py-4 space-y-4 custom-scrollbar">
+          <div className="px-4 space-y-2">
+            <button 
+              onClick={() => {
+                const newState = !isSidebarOpen;
+                setIsSidebarOpen(newState);
+                if (!newState && setIsSidebarCollapsed) {
+                  setIsSidebarCollapsed(true);
+                }
+              }}
+              className={`w-full flex items-center ${isSidebarOpen ? 'justify-between' : 'justify-center'} p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500 dark:text-gray-400`}
+            >
+              {isSidebarOpen && <span className="text-xs font-medium">Collapse Menu</span>}
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300",
+                isSidebarOpen ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/20" : "bg-transparent text-emerald-500"
+              )}>
+                {isSidebarOpen ? <ChevronLeft className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+              </div>
+            </button>
+
+            {isSidebarOpen && (
+              <div className="flex items-center gap-1 px-1">
                 <button 
-                  onClick={() => toggleSection(section.title)}
-                  className="w-full flex items-center justify-between p-2 text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                  onClick={() => setExpandedSections(new Set(adminSections.map(s => s.title)))}
+                  className="flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-md transition-all border border-transparent hover:border-gray-200 dark:hover:border-white/10"
                 >
-                  <span className="flex items-center gap-2">
-                    {section.icon}
-                    {section.title}
-                  </span>
-                  <ChevronDown className={cn("w-3 h-3 transition-transform", !expandedSections.has(section.title) && "-rotate-90")} />
+                  Expand All
                 </button>
+                <button 
+                  onClick={() => setExpandedSections(new Set())}
+                  className="flex-1 py-1.5 text-[9px] font-black uppercase tracking-widest text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-md transition-all border border-transparent hover:border-gray-200 dark:hover:border-white/10"
+                >
+                  Collapse All
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-4">
+            {adminSections.map(section => (
+              <div key={section.title} className="space-y-1">
+                {isSidebarOpen && (
+                  <button 
+                    onClick={() => toggleSection(section.title)}
+                    className={cn(
+                      "w-full flex items-center justify-between px-5 py-3 text-[10px] font-black uppercase tracking-[0.15em] transition-all",
+                      expandedSections.has(section.title)
+                        ? "bg-slate-900 text-white dark:bg-white dark:text-black sticky top-0 z-10 shadow-lg shadow-black/10 dark:shadow-white/5"
+                        : "bg-slate-800 text-slate-100 dark:bg-zinc-900 dark:text-slate-400 hover:bg-slate-700 dark:hover:bg-zinc-800 border-y border-white/5"
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      {section.icon}
+                      {section.title}
+                    </span>
+                    <ChevronRight className={cn("w-3 h-3 transition-transform", expandedSections.has(section.title) && "rotate-90")} />
+                  </button>
+                )}
                 
                 <AnimatePresence initial={false}>
-                  {expandedSections.has(section.title) && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      className="overflow-hidden space-y-1"
+                  {(expandedSections.has(section.title) || !isSidebarOpen) && (
+                    <motion.div 
+                      initial={isSidebarOpen ? { height: 0, opacity: 0 } : undefined}
+                      animate={isSidebarOpen ? { height: 'auto', opacity: 1 } : undefined}
+                      exit={isSidebarOpen ? { height: 0, opacity: 0 } : undefined}
+                      className={cn(
+                        "space-y-1 px-4",
+                        isSidebarOpen && expandedSections.has(section.title) && "py-2 bg-gray-50/50 dark:bg-white/[0.02]"
+                      )}
                     >
-                      {section.items.map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => setActiveTab(item.id)}
-                          className={cn(
-                            "w-full flex items-center gap-3 py-2.5 px-4 rounded-xl text-sm font-medium transition-all",
-                            activeTab === item.id 
-                              ? "bg-black text-white dark:bg-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10" 
-                              : "text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white"
-                          )}
-                        >
-                          {item.icon}
-                          {item.label}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            ))}
+                    {section.items.map(item => (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id)}
+                        title={!isSidebarOpen ? item.label : undefined}
+                        className={`w-full flex items-center ${isSidebarOpen ? 'gap-3 px-4' : 'justify-center px-0'} py-2.5 rounded-xl text-sm font-medium transition-all ${
+                          activeTab === item.id 
+                            ? 'bg-black dark:bg-white text-white dark:text-black shadow-lg shadow-black/10 dark:shadow-white/10' 
+                            : 'text-gray-900 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-black dark:hover:text-white'
+                        }`}
+                      >
+                        {item.icon}
+                        {isSidebarOpen && item.label}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ))}
           </div>
-        </ScrollArea>
-      </motion.aside>
+        </nav>
+      </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {!isSidebarOpen && (
-          <div className="p-4 border-b border-gray-200 dark:border-white/10 bg-white dark:bg-[#141414] flex items-center gap-4 shrink-0">
+          <div className="p-4 border-b border-gray-200 dark:border-white/10 bg-white dark:bg-[#141414] flex items-center gap-4 shrink-0 lg:hidden">
             <button 
               onClick={() => setIsSidebarOpen(true)}
               className="p-2 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors text-gray-500 dark:text-gray-400"
@@ -1765,6 +2041,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   title="Enterprise Users"
                   description="Manage users and their access levels within the enterprise."
                   onAdd={() => setInviteModal(true)}
+                  gridRef={usersGridRef}
                   searchPlaceholder="Search users..."
                   quickFilterText={userSearch}
                   onQuickFilterChange={setUserSearch}
@@ -1803,7 +2080,34 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 title="Enterprise Projects"
                 description="Manage projects and their settings within the enterprise."
                 onAdd={() => setIsCreateProjectModalOpen(true)}
-                onExport={exportProjects}
+                gridRef={projectsGridRef}
+                extraToolbarActions={
+                  <div className="flex gap-2">
+                    <Button 
+                      variant="outline" 
+                      onClick={exportProjectImportTemplate} 
+                      className="text-xs font-bold gap-2 px-3 h-9 dark:border-white/10 dark:text-white"
+                    >
+                      <Download className="w-4 h-4" /> Import Template
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file';
+                        input.accept = '.xlsx,.xls';
+                        input.onchange = (e: any) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleBulkUpdateProjectsImport(file);
+                        };
+                        input.click();
+                      }} 
+                      className="text-xs font-bold gap-2 px-3 h-9 dark:border-white/10 dark:text-white"
+                    >
+                      <Upload className="w-4 h-4" /> Bulk Update (Import)
+                    </Button>
+                  </div>
+                }
                 searchPlaceholder="Search projects..."
                 quickFilterText={projectSearch}
                 onQuickFilterChange={setProjectSearch}
@@ -1912,12 +2216,12 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                       <DataGridModule
                         title={`Attribute ${selectedAttrId}: ${(activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'procurementAttributes' ? procurementAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : activeTab === 'progressAttributes' ? progressAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId)?.title || 'Untitled'}`}
                         description="Manage the list of allowed values for this attribute."
+                        gridRef={attrValueGridRef}
                         onAdd={() => {
                           const currentAttr = (activeTab === 'projectAttributes' ? projectAttributes : activeTab === 'costCodeAttributes' ? costCodeAttributes : activeTab === 'subcontractAttributes' ? subcontractAttributes : activeTab === 'procurementAttributes' ? procurementAttributes : activeTab === 'changeAttributes' ? changeAttributes : activeTab === 'riskAttributes' ? riskAttributes : activeTab === 'progressAttributes' ? progressAttributes : lineItemAttributes).find((a: any) => a.id === selectedAttrId);
                           setValueFormData({ id: '', description: '', sortOrder: (currentAttr?.values?.length || 0) + 1 });
                           setIsEditingValue({ type: activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'procurementAttributes' ? 'procurement' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : activeTab === 'progressAttributes' ? 'progress' : 'lineItem', attrId: selectedAttrId, valueId: null });
                         }}
-                        onExport={() => handleExport(activeTab === 'projectAttributes' ? 'project' : activeTab === 'costCodeAttributes' ? 'costCode' : activeTab === 'subcontractAttributes' ? 'subcontract' : activeTab === 'procurementAttributes' ? 'procurement' : activeTab === 'changeAttributes' ? 'change' : activeTab === 'riskAttributes' ? 'risk' : activeTab === 'progressAttributes' ? 'progress' : 'lineItem', selectedAttrId)}
                         onImport={() => {
                           const type = activeTab === 'projectAttributes' ? 'projectAttributes' : activeTab === 'costCodeAttributes' ? 'costCodeAttributes' : activeTab === 'subcontractAttributes' ? 'subcontractAttributes' : activeTab === 'procurementAttributes' ? 'procurementAttributes' : activeTab === 'changeAttributes' ? 'changeAttributes' : activeTab === 'riskAttributes' ? 'riskAttributes' : activeTab === 'progressAttributes' ? 'progressAttributes' : 'lineItemAttributes';
                           fileInputRef.current?.click();
@@ -1986,7 +2290,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   setResourceFormData({ id: '', name: '', unit: '', rate: 0, category: '', udf1: '', udf2: '', udf3: '' });
                   setIsEditingResource({ id: null });
                 }}
-                onExport={() => handleExport('resourceRates')}
+                gridRef={resourceRatesGridRef}
                 searchPlaceholder="Search resources..."
                 quickFilterText={resourceSearch}
                 onQuickFilterChange={setResourceSearch}
@@ -2045,14 +2349,40 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   setVendorFormData({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
                   setIsEditingVendor({ id: null });
                 }}
+                gridRef={vendorsGridRef}
+                onImportData={(data) => {
+                  const currentVendors = [...(enterprise.vendors || [])];
+                  data.forEach(row => {
+                    const id = (row['Vendor ID'] || row.id || row.ID || row.Code || row.code)?.toString();
+                    const name = (row['Vendor Name'] || row.name || row.Name)?.toString() || '';
+                    if (!id || !name) return;
+                    
+                    const existingIndex = currentVendors.findIndex(v => v.id.toLowerCase() === id.toLowerCase());
+                    const vendorData = {
+                      id,
+                      name,
+                      contactName: (row['Contact Name'] || row.contactName || '')?.toString(),
+                      contactEmail: (row['Contact Email'] || row.contactEmail || '')?.toString(),
+                    };
+                    
+                    if (existingIndex > -1) {
+                      currentVendors[existingIndex] = { ...currentVendors[existingIndex], ...vendorData };
+                    } else {
+                      currentVendors.push(vendorData);
+                    }
+                  });
+                  updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: currentVendors });
+                  toast.success(`Imported ${data.length} vendors`);
+                }}
                 onQuickFilterChange={setVendorSearch}
                 quickFilterText={vendorSearch}
-                rowData={filteredVendors}
+                rowData={enterprise.vendors || []}
                 selectedCount={selectedVendorIds.size}
                 onCellValueChanged={(event) => {
                   const { data, colDef, newValue } = event;
                   if (!data.id) return;
-                  updateVendor(data.id, { [colDef.field!]: newValue });
+                  const newVendors = (enterprise.vendors || []).map(v => v.id === data.id ? { ...v, [colDef.field!]: newValue } : v);
+                  updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
                 }}
                 onBulkUpdate={() => {
                   setIsBulkUpdateModalOpen({ type: 'vendor', count: selectedVendorIds.size });
@@ -2070,201 +2400,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
             </motion.div>
           )}
 
-          {activeTab === 'changeMgmt' && (
-            <motion.div 
-              key="change-mgmt"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex flex-col min-h-0"
-            >
-              <DataGridModule
-                title="Change Management Settings"
-                description="Configure global change types for the enterprise."
-                extraToolbarActions={
-                  <div className="flex gap-2">
-                    <Input 
-                      placeholder="New change type..."
-                      value={newChangeType}
-                      onChange={(e) => setNewChangeType(e.target.value)}
-                      className="w-64"
-                    />
-                    <Button 
-                      onClick={async () => {
-                        if (!newChangeType.trim()) return;
-                        const currentTypes = enterprise.changeTypes || [];
-                        if (currentTypes.includes(newChangeType.trim())) {
-                          alert('This change type already exists.');
-                          return;
-                        }
-                        await handleUpdateEnterprise({
-                          changeTypes: [...currentTypes, newChangeType.trim()]
-                        });
-                        setNewChangeType('');
-                      }}
-                      className="bg-black dark:bg-white text-white dark:text-black"
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add
-                    </Button>
-                  </div>
-                }
-                rowData={(enterprise.changeTypes || []).map(type => ({ type }))}
-                onCellValueChanged={async (event) => {
-                  const { oldValue, newValue } = event;
-                  if (!newValue || oldValue === newValue) return;
-                  const currentTypes = enterprise.changeTypes || [];
-                  const newTypes = currentTypes.map(t => t === oldValue ? newValue : t);
-                  await handleUpdateEnterprise({ changeTypes: newTypes });
-                }}
-                columnDefs={[
-                  { 
-                    field: 'type', 
-                    headerName: 'Change Type', 
-                    flex: 1, 
-                    editable: true,
-                    cellClass: 'font-bold text-sm' 
-                  },
-                  {
-                    headerName: '',
-                    width: 80,
-                    pinned: 'right',
-                    cellRenderer: (params: any) => {
-                      if (params.data.isSubtotal) return null;
-                      return (
-                        <div className="flex justify-end py-1">
-                          <button 
-                            onClick={async () => {
-                              const newTypes = (enterprise.changeTypes || []).filter(t => t !== params.data.type);
-                              await handleUpdateEnterprise({ changeTypes: newTypes });
-                            }}
-                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    }
-                  }
-                ]}
-                gridProps={{
-                  rowSelection: 'multiple',
-                  onSelectionChanged: (params: any) => {
-                    const selectedNodes = params.api.getSelectedNodes();
-                    setSelectedChangeTypeIds(new Set(selectedNodes.map((node: any) => node.data.type)));
-                  }
-                }}
-                selectedCount={selectedChangeTypeIds.size}
-                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-changeType', count: selectedChangeTypeIds.size })}
-              />
-            </motion.div>
-          )}
-
-          {activeTab === 'riskMgmt' && (
-            <motion.div 
-              key="risk-mgmt"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex flex-col min-h-0"
-            >
-              <DataGridModule
-                title="Risk Management Settings"
-                description="Configure global risk types for the enterprise."
-                extraToolbarActions={
-                  <div className="flex gap-2">
-                    <Input 
-                      placeholder="New risk type..."
-                      value={newRiskType}
-                      onChange={(e) => setNewRiskType(e.target.value)}
-                      className="w-64"
-                    />
-                    <Button 
-                      onClick={async () => {
-                        if (!newRiskType.trim()) return;
-                        const currentTypes = enterprise.riskTypes || [];
-                        if (currentTypes.includes(newRiskType.trim())) {
-                          alert('This risk type already exists.');
-                          return;
-                        }
-                        await handleUpdateEnterprise({
-                          riskTypes: [...currentTypes, newRiskType.trim()]
-                        });
-                        setNewRiskType('');
-                      }}
-                      className="bg-black dark:bg-white text-white dark:text-black"
-                    >
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add
-                    </Button>
-                  </div>
-                }
-                rowData={(enterprise.riskTypes || []).map(type => ({ type }))}
-                onCellValueChanged={async (event) => {
-                  const { oldValue, newValue } = event;
-                  if (!newValue || oldValue === newValue) return;
-                  const currentTypes = enterprise.riskTypes || [];
-                  const newTypes = currentTypes.map(t => t === oldValue ? newValue : t);
-                  await handleUpdateEnterprise({ riskTypes: newTypes });
-                }}
-                columnDefs={[
-                  { 
-                    field: 'type', 
-                    headerName: 'Risk Type', 
-                    flex: 1, 
-                    editable: true,
-                    cellClass: 'font-bold text-sm' 
-                  },
-                  {
-                    headerName: '',
-                    width: 80,
-                    pinned: 'right',
-                    cellRenderer: (params: any) => {
-                      if (params.data.isSubtotal) return null;
-                      return (
-                        <div className="flex justify-end py-1">
-                          <button 
-                            onClick={async () => {
-                              const newTypes = (enterprise.riskTypes || []).filter(t => t !== params.data.type);
-                              await handleUpdateEnterprise({ riskTypes: newTypes });
-                            }}
-                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    }
-                  }
-                ]}
-                gridProps={{
-                  rowSelection: 'multiple',
-                  onSelectionChanged: (params: any) => {
-                    const selectedNodes = params.api.getSelectedNodes();
-                    setSelectedRiskTypeIds(new Set(selectedNodes.map((node: any) => node.data.type)));
-                  }
-                }}
-                selectedCount={selectedRiskTypeIds.size}
-                onBulkDelete={() => setDeleteConfirm({ type: 'bulk-riskType', count: selectedRiskTypeIds.size })}
-              />
-            </motion.div>
-          )}
-
-          {['scheduleMgmt', 'subContractMgmt', 'invoicing'].includes(activeTab) && (
-            <motion.div 
-              key="under-development"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl"
-            >
-              <div className="w-16 h-16 bg-gray-50 dark:bg-white/5 rounded-full flex items-center justify-center mb-6">
-                <Settings className="w-8 h-8 text-gray-300" />
-              </div>
-              <h3 className="text-lg font-bold dark:text-white mb-2">Module Under Development</h3>
-              <p className="text-sm text-gray-900 dark:text-gray-400 max-w-xs">Enterprise-wide settings for this module are currently being implemented.</p>
-            </motion.div>
-          )}
           </AnimatePresence>
         </div>
       </div>
@@ -2387,56 +2522,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                           <option value="Closed">Closed</option>
                           <option value="Archived">Archived</option>
                         </select>
-                      </div>
-                      <div>
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500 block mb-2">Project Photo</label>
-                        <div className="flex items-center gap-3">
-                          <input 
-                            type="file"
-                            ref={projectPhotoInputRef}
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              if (!file.type.startsWith('image/')) {
-                                alert('Please upload a valid image file.');
-                                return;
-                              }
-                              if (file.size > 800 * 1024) {
-                                alert('File is too large. Please upload an image smaller than 800KB.');
-                                return;
-                              }
-                              const reader = new FileReader();
-                              reader.onloadend = async () => {
-                                const base64String = reader.result as string;
-                                await handleUpdateProjectPhoto(selectedProject.id, base64String);
-                              };
-                              reader.readAsDataURL(file);
-                            }}
-                            accept="image/jpeg,image/png,image/gif,image/webp"
-                            className="hidden"
-                          />
-                          <button 
-                            onClick={() => projectPhotoInputRef.current?.click()}
-                            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest hover:bg-gray-50 dark:hover:bg-white/5 transition-colors dark:text-white"
-                          >
-                            <Upload className="w-3 h-3 text-blue-600" />
-                            Upload
-                          </button>
-                          {selectedProject.photoURL && (
-                            <button 
-                              onClick={() => handleUpdateProjectPhoto(selectedProject.id, '')}
-                              className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"
-                              title="Remove Photo"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                        {selectedProject.photoURL && (
-                          <div className="mt-3 w-full aspect-video rounded-lg overflow-hidden border border-gray-200 dark:border-white/10">
-                            <img src={selectedProject.photoURL} alt="Project" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          </div>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -2588,9 +2673,26 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               className="bg-white dark:bg-[#141414] rounded-3xl p-8 w-full max-w-2xl shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col max-h-[80vh]"
             >
             <h2 className="text-2xl font-bold mb-4 dark:text-white">Review Import</h2>
-            <p className="text-gray-900 dark:text-gray-400 mb-6 text-sm">
+            <p className="text-gray-900 dark:text-gray-400 mb-2 text-sm">
               The following records will be imported. Existing IDs will be updated.
             </p>
+            {hasImportDuplicates && (
+              <div className="mb-4 p-4 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl flex flex-col gap-2">
+                <div className="flex items-center gap-3 text-red-600 dark:text-red-400 text-[10px] font-black uppercase tracking-[0.15em]">
+                  <AlertTriangle className="w-4 h-4" />
+                  Duplicate ID found
+                </div>
+                <div className="text-[10px] text-red-500/70 dark:text-red-400/70 font-medium break-all leading-relaxed">
+                  {duplicateIds.length > 0 && (
+                    <p>The following IDs appear multiple times in your excel: <span className="font-bold text-red-600 dark:text-red-400">{duplicateIds.join(', ')}</span>.</p>
+                  )}
+                  {systemDuplicateIds && systemDuplicateIds.length > 0 && (
+                    <p>The following IDs already exist in the system and cannot be imported: <span className="font-bold text-red-600 dark:text-red-400">{systemDuplicateIds.join(', ')}</span>.</p>
+                  )}
+                  <p className="mt-2">Please resolve duplicates before importing.</p>
+                </div>
+              </div>
+            )}
             <div className="flex-1 overflow-auto border border-gray-200 dark:border-white/10 rounded-xl mb-6">
               <table className="w-full text-left text-xs">
                 <thead className="bg-black dark:bg-gray-100 sticky top-0">
@@ -2626,7 +2728,8 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               </button>
               <button 
                 onClick={completeImport}
-                className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg"
+                disabled={hasImportDuplicates}
+                className="flex-1 py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-black/90 dark:hover:bg-white/90 transition-colors shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Complete Import
               </button>
@@ -2655,7 +2758,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                deleteConfirm.type === 'bulk-costElement' ? 'Delete Cost Elements?' :
                deleteConfirm.type === 'bulk-vendor' ? 'Delete Vendors?' :
                deleteConfirm.type === 'bulk-user' ? 'Delete Users?' :
-               deleteConfirm.type === 'bulk-changeType' ? 'Delete Change Types?' :
                deleteConfirm.type === 'rate' ? 'Delete Resource Rate?' :
                deleteConfirm.type === 'costElement' ? 'Delete Cost Element?' :
                deleteConfirm.type === 'vendor' ? 'Delete Vendor?' :
@@ -2674,8 +2776,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                 <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> vendors. This action cannot be undone.</>
               ) : deleteConfirm.type === 'bulk-user' ? (
                 <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> users. This action cannot be undone.</>
-              ) : deleteConfirm.type === 'bulk-changeType' ? (
-                <>You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.count}</span> change types. This action cannot be undone.</>
               ) : (
                 <>You are about to remove <span className="font-bold text-black dark:text-white">{deleteConfirm.name}</span> from the enterprise.</>
               )}
@@ -2698,7 +2798,6 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   else if (deleteConfirm.type === 'bulk-rate') bulkDeleteResourceRates();
                   else if (deleteConfirm.type === 'vendor') deleteVendor(deleteConfirm.id!);
                   else if (deleteConfirm.type === 'bulk-vendor') bulkDeleteVendors();
-                  else if (deleteConfirm.type === 'bulk-changeType') bulkDeleteChangeTypes();
                   setDeleteConfirm(null);
                 }}
                 className="flex-1 py-4 bg-red-600 text-white rounded-2xl text-sm font-bold uppercase tracking-widest hover:bg-red-700 transition-colors shadow-lg shadow-red-600/20"
@@ -2721,24 +2820,36 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           >
             <h2 className="text-xl font-bold mb-6 dark:text-white">{isEditingVendor.id ? 'Edit' : 'Add'} Vendor</h2>
             <form onSubmit={saveVendor} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor Name</label>
-                <Input 
-                  value={vendorFormData.name}
-                  onChange={e => setVendorFormData({ ...vendorFormData, name: e.target.value })}
-                  placeholder="e.g. Acme Corp"
-                  required
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor ID / Code</label>
-                  <Input 
-                    value={vendorFormData.code}
-                    onChange={e => setVendorFormData({ ...vendorFormData, code: e.target.value })}
-                    placeholder="e.g. V-001"
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor ID</label>
+                    <Input 
+                      value={vendorFormData.id}
+                      onChange={e => setVendorFormData({ ...vendorFormData, id: e.target.value })}
+                      placeholder="e.g. V-001"
+                      maxLength={50}
+                      disabled={!!isEditingVendor.id}
+                      className={cn(
+                        isDuplicateVendorCode ? "border-red-500 focus:ring-red-500" : "",
+                        !!isEditingVendor.id && "bg-gray-50 dark:bg-white/5 cursor-not-allowed"
+                      )}
+                    />
+                    {isDuplicateVendorCode && (
+                      <p className="text-[10px] text-red-500 font-bold uppercase tracking-tighter">This ID already exists and must be unique</p>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Vendor Name</label>
+                    <Input 
+                      value={vendorFormData.name}
+                      onChange={e => setVendorFormData({ ...vendorFormData, name: e.target.value })}
+                      placeholder="e.g. Acme Corp"
+                      required
+                    />
+                  </div>
                 </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Contact Name</label>
                   <Input 
@@ -2747,19 +2858,23 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     placeholder="John Doe"
                   />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Contact Email</label>
-                <Input 
-                  type="email"
-                  value={vendorFormData.contactEmail}
-                  onChange={e => setVendorFormData({ ...vendorFormData, contactEmail: e.target.value })}
-                  placeholder="john@acme.com"
-                />
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-widest">Contact Email</label>
+                  <Input 
+                    type="email"
+                    value={vendorFormData.contactEmail}
+                    onChange={e => setVendorFormData({ ...vendorFormData, contactEmail: e.target.value })}
+                    placeholder="john@acme.com"
+                  />
+                </div>
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="ghost" onClick={() => setIsEditingVendor(null)}>Cancel</Button>
-                <Button type="submit" disabled={isSubmitting} className="bg-black dark:bg-white text-white dark:text-black">
+                <Button 
+                  type="submit" 
+                  disabled={isSubmitting || isDuplicateVendorCode} 
+                  className="bg-black dark:bg-white text-white dark:text-black"
+                >
                   {isEditingVendor.id ? 'Update' : 'Add'} Vendor
                 </Button>
               </div>
@@ -3149,6 +3264,23 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     onClick={() => {
                       const project = projects.find(p => p.id === contextMenu.id);
                       if (project) {
+                        setProjectToEdit(project);
+                        setEditingProjectDetails({
+                          projectName: project.projectName,
+                          attributes: project.attributes || {}
+                        });
+                        setIsEditProjectDetailsOpen(true);
+                      }
+                      setContextMenu(null);
+                    }}
+                    className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
+                  >
+                    <Edit2 className="w-3 h-3" /> Edit Details
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const project = projects.find(p => p.id === contextMenu.id);
+                      if (project) {
                         setProjectToReplace(project);
                         setNewProjectCode(project.projectCode);
                         setIsReplaceIdModalOpen(true);
@@ -3157,7 +3289,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     }}
                     className="w-full text-left p-2 text-xs dark:text-white hover:bg-gray-50 dark:hover:bg-white/5 rounded-lg flex items-center gap-2"
                   >
-                    <Edit2 className="w-3 h-3" /> Replace Project ID
+                    <RefreshCw className="w-3 h-3" /> Replace Project ID
                   </button>
                   <button 
                     onClick={() => {
@@ -3187,7 +3319,24 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
           <form onSubmit={handleCreateProject}>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <label htmlFor="name" className="text-sm font-medium dark:text-gray-300">Project Name</label>
+                <label htmlFor="code" className="text-sm font-medium dark:text-gray-300">Project Code <span className="text-red-500">*</span></label>
+                <Input
+                  id="code"
+                  value={newProjectData.code}
+                  onChange={(e) => setNewProjectData({ ...newProjectData, code: e.target.value })}
+                  placeholder="e.g. PRJ-001"
+                  className={cn(
+                    "dark:bg-[#1a1a1a] dark:border-white/10 dark:text-white",
+                    !isSubmitting && projects.some(p => p.projectCode === newProjectData.code.trim()) && newProjectData.code.trim() !== '' && "border-red-500 focus-visible:ring-red-500"
+                  )}
+                  required
+                />
+                {!isSubmitting && projects.some(p => p.projectCode === newProjectData.code.trim()) && newProjectData.code.trim() !== '' && (
+                  <p className="text-[10px] text-red-500 font-bold uppercase tracking-widest">This Project Code already exists and must be unique!</p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="name" className="text-sm font-medium dark:text-gray-300">Project Name <span className="text-red-500">*</span></label>
                 <Input
                   id="name"
                   value={newProjectData.name}
@@ -3197,25 +3346,100 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                   required
                 />
               </div>
-              <div className="grid gap-2">
-                <label htmlFor="code" className="text-sm font-medium dark:text-gray-300">Project Code</label>
-                <Input
-                  id="code"
-                  value={newProjectData.code}
-                  onChange={(e) => setNewProjectData({ ...newProjectData, code: e.target.value })}
-                  placeholder="e.g. PRJ-001"
-                  className="dark:bg-[#1a1a1a] dark:border-white/10 dark:text-white"
-                  required
-                />
-              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsCreateProjectModalOpen(false)} className="dark:border-white/10 dark:text-white">Cancel</Button>
-              <Button type="submit" disabled={isSubmitting} className="bg-blue-600 hover:bg-blue-700 text-white">
+              <Button 
+                type="submit" 
+                disabled={isSubmitting || (projects.some(p => p.projectCode === newProjectData.code.trim()) && newProjectData.code.trim() !== '')} 
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
                 {isSubmitting ? 'Creating...' : 'Create Project'}
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isEditProjectDetailsOpen} onOpenChange={setIsEditProjectDetailsOpen}>
+        <DialogContent className="sm:max-w-[500px] dark:bg-[#141414] dark:border-white/10 max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="dark:text-white">Edit Project Details</DialogTitle>
+            <DialogDescription className="dark:text-gray-400">
+              Update name and enterprise attributes for {projectToEdit?.projectCode}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto px-1 py-4 space-y-6">
+            <div className="grid gap-2">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Project Name</label>
+              <Input
+                value={editingProjectDetails.projectName || ''}
+                onChange={(e) => setEditingProjectDetails({ ...editingProjectDetails, projectName: e.target.value })}
+                className="dark:bg-[#1a1a1a] dark:border-white/10 dark:text-white"
+              />
+            </div>
+
+            <Separator className="dark:bg-white/10" />
+
+            <div className="space-y-4">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-gray-900 dark:text-white">Enterprise Project Attributes</h4>
+              <div className="grid grid-cols-1 gap-4">
+                {(enterprise.projectAttributes || [])
+                  .filter(attr => attr.title)
+                  .map(attr => (
+                    <div key={attr.id} className="grid gap-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-gray-500">{attr.title}</label>
+                      <select
+                        value={editingProjectDetails.attributes?.[attr.id] || ''}
+                        onChange={(e) => setEditingProjectDetails({
+                          ...editingProjectDetails,
+                          attributes: {
+                            ...(editingProjectDetails.attributes || {}),
+                            [attr.id]: e.target.value
+                          }
+                        })}
+                        className="w-full p-2.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-sm dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      >
+                        <option value="">Select Value...</option>
+                        {(attr.values || []).map(v => (
+                          <option key={v.id} value={v.description}>{v.description}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="pt-4 border-t border-gray-100 dark:border-white/10">
+            <Button variant="outline" onClick={() => setIsEditProjectDetailsOpen(false)} className="dark:border-white/10 dark:text-white">Cancel</Button>
+            <Button 
+              disabled={isSubmitting}
+              onClick={async () => {
+                if (!projectToEdit) return;
+                try {
+                  setIsSubmitting(true);
+                  const user = auth.currentUser;
+                  await updateDoc(doc(db, 'projects', projectToEdit.id), {
+                    projectName: editingProjectDetails.projectName,
+                    attributes: editingProjectDetails.attributes,
+                    dateLastModified: new Date().toISOString(),
+                    modifiedBy: user?.uid || '',
+                    modifiedByEmail: user?.email || ''
+                  });
+                  toast.success('Project details updated successfully');
+                  setIsEditProjectDetailsOpen(false);
+                } catch (error) {
+                  console.error('Update failed', error);
+                  toast.error('Failed to update project details');
+                } finally {
+                  setIsSubmitting(false);
+                }
+              }}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {isSubmitting ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -3292,7 +3516,7 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
               </>
             )}
             {isBulkUpdateModalOpen?.type === 'project' && (
-              <>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto px-1">
                 <div className="grid gap-2">
                   <label className="text-sm font-medium dark:text-gray-300">Status</label>
                   <select 
@@ -3300,14 +3524,29 @@ export default function EnterpriseAdmin({ enterprise }: EnterpriseAdminProps) {
                     onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, status: e.target.value })}
                     className="w-full bg-gray-100 dark:bg-white/5 border-none rounded-lg px-3 py-2 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
                   >
-                    <option value="">Select Status...</option>
+                    <option value="">No Change</option>
                     <option value="Active">Active</option>
                     <option value="On Hold">On Hold</option>
                     <option value="Closed">Closed</option>
                     <option value="Archived">Archived</option>
                   </select>
                 </div>
-              </>
+                {projectAttributes.filter(attr => attr.title).map(attr => (
+                  <div key={attr.id} className="grid gap-2">
+                    <label className="text-sm font-medium dark:text-gray-300">{attr.title}</label>
+                    <select
+                      value={bulkUpdateFormData[`attributes.${attr.id}`] || ''}
+                      onChange={(e) => setBulkUpdateFormData({ ...bulkUpdateFormData, [`attributes.${attr.id}`]: e.target.value })}
+                      className="w-full bg-gray-100 dark:bg-white/5 border-none rounded-lg px-3 py-2 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 outline-none"
+                    >
+                      <option value="">No Change</option>
+                      {attr.values?.map(v => (
+                        <option key={v.id} value={v.id}>{v.id} | {v.description}</option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
             )}
             {isBulkUpdateModalOpen?.type === 'vendor' && (
               <>

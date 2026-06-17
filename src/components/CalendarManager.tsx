@@ -104,19 +104,17 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
   }, [projectId, enterpriseId]);
 
   useEffect(() => {
-    if (allowImport && projectId) {
+    if (allowImport && projectId && enterpriseId) {
       // Fetch enterprise calendars for importing
       const fetchEnterpriseCalendars = async () => {
         try {
-          // We need to know the enterpriseId for the project
-          // For now, we'll assume we can find it or it's passed
-          // But since we don't have it easily here, we might need to fetch it
-          // Or just query all enterprise calendars if permissions allow
-          const q = query(collection(db, 'calendars'), where('enterpriseId', '!=', null));
+          const q = query(
+            collection(db, 'calendars'), 
+            where('enterpriseId', '==', enterpriseId)
+          );
           const snapshot = await getDocs(q);
           const data = snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as ProjectCalendar))
-            .filter(c => !!c.enterpriseId);
+            .map(doc => ({ id: doc.id, ...doc.data() } as ProjectCalendar));
           setEnterpriseCalendars(data);
         } catch (error) {
           console.error('Error fetching enterprise calendars:', error);
@@ -124,7 +122,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
       };
       fetchEnterpriseCalendars();
     }
-  }, [allowImport, projectId]);
+  }, [allowImport, projectId, enterpriseId]);
 
   const handleSave = async () => {
     if (!formData.name) {
