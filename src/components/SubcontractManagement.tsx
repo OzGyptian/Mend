@@ -6,10 +6,9 @@ import { cn } from '../lib/utils';
 import { auth } from '../firebase';
 import Subcontracts from './Subcontracts';
 import Invoicing from './Invoicing';
-import BulkSubcontractLineItems from './BulkSubcontractLineItems';
 import BulkSubcontractInvoices from './BulkSubcontractInvoices';
 import BulkSubcontractInvoiceItems from './BulkSubcontractInvoiceItems';
-
+import BulkSubcontractItems from './BulkSubcontractItems';
 import SubcontractAttributes from './SubcontractAttributes';
 
 interface SubcontractManagementProps {
@@ -20,7 +19,7 @@ interface SubcontractManagementProps {
   theme?: 'light' | 'dark';
 }
 
-type SubcontractTab = 'subcontracts' | 'subcontracts-attributes' | 'subcontract-line-items' | 'subcontract-invoices' | 'subcontract-invoice-items' | 'invoicing';
+type SubcontractTab = 'subcontracts' | 'subcontracts-attributes' | 'subcontract-items' | 'subcontract-invoices' | 'subcontract-invoice-items' | 'invoicing';
 
 const SubcontractManagement: React.FC<SubcontractManagementProps> = ({ 
   project, 
@@ -56,13 +55,19 @@ const SubcontractManagement: React.FC<SubcontractManagementProps> = ({
 
   if (isProjectAdmin) {
     sections.push({
+      id: 'bulk-updates',
+      label: 'Bulk Updates',
+      items: [
+        { id: 'subcontract-items', label: 'Bulk Subcontract Items', icon: <List className="w-4 h-4" /> },
+        { id: 'subcontract-invoices', label: 'Bulk Subcontract Invoices', icon: <Receipt className="w-4 h-4" /> },
+      ]
+    });
+
+    sections.push({
       id: 'settings',
       label: 'Subcontract Settings',
       items: [
         { id: 'subcontracts-attributes', label: 'Subcontract Attributes', icon: <Settings className="w-4 h-4" /> },
-        { id: 'subcontract-line-items', label: 'Subcontract Line-Items', icon: <List className="w-4 h-4" /> },
-        { id: 'subcontract-invoices', label: 'Subcontract Invoices', icon: <Receipt className="w-4 h-4" /> },
-        { id: 'subcontract-invoice-items', label: 'Invoice Items', icon: <List className="w-4 h-4" /> },
       ]
     });
   }
@@ -165,9 +170,9 @@ const SubcontractManagement: React.FC<SubcontractManagementProps> = ({
               <SubcontractAttributes project={project} />
             </div>
           )}
-          {activeTab === 'subcontract-line-items' && (
+          {activeTab === 'subcontract-items' && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <BulkSubcontractLineItems project={project} enterprise={enterprise} />
+              <BulkSubcontractItems project={project} enterprise={enterprise} />
             </div>
           )}
           {activeTab === 'subcontract-invoices' && (

@@ -265,6 +265,16 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
 
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
 
+  const enterpriseLineItemAttrs = useMemo(() => 
+    (enterprise.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0),
+    [enterprise.lineItemAttributes]
+  );
+
+  const projectLineItemAttrs = useMemo(() => 
+    (project.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0),
+    [project.lineItemAttributes]
+  );
+
   const gridRef = useRef<AgGridReact>(null);
   const recordsGridRef = useRef<AgGridReact>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -842,8 +852,54 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       }
     ];
 
+    // Enterprise Line Item Attributes
+    if (enterpriseLineItemAttrs.length > 0) {
+      defs.splice(defs.length - 1, 0, {
+        headerName: 'Enterprise Line-Item Attributes',
+        openByDefault: true,
+        children: enterpriseLineItemAttrs.map(attr => ({
+          headerName: attr.title,
+          field: `enterpriseAttributes.${attr.id}`,
+          width: 200,
+          editable: true,
+          cellEditor: 'agRichSelectCellEditor',
+          cellEditorParams: {
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
+            allowTyping: true,
+            filterList: true
+          }
+        }))
+      });
+    }
+
+    // Project Line Item Attributes
+    if (projectLineItemAttrs.length > 0) {
+      defs.splice(defs.length - 1, 0, {
+        headerName: 'Project Line-Item Attributes',
+        openByDefault: true,
+        children: projectLineItemAttrs.map(attr => ({
+          headerName: attr.title,
+          field: `projectAttributes.${attr.id}`,
+          width: 200,
+          editable: true,
+          cellEditor: 'agRichSelectCellEditor',
+          cellEditorParams: {
+            values: (attr.values || [])
+              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
+              .map(v => `${v.id} | ${v.description}`),
+            searchType: 'matchAny',
+            allowTyping: true,
+            filterList: true
+          }
+        }))
+      });
+    }
+
     return defs;
-  }, [costCodes]);
+  }, [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]);
 
   const onRecordCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data, colDef } = params;
@@ -911,6 +967,14 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       if (hasMinChange) updates.minImpactAmount = Number(bulkRecordUpdateData.minImpactAmount);
       if (hasMLChange) updates.mostLikelyImpactAmount = Number(bulkRecordUpdateData.mostLikelyImpactAmount);
       if (hasMaxChange) updates.maxImpactAmount = Number(bulkRecordUpdateData.maxImpactAmount);
+
+      // Add Attributes to updates
+      Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => {
+        if (val) updates[`enterpriseAttributes.${id}`] = val === '_' ? '' : val;
+      });
+      Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => {
+        if (val) updates[`projectAttributes.${id}`] = val === '_' ? '' : val;
+      });
 
       selectedRecordIds.forEach(id => {
         const record = riskRecords.find(r => r.id === id);
@@ -1247,6 +1311,66 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
               <Input type="number" placeholder="Most Likely $" value={bulkRecordUpdateData.mostLikelyImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, mostLikelyImpactAmount: e.target.value})} />
               <Input type="number" placeholder="Max Value $" value={bulkRecordUpdateData.maxImpactAmount} onChange={e => setBulkRecordUpdateData({...bulkRecordUpdateData, maxImpactAmount: e.target.value})} />
             </div>
+
+            {enterpriseLineItemAttrs.length > 0 && (
+              <div className="space-y-3 pt-2 border-t border-gray-100 dark:border-white/5">
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Enterprise Line-Item Attributes</h4>
+                <div className="grid grid-cols-1 gap-3">
+                  {enterpriseLineItemAttrs.map(attr => (
+                    <div key={attr.id} className="space-y-1">
+                      <label className="text-[10px] font-medium text-gray-500 pl-1">{attr.title}</label>
+                      <Select 
+                        onValueChange={v => setBulkRecordUpdateData({
+                          ...bulkRecordUpdateData, 
+                          enterpriseAttributes: { ...bulkRecordUpdateData.enterpriseAttributes, [attr.id]: v }
+                        })} 
+                        value={bulkRecordUpdateData.enterpriseAttributes[attr.id] || ''}
+                      >
+                        <SelectTrigger className="h-9 text-xs">
+                          <SelectValue placeholder={`Select ${attr.title}...`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_">Clear Value</SelectItem>
+                          {attr.values.map(v => (
+                            <SelectItem key={v.id} value={`${v.id} | ${v.description}`}>{v.id} | {v.description}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {projectLineItemAttrs.length > 0 && (
+              <div className="space-y-3 pt-2 border-t border-gray-100 dark:border-white/5">
+                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Project Line-Item Attributes</h4>
+                <div className="grid grid-cols-1 gap-3">
+                  {projectLineItemAttrs.map(attr => (
+                    <div key={attr.id} className="space-y-1">
+                      <label className="text-[10px] font-medium text-gray-500 pl-1">{attr.title}</label>
+                      <Select 
+                        onValueChange={v => setBulkRecordUpdateData({
+                          ...bulkRecordUpdateData, 
+                          projectAttributes: { ...bulkRecordUpdateData.projectAttributes, [attr.id]: v }
+                        })} 
+                        value={bulkRecordUpdateData.projectAttributes[attr.id] || ''}
+                      >
+                        <SelectTrigger className="h-9 text-xs">
+                          <SelectValue placeholder={`Select ${attr.title}...`} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_">Clear Value</SelectItem>
+                          {attr.values.map(v => (
+                            <SelectItem key={v.id} value={`${v.id} | ${v.description}`}>{v.id} | {v.description}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <DialogFooter><Button onClick={handleBulkUpdateRecords}>Update</Button></DialogFooter>
         </DialogContent>

@@ -316,14 +316,16 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
           field: `stepData.${step.id}.planDuration`,
           width: 60,
           editable: true,
-          headerClass: 'procurement-duration-header'
+          headerClass: 'procurement-duration-header',
+          valueParser: (params) => Number(params.newValue) || 0
         },
         {
           headerName: 'F.Dur',
           field: `stepData.${step.id}.forecastDuration`,
           width: 60,
           editable: true,
-          headerClass: 'procurement-duration-header bg-blue-50/10'
+          headerClass: 'procurement-duration-header bg-blue-50/10',
+          valueParser: (params) => Number(params.newValue) || 0
         }
       ]
     }));
@@ -332,11 +334,32 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
   }, [stepDefinitions, calendars]);
 
   const handleCellValueChanged = async (event: CellValueChangedEvent) => {
-    const { data, colDef } = event;
+    const { data, colDef, newValue } = event;
     const field = colDef.field;
     if (!field) return;
 
-    let updatedStepData = { ...data.stepData };
+    // Use a fresh copy to avoid stale closures and ensure correct nested property handling
+    let updatedStepData = JSON.parse(JSON.stringify(data.stepData || {}));
+    
+    // Explicitly handle nested property update for Ag-Grid if it didn't update the object correctly
+    if (field.startsWith('stepData.')) {
+      const parts = field.split('.');
+      if (parts.length === 3) {
+        const [_, stepId, key] = parts;
+        if (!updatedStepData[stepId]) updatedStepData[stepId] = {};
+        
+        let processedValue = newValue;
+        if (key.includes('Duration')) {
+          processedValue = Number(newValue) || 0;
+        } else if (key.includes('Date')) {
+          if (newValue instanceof Date) {
+            processedValue = newValue.toISOString().split('T')[0];
+          }
+        }
+        updatedStepData[stepId][key] = processedValue;
+      }
+    }
+
     const calendar = calendars.find(c => c.id === data.calendarId) || calendars[0] || { weekends: [0, 6], holidays: [] } as any;
 
     const lastStepId = stepDefinitions[stepDefinitions.length - 1]?.id;
@@ -359,8 +382,8 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
 
     try {
       await updateDoc(doc(db, 'procurementItems', data.id), {
-        ...data,
         stepData: updatedStepData,
+        calendarId: data.calendarId || '',
         updatedAt: new Date().toISOString()
       });
     } catch (e) {

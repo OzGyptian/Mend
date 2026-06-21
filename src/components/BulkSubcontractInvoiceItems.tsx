@@ -59,6 +59,7 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const gridRef = useRef<any>(null);
 
   const [bulkUpdateData, setBulkUpdateData] = useState({
     claimPercent: '',

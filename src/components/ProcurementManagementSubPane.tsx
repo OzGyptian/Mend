@@ -7,7 +7,6 @@ import { auth } from '../firebase';
 import ProcurementProgress from './ProcurementProgress';
 import ProcurementStepConfigWrapper from './ProcurementStepConfigWrapper';
 import ProcurementAttributes from './ProcurementAttributes';
-import ProcurementDefaults from './ProcurementDefaults';
 import ErrorBoundary from './ErrorBoundary';
 
 interface ProcurementManagementSubPaneProps {
@@ -16,7 +15,7 @@ interface ProcurementManagementSubPaneProps {
   setIsSidebarCollapsed?: (c: boolean) => void;
 }
 
-type ProcurementTab = 'packages' | 'steps' | 'attributes' | 'defaults';
+type ProcurementTab = 'packages' | 'steps' | 'attributes';
 
 const ProcurementManagementSubPane: React.FC<ProcurementManagementSubPaneProps> = ({ 
   project, 
@@ -53,7 +52,6 @@ const ProcurementManagementSubPane: React.FC<ProcurementManagementSubPaneProps> 
       items: [
         { id: 'steps', label: 'Step Configuration', icon: <Settings className="w-4 h-4" /> },
         { id: 'attributes', label: 'Project Attributes', icon: <Tag className="w-4 h-4" /> },
-        { id: 'defaults', label: 'Default Values', icon: <ClipboardList className="w-4 h-4" /> },
       ]
     }
   ];
@@ -150,12 +148,6 @@ const ProcurementManagementSubPane: React.FC<ProcurementManagementSubPaneProps> 
             )}
             {activeTab === 'attributes' && (
               <ProcurementAttributes 
-                project={project} 
-                enterprise={enterprise}
-              />
-            )}
-            {activeTab === 'defaults' && (
-              <ProcurementDefaults 
                 project={project} 
                 enterprise={enterprise}
               />

@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { AgGridReact } from 'ag-grid-react';
 import CalendarManager from './CalendarManager';
 import DataGridModule from './DataGridModule';
 import EnterpriseProcurementSteps from './EnterpriseProcurementSteps';

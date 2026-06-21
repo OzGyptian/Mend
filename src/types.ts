@@ -226,6 +226,8 @@ export interface ProcurementStepDefinition {
   name: string;
   order: number;
   isEnterpriseStandard?: boolean;
+  defaultDurationDays?: number;
+  enterpriseStepId?: string;
 }
 
 export interface ProcurementStepData {
@@ -579,6 +581,7 @@ export interface ScheduleItem {
   projectId: string;
   activityId: string;
   description: string;
+  activityPercentComplete: number;
   baselineStartDate: string;
   baselineEndDate: string;
   plannedStartDate: string;

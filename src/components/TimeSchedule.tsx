@@ -83,6 +83,7 @@ interface ScheduleItem {
   projectId: string;
   activityId: string;
   description: string;
+  activityPercentComplete: number;
   baselineStartDate: string;
   baselineEndDate: string;
   plannedStartDate: string;
@@ -109,6 +110,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [bulkUpdateData, setBulkUpdateData] = useState<Partial<ScheduleItem>>({
     description: '',
+    activityPercentComplete: 0,
     baselineStartDate: '',
     baselineEndDate: '',
     plannedStartDate: '',
@@ -200,6 +202,25 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
       editable: true,
       flex: 2,
       minWidth: 300
+    },
+    {
+      field: 'activityPercentComplete',
+      headerName: 'Activity % Complete',
+      editable: true,
+      width: 150,
+      valueFormatter: (params: any) => params.value !== undefined ? `${params.value}%` : '',
+      cellEditor: 'agNumberCellEditor',
+      cellEditorParams: {
+        min: 0,
+        max: 100,
+        precision: 2
+      },
+      cellStyle: (params: any) => {
+        const val = params.value || 0;
+        if (val >= 100) return { color: '#059669', fontWeight: 'bold' };
+        if (val > 0) return { color: '#2563eb', fontWeight: 'bold' };
+        return null;
+      }
     },
     { 
       headerName: 'Baseline Schedule',
@@ -324,6 +345,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
         projectId: project.id,
         activityId,
         description: 'New Activity',
+        activityPercentComplete: 0,
         baselineStartDate: today,
         baselineEndDate: today,
         plannedStartDate: today,
@@ -345,6 +367,9 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
     // Filter out fields that are empty strings (unmodified by user in bulk dialog)
     const updates: any = {};
     if (bulkUpdateData.description) updates.description = bulkUpdateData.description;
+    if (bulkUpdateData.activityPercentComplete !== undefined && bulkUpdateData.activityPercentComplete !== 0) {
+      updates.activityPercentComplete = Number(bulkUpdateData.activityPercentComplete);
+    }
     if (bulkUpdateData.baselineStartDate) updates.baselineStartDate = bulkUpdateData.baselineStartDate;
     if (bulkUpdateData.baselineEndDate) updates.baselineEndDate = bulkUpdateData.baselineEndDate;
     if (bulkUpdateData.plannedStartDate) updates.plannedStartDate = bulkUpdateData.plannedStartDate;
@@ -368,6 +393,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
       setIsBulkUpdating(false);
       setBulkUpdateData({
         description: '',
+        activityPercentComplete: 0,
         baselineStartDate: '',
         baselineEndDate: '',
         plannedStartDate: '',
@@ -521,6 +547,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
           data.forEach(row => {
             const activityId = String(row['Activity ID'] || row['activityId'] || row['ID'] || '');
             const description = String(row['Activity Description'] || row['description'] || row['Description'] || '');
+            const percentComplete = Number(row['Activity % Complete'] || row['activityPercentComplete'] || row['Percent Complete'] || 0);
             
             if (activityId && !existingIds.has(activityId)) {
               existingIds.add(activityId); // Prevent duplicates within same import
@@ -530,12 +557,13 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
               const pEnd = row['Planned End Date'] || row['plannedEndDate'] || row['Finish'];
               const cStart = row['Current Start Date'] || row['currentStartDate'] || row['Current Start'];
               const cEnd = row['Current End Date'] || row['currentEndDate'] || row['Current Finish'];
-
+ 
               const docRef = doc(collection(db, 'scheduleItems'));
               batch.set(docRef, {
                 projectId: project.id,
                 activityId,
                 description,
+                activityPercentComplete: percentComplete,
                 baselineStartDate: bStart ? new Date(new Date(bStart).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 baselineEndDate: bEnd ? new Date(new Date(bEnd).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 plannedStartDate: pStart ? new Date(new Date(pStart).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
@@ -617,13 +645,26 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
 
           <ScrollArea className="flex-1 p-8">
             <div className="space-y-8">
-              <div className="grid grid-cols-1 gap-6">
+              <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Activity Description</label>
                   <Input 
                     value={bulkUpdateData.description}
                     onChange={e => setBulkUpdateData({ ...bulkUpdateData, description: e.target.value })}
                     placeholder="Enter common description..."
+                    className="h-12 rounded-2xl border-slate-200 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400 ml-1">Activity % Complete</label>
+                  <Input 
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    value={bulkUpdateData.activityPercentComplete}
+                    onChange={e => setBulkUpdateData({ ...bulkUpdateData, activityPercentComplete: Number(e.target.value) })}
+                    placeholder="Enter common % complete..."
                     className="h-12 rounded-2xl border-slate-200 focus:ring-blue-500"
                   />
                 </div>

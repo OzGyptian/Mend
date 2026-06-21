@@ -44,7 +44,8 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkUpdateOpen, setIsBulkUpdateOpen] = useState(false);
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [quickFilterText, setQuickFilterText] = useState('');
+  const gridRef = useRef<any>(null);
 
   const [bulkUpdateData, setBulkUpdateData] = useState({
     status: '',
@@ -52,6 +53,8 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
     submittedDate: '',
     certifiedDate: '',
     paymentDate: '',
+    claimPercent: '',
+    certifiedPercent: '',
   });
 
   useEffect(() => {
@@ -123,6 +126,33 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
     }
   };
 
+  const handleExport = () => {
+    try {
+      const exportData = rowData.map(inv => ({
+        'Order ID': inv.orderId,
+        'Order Name': inv.orderName,
+        'Invoice No.': inv.invoiceId,
+        'Description': inv.description,
+        'Status': inv.status,
+        'Initiator': inv.initiator,
+        'Submitted Date': inv.submittedDate,
+        'Certified Date': inv.certifiedDate,
+        'Payment Date': inv.paymentDate,
+        'Claimed Amount': inv.periodicClaimed,
+        'Certified Amount': inv.periodicCertified,
+      }));
+
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+      XLSX.writeFile(wb, `Bulk_Invoices_${new Date().toISOString().split('T')[0]}.xlsx`);
+      toast.success('Export successful');
+    } catch (error) {
+      console.error('Export error:', error);
+      toast.error('Failed to export invoices.');
+    }
+  };
+
   const handleBulkUpdate = async () => {
     if (selectedIds.length === 0) return;
     try {
@@ -135,13 +165,41 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
         if (bulkUpdateData.certifiedDate) updateData.certifiedDate = bulkUpdateData.certifiedDate;
         if (bulkUpdateData.paymentDate) updateData.paymentDate = bulkUpdateData.paymentDate;
         
+        // Apply percentages to items if provided
+        const invoice = invoices.find(inv => inv.id === id);
+        if (invoice && (bulkUpdateData.claimPercent || bulkUpdateData.certifiedPercent)) {
+          const updatedItems = (invoice.items || []).map(item => {
+            const newItem = { ...item };
+            const lineTotal = newItem.total || 0;
+            const rate = newItem.rate || 0;
+
+            if (bulkUpdateData.claimPercent) {
+              newItem.periodicClaimPercent = Number(bulkUpdateData.claimPercent);
+              newItem.periodicClaimValue = (newItem.periodicClaimPercent / 100) * lineTotal;
+              if (rate > 0) newItem.periodicClaimQty = newItem.periodicClaimValue / rate;
+            }
+
+            if (bulkUpdateData.certifiedPercent) {
+              newItem.periodicCertifiedPercent = Number(bulkUpdateData.certifiedPercent);
+              newItem.periodicCertifiedValue = (newItem.periodicCertifiedPercent / 100) * lineTotal;
+              if (rate > 0) newItem.periodicCertifiedQty = newItem.periodicCertifiedValue / rate;
+            }
+
+            return newItem;
+          });
+
+          updateData.items = updatedItems;
+          updateData.totalAmount = updatedItems.reduce((sum, it) => sum + (it.periodicClaimValue || 0), 0);
+          updateData.certifiedAmount = updatedItems.reduce((sum, it) => sum + (it.periodicCertifiedValue || 0), 0);
+        }
+        
         batch.update(doc(db, 'invoices', id), updateData);
       });
       await batch.commit();
       toast.success(`Updated ${selectedIds.length} invoices.`);
       setSelectedIds([]);
       setIsBulkUpdateOpen(false);
-      setBulkUpdateData({ status: '', initiator: '', submittedDate: '', certifiedDate: '', paymentDate: '' });
+      setBulkUpdateData({ status: '', initiator: '', submittedDate: '', certifiedDate: '', paymentDate: '', claimPercent: '', certifiedPercent: '' });
     } catch (error) {
       console.error('Bulk update error:', error);
       toast.error('Failed to update invoices.');
@@ -156,15 +214,19 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
     const field = colDef.field!;
 
     try {
-      let valueToSave = newValue;
-      if (newValue instanceof Date) {
-        valueToSave = dateToISO(newValue);
+      let updateData: any = {
+        updatedAt: new Date().toISOString()
+      };
+
+      if (field === 'periodicClaimed') {
+        updateData.totalAmount = Number(newValue) || 0;
+      } else if (field === 'periodicCertified') {
+        updateData.certifiedAmount = Number(newValue) || 0;
+      } else {
+        updateData[field] = (newValue instanceof Date) ? dateToISO(newValue) : newValue;
       }
 
-      await updateDoc(doc(db, 'invoices', invoiceId), {
-        [field]: valueToSave,
-        updatedAt: new Date().toISOString()
-      });
+      await updateDoc(doc(db, 'invoices', invoiceId), updateData);
       toast.success('Invoice updated successfully');
     } catch (error) {
       console.error('Error updating invoice:', error);
@@ -335,18 +397,20 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
         children: [
           { 
             field: 'periodicClaimed', 
-            headerName: 'Period Claimed', 
+            headerName: 'Claimed Amount', 
             width: 140, 
-            editable: false, 
+            editable: true, 
             type: 'numericColumn', 
+            valueGetter: params => params.node?.rowPinned === 'top' ? params.data.periodicClaimed : (params.data.totalAmount || 0),
             valueFormatter: (params: ValueFormatterParams) => formatCurrency(params.value) 
           },
           { 
             field: 'periodicCertified', 
-            headerName: 'Period Certified', 
+            headerName: 'Certified Amount', 
             width: 140, 
-            editable: false, 
+            editable: true, 
             type: 'numericColumn', 
+            valueGetter: params => params.node?.rowPinned === 'top' ? params.data.periodicCertified : (params.data.certifiedAmount || 0),
             valueFormatter: (params: ValueFormatterParams) => formatCurrency(params.value) 
           },
         ]
@@ -467,6 +531,9 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
         selectedCount={selectedIds.length}
         onBulkUpdate={() => setIsBulkUpdateOpen(true)}
         onBulkDelete={() => setIsBulkDeleteOpen(true)}
+        onExport={handleExport}
+        quickFilterText={quickFilterText}
+        onQuickFilterChange={setQuickFilterText}
         gridProps={{
           rowSelection: 'multiple',
           suppressRowClickSelection: true,
@@ -478,7 +545,6 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
           getRowClass: (params: any) => params.node.rowPinned ? 'pinned-row-highlight font-bold' : ''
         }}
       />
-      <input type="file" ref={fileInputRef} onChange={onFileChange} accept=".xlsx, .xls" className="hidden" />
 
       <Dialog open={isBulkDeleteOpen} onOpenChange={setIsBulkDeleteOpen}>
         <DialogContent>
@@ -510,6 +576,16 @@ const BulkSubcontractInvoices: React.FC<BulkSubcontractInvoicesProps> = ({ proje
             <div className="space-y-2">
               <label className="text-xs font-bold uppercase text-gray-500">Initiator</label>
               <Input placeholder="Invoice Initiator" value={bulkUpdateData.initiator} onChange={(e) => setBulkUpdateData(prev => ({ ...prev, initiator: e.target.value }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase text-gray-500">Claim %</label>
+                <Input type="number" placeholder="0.00" value={bulkUpdateData.claimPercent} onChange={(e) => setBulkUpdateData(prev => ({ ...prev, claimPercent: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold uppercase text-gray-500">Certified %</label>
+                <Input type="number" placeholder="0.00" value={bulkUpdateData.certifiedPercent} onChange={(e) => setBulkUpdateData(prev => ({ ...prev, certifiedPercent: e.target.value }))} />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

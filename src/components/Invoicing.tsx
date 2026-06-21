@@ -22,6 +22,7 @@ import {
   Download,
   Upload,
   RefreshCw,
+  AlertCircle,
   X
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -35,7 +36,8 @@ import {
   updateDoc, 
   deleteDoc, 
   doc,
-  serverTimestamp 
+  serverTimestamp,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Enterprise, Project, Subcontract, Invoice, InvoiceItem, SubcontractLineItem } from '../types';
