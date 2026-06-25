@@ -341,7 +341,8 @@ function AuthenticatedApp({
   systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
   isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
   email, setEmail, password, setPassword, isRegistering, setIsRegistering,
-  showLanding, setShowLanding, isInIframe, handleLogin, handleEmailAuth, openInNewTab,
+  showLanding, setShowLanding, 
+  isInIframe, handleLogin, handleEmailAuth, openInNewTab,
   projects
 }: AuthenticatedAppProps) {
   const navigate = useNavigate();
@@ -540,7 +541,19 @@ function AuthenticatedApp({
     );
   }
 
-  if (user && !currentEnterprise && !loading && !isSystemOwner) {
+  if (!user) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4] p-6">
+        <div className="max-w-md w-full bg-white p-12 rounded-3xl shadow-sm text-center">
+          <h2 className="text-2xl font-bold mb-4">Session Expired</h2>
+          <p className="text-sm text-gray-900 mb-8">Please refresh or navigate to the home page to sign in.</p>
+          <button onClick={() => setShowLanding(true)} className="w-full py-3 bg-black text-white rounded-lg">Return to Home</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentEnterprise && !loading && !isSystemOwner) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4] p-6">
         <div className="max-w-md w-full bg-white p-12 rounded-3xl shadow-sm text-center">
