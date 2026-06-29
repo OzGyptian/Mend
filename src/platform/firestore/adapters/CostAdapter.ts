@@ -224,6 +224,12 @@ export class CostAdapter implements CostRepository {
     await deleteDoc(doc(db, 'actualCosts', id));
   }
 
+  async deleteManyActualCosts(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    ids.forEach(id => batch.delete(doc(db, 'actualCosts', id)));
+    await batch.commit();
+  }
+
   async updateManyActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>): Promise<void> {
     const batch = writeBatch(db);
     const now = new Date().toISOString();

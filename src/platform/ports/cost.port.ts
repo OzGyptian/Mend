@@ -47,6 +47,7 @@ export interface CostRepository {
   saveManyActualCosts(records: Array<Omit<ActualCostRecord, 'id' | 'createdAt'>>): Promise<void>;
   updateActualCost(id: string, data: Partial<ActualCostRecord>): Promise<void>;
   deleteActualCost(id: string): Promise<void>;
+  deleteManyActualCosts(ids: string[]): Promise<void>;
   updateManyActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>): Promise<void>;
 
   // Baseline Budgets

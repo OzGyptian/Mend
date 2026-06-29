@@ -48,26 +48,11 @@ import {
   Legend,
   LabelList
 } from 'recharts';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp,
-  getDocs,
-  getDoc,
-  writeBatch,
-  orderBy
-} from 'firebase/firestore';
+import { useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber } from '../lib/utils';
-import { OperationType, handleFirestoreError } from '../lib/errorHandlers';
+
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from 'next-themes';
@@ -102,6 +87,8 @@ interface ActualCostRecord {
 }
 
 const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
   const [records, setRecords] = useState<ActualCostRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -136,104 +123,38 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
   const { theme: currentTheme } = useTheme();
   const theme = currentTheme === 'dark' ? 'dark' : 'light';
 
-  const userId = auth.currentUser?.uid;
+  const currentUser = authRepo.getCurrentUser();
+  const userId = currentUser?.id;
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
-  // Fetch Actual Costs
   useEffect(() => {
-    const q = query(
-      collection(db, 'actualCosts'), 
-      where('projectId', '==', project.id),
-      orderBy('createdAt', 'asc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as ActualCostRecord[];
-      setRecords(data);
-      setIsLoading(false);
-    }, (error) => {
-      console.error("Error fetching actual costs:", error);
-      toast.error("Failed to load actual costs");
+    const unsubActual = costRepo.subscribeActualCosts(project.id, (data) => {
+      setRecords(data as unknown as ActualCostRecord[]);
       setIsLoading(false);
     });
-    return () => unsubscribe();
-  }, [project.id]);
-
-  // Fetch Cost Codes for dropdown
-  useEffect(() => {
-    const q = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as CostCode[];
-      setCostCodes(data.sort((a, b) => a.sortOrder - b.sortOrder));
+    const unsubCC = costRepo.subscribeCostCodes(project.id, (data) => {
+      setCostCodes([...data].sort((a, b) => a.sortOrder - b.sortOrder));
     });
-    return () => unsubscribe();
+    return () => { unsubActual(); unsubCC(); };
   }, [project.id]);
 
   const syncActualCostsToCostCode = useCallback(async (costCodeId: string) => {
     if (!costCodeId) return;
     try {
-      // Fetch the cost code to get its string code for robust matching
-      const ccDoc = await getDoc(doc(db, 'costCodes', costCodeId));
-      if (!ccDoc.exists()) return;
-      const ccData = ccDoc.data() as CostCode;
-
-      // OPTIMIZATION: Query only the records for this specific cost code
-      // We search for both the Firestore ID and the code string for legacy support
-      const qById = query(
-        collection(db, 'actualCosts'),
-        where('projectId', '==', project.id),
-        where('costCodeId', '==', costCodeId)
-      );
-
-      const qByCode = query(
-        collection(db, 'actualCosts'),
-        where('projectId', '==', project.id),
-        where('costCodeId', '==', ccData.code)
-      );
-
-      const [snapById, snapByCode] = await Promise.all([
-        getDocs(qById),
-        getDocs(qByCode)
-      ]);
-
-      const recordsById = snapById.docs.map(doc => doc.data() as ActualCostRecord);
-      const recordsByCode = snapByCode.docs.map(doc => doc.data() as ActualCostRecord);
-      
-      // Combine records and remove duplicates by ID if any
-      const uniqueRecordsMap = new Map<string, ActualCostRecord>();
-      snapById.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsById[i]));
-      snapByCode.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsByCode[i]));
-      
-      const codeActuals = Array.from(uniqueRecordsMap.values());
-      
+      const ccData = costCodes.find(c => c.id === costCodeId);
+      if (!ccData) return;
+      const codeActuals = records.filter(r => r.costCodeId === costCodeId || r.costCodeId === ccData.code);
       const totalToDate = codeActuals.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
-      
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
       const currentPeriodNum = currentPeriod ? project.reportingPeriods?.periods.indexOf(currentPeriod) + 1 : -1;
-
-      const totalThisPeriod = codeActuals
-        .filter(a => {
-          return a.reportingPeriodId === currentPeriodId || 
-                 (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum));
-        })
-        .reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
-
-      await updateDoc(doc(db, 'costCodes', costCodeId), {
-        actualCostToDate: totalToDate,
-        actualCostThisPeriod: totalThisPeriod,
-        updatedAt: new Date().toISOString()
-      });
+      const totalThisPeriod = codeActuals.filter(a => a.reportingPeriodId === currentPeriodId || (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum))).reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
+      await costRepo.updateCostCode(costCodeId, { actualCostToDate: totalToDate, actualCostThisPeriod: totalThisPeriod } as any);
     } catch (error) {
       console.error("Error syncing actual costs:", error);
     }
-  }, [project.id, project.reportingPeriods]);
+  }, [project.id, project.reportingPeriods, records, costCodes]);
 
   const handleAddRecord = async () => {
     if (!isProjectAdmin) {
@@ -254,7 +175,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
         enterpriseAttributes: {},
         projectAttributes: {}
       };
-      await addDoc(collection(db, 'actualCosts'), newRecord);
+      await costRepo.createActualCost(newRecord as any);
       toast.success("Record added");
 
       // Scroll to the new record at the bottom
@@ -267,7 +188,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
         }
       }, 500);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'actualCosts');
+      console.error(error);
       toast.error("Failed to add record");
     }
   };
@@ -279,11 +200,11 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     }
 
     try {
-      await deleteDoc(doc(db, 'actualCosts', id));
+      await costRepo.deleteActualCost(id);
       toast.success("Record deleted");
       if (costCodeId) await syncActualCostsToCostCode(costCodeId);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `actualCosts/${id}`);
+      console.error(error);
       toast.error("Failed to delete record");
     }
   };
@@ -295,16 +216,12 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
 
     setIsLoading(true);
     try {
-      const batch = writeBatch(db);
       const affectedCostCodeIds = new Set<string>();
-      
       idsToDelete.forEach(id => {
         const record = records.find(r => r.id === id);
         if (record?.costCodeId) affectedCostCodeIds.add(record.costCodeId);
-        batch.delete(doc(db, 'actualCosts', id));
       });
-
-      await batch.commit();
+      await costRepo.deleteManyActualCosts(idsToDelete);
       
       // Sync all affected cost codes
       for (const ccId of affectedCostCodeIds) {
@@ -493,44 +410,18 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     try {
       for (let i = 0; i < totalChunks; i++) {
         const chunk = data.slice(i * chunkSize, (i + 1) * chunkSize);
-        const batch = writeBatch(db);
-        
+        const toCreate: any[] = [];
         chunk.forEach(row => {
           const costCode = costCodes.find(cc => cc.code === String(row['Cost Code ID']).trim());
           const period = findPeriod(row['Reporting Period']);
-          
           if (costCode) affectedCostCodeIds.add(costCode.id);
-
           const enterpriseAttributes: Record<string, any> = {};
-          enterpriseAttrs.forEach(attr => {
-            if (row[`E_${attr.title}`] !== undefined) {
-              enterpriseAttributes[attr.id] = String(row[`E_${attr.title}`]);
-            }
-          });
-
+          enterpriseAttrs.forEach(attr => { if (row[`E_${attr.title}`] !== undefined) enterpriseAttributes[attr.id] = String(row[`E_${attr.title}`]); });
           const projectAttributes: Record<string, any> = {};
-          projectAttrs.forEach(attr => {
-            if (row[`P_${attr.title}`] !== undefined) {
-              projectAttributes[attr.id] = String(row[`P_${attr.title}`]);
-            }
-          });
-
-          const newDocRef = doc(collection(db, 'actualCosts'));
-          batch.set(newDocRef, {
-            projectId: project.id,
-            costCodeId: costCode?.id || '',
-            item: row['Item'] || '',
-            description: row['Description'] || '',
-            source: row['Source'] || 'MAN',
-            cost: Number(row['Cost']) || 0,
-            reportingPeriodId: period?.id || '',
-            enterpriseAttributes,
-            projectAttributes,
-            createdAt: new Date().toISOString()
-          });
+          projectAttrs.forEach(attr => { if (row[`P_${attr.title}`] !== undefined) projectAttributes[attr.id] = String(row[`P_${attr.title}`]); });
+          toCreate.push({ projectId: project.id, costCodeId: costCode?.id || '', item: row['Item'] || '', description: row['Description'] || '', source: row['Source'] || 'MAN', cost: Number(row['Cost']) || 0, reportingPeriodId: period?.id || '', enterpriseAttributes, projectAttributes });
         });
-
-        await batch.commit();
+        await costRepo.saveManyActualCosts(toCreate);
         const processed = Math.min((i + 1) * chunkSize, data.length);
         setImportWizard(prev => ({ 
           ...prev, 
@@ -573,7 +464,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
       };
       delete updates.id;
 
-      await updateDoc(doc(db, 'actualCosts', data.id), updates);
+      await costRepo.updateActualCost(data.id, updates as any);
       
       // If costCodeId or cost changed, sync both old and new cost codes
       if (colDef.field === 'costCodeId' || colDef.field === 'cost' || colDef.field === 'reportingPeriodId') {
@@ -583,7 +474,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
         }
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `actualCosts/${data.id}`);
+      console.error(error);
       toast.error("Failed to update record");
       event.node.setDataValue(colDef.field!, oldValue);
     }
