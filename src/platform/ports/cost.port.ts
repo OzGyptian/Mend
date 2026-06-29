@@ -12,6 +12,7 @@ export interface CostRepository {
   createCostCode(data: Omit<CostCode, 'id'>): Promise<CostCode>;
   updateCostCode(id: string, data: Partial<CostCode>): Promise<void>;
   deleteCostCode(id: string): Promise<void>;
+  updateManyCostCodes(updates: Array<{ id: string; data: Partial<CostCode> }>): Promise<void>;
 
   // Sheets
   subscribeSheets(projectId: string, callback: (sheets: Sheet[]) => void): Unsubscribe;
@@ -40,7 +41,9 @@ export interface CostRepository {
 
   // Actual Costs
   subscribeActualCosts(projectId: string, callback: (records: ActualCostRecord[]) => void): Unsubscribe;
+  listActualCosts(projectId: string): Promise<ActualCostRecord[]>;
   createActualCost(data: Omit<ActualCostRecord, 'id' | 'createdAt'>): Promise<ActualCostRecord>;
+  saveManyActualCosts(records: Array<Omit<ActualCostRecord, 'id' | 'createdAt'>>): Promise<void>;
   updateActualCost(id: string, data: Partial<ActualCostRecord>): Promise<void>;
   deleteActualCost(id: string): Promise<void>;
   updateManyActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>): Promise<void>;
@@ -55,5 +58,6 @@ export interface CostRepository {
   // Cost Phasing
   subscribeCostPhasing(projectId: string, costCodeId: string, callback: (records: CostPhasingRecord[]) => void): Unsubscribe;
   listCostPhasing(projectId: string, costCodeId?: string): Promise<CostPhasingRecord[]>;
+  updateCostPhasing(id: string, data: Partial<CostPhasingRecord>): Promise<void>;
   saveCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void>;
 }

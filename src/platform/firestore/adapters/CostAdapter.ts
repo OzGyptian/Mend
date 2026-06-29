@@ -44,6 +44,15 @@ export class CostAdapter implements CostRepository {
     await deleteDoc(doc(db, 'costCodes', id));
   }
 
+  async updateManyCostCodes(updates: Array<{ id: string; data: Partial<CostCode> }>): Promise<void> {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    for (const { id, data } of updates) {
+      batch.update(doc(db, 'costCodes', id), { ...data, updatedAt: now });
+    }
+    await batch.commit();
+  }
+
   // ── Sheets ────────────────────────────────────────────────────────────────
 
   subscribeSheets(projectId: string, callback: (sheets: Sheet[]) => void): Unsubscribe {
@@ -172,10 +181,24 @@ export class CostAdapter implements CostRepository {
     });
   }
 
+  async listActualCosts(projectId: string): Promise<ActualCostRecord[]> {
+    const snap = await getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', projectId)));
+    return snap.docs.map(d => fromDoc<ActualCostRecord>(d.id, d.data()));
+  }
+
   async createActualCost(data: Omit<ActualCostRecord, 'id' | 'createdAt'>): Promise<ActualCostRecord> {
     const payload = { ...data, createdAt: new Date().toISOString() };
     const ref = await addDoc(collection(db, 'actualCosts'), payload);
     return { id: ref.id, ...payload };
+  }
+
+  async saveManyActualCosts(records: Array<Omit<ActualCostRecord, 'id' | 'createdAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    for (const record of records) {
+      batch.set(doc(collection(db, 'actualCosts')), { ...record, createdAt: now });
+    }
+    await batch.commit();
   }
 
   async updateActualCost(id: string, data: Partial<ActualCostRecord>): Promise<void> {
@@ -256,6 +279,10 @@ export class CostAdapter implements CostRepository {
     if (costCodeId) constraints.push(where('costCodeId', '==', costCodeId));
     const snap = await getDocs(query(collection(db, 'costPhasing'), ...constraints));
     return snap.docs.map((d) => fromDoc<CostPhasingRecord>(d.id, d.data()));
+  }
+
+  async updateCostPhasing(id: string, data: Partial<CostPhasingRecord>): Promise<void> {
+    await updateDoc(doc(db, 'costPhasing', id), { ...data, updatedAt: new Date().toISOString() });
   }
 
   async saveCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void> {
