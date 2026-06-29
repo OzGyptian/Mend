@@ -92,32 +92,38 @@ src/
 
 ## Firestore Collections in Use
 
-Identified during recon (Chunk 0):
+Confirmed by grepping all `collection(db, ...)` calls in src/ — 26 collections:
 
-| Collection | Domain type |
-|-----------|------------|
+| Collection | Domain type in `src/types.ts` |
+|-----------|------------------------------|
 | `enterprises` | `Enterprise` |
 | `projects` | `Project` |
 | `costCodes` | `CostCode` |
-| `forecastRows` (sheets) | `ForecastRow` |
+| `sheets` | `Sheet` |
 | `etcDetails` | `EtcDetail` |
 | `changes` | `Change` |
 | `changeRecords` | `ChangeRecord` |
 | `risks` | `Risk` |
 | `riskRecords` | `RiskRecord` |
 | `subcontracts` | `Subcontract` |
-| `subcontractLineItems` | `SubcontractLineItem` |
 | `invoices` | `Invoice` |
 | `progressPackages` | `ProgressPackage` |
 | `progressItems` | `ProgressItem` |
+| `progressReportingPeriods` | `ProgressReportingPeriod` |
 | `rulesOfCredit` | `RuleOfCredit` |
 | `scheduleItems` | `ScheduleItem` |
 | `procurementItems` | `ProcurementItem` |
+| `procurementStepDefinitions` | `ProcurementStepDefinition` |
 | `calendars` | `Calendar` |
 | `savedViews` | `SavedView` |
-| `auditLogs` | (write-only) |
+| `actualCosts` | no type in types.ts — investigate |
+| `baselineBudgets` | no type in types.ts — investigate |
+| `costPhasing` | no type in types.ts — investigate |
+| `periodSnapshots` | no type in types.ts — investigate |
+| `invitations` | no type in types.ts — write-once |
+| `auditLogs` | write-only (no read type needed) |
 
-_Exact collection names to be confirmed during Chunk 0 recon._
+**Note:** 4 collections (`actualCosts`, `baselineBudgets`, `costPhasing`, `periodSnapshots`) have no corresponding type in `src/types.ts`. These are likely inferred inline in components. Types need to be extracted during Chunk 2.
 
 ---
 
@@ -175,6 +181,12 @@ These pure functions live in `src/domain/` after Chunk 2. Before that, they live
 - Functions/variables: `camelCase`
 - Constants: `UPPER_SNAKE_CASE`
 - Interfaces: `PascalCase` (port interfaces: `XRepository`, `XAdapter`)
+
+---
+
+## Gemini AI
+
+`@google/genai` is in `package.json` but **has zero usages in `src/`**. It is a planned AI Studio capability (`MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API` in `metadata.json`) — the API key is injected by AI Studio at runtime. No migration work needed now. When Gemini calls are added, they go through `src/platform/ai/` (a future adapter).
 
 ---
 

@@ -16,7 +16,7 @@ Version: 1.0.0 (baseline, no product changes yet)
 - [x] P0.5 Add PLAN.md and JOURNAL.md
 - [x] P0.6 Add `.claude/settings.json` (PostToolUse hooks)
 - [x] P0.7 Add Vitest + initial test config
-- [ ] P0.8 Commit operating files to `main` before branching
+- [x] P0.8 Commit operating files to `main` before branching
 
 ---
 
