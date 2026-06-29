@@ -1,15 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Project, RuleOfCredit, RuleOfCreditStep } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  updateDoc, 
-  doc, 
-  writeBatch
-} from 'firebase/firestore';
+import { useProgressRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Download, Upload, Trash2, Loader2, Search, Edit2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -31,17 +22,9 @@ enum OperationType {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  toast.error(`Firestore Error: ${errInfo.error}`);
+  const msg = error instanceof Error ? error.message : String(error);
+  console.error('Firestore Error: ', JSON.stringify({ error: msg, operationType, path }));
+  toast.error(`Firestore Error: ${msg}`);
 }
 
 interface BulkRulesOfCreditProps {
@@ -55,6 +38,7 @@ interface FlattenedStep extends RuleOfCreditStep {
 }
 
 export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRulesOfCreditProps) {
+  const progressRepo = useProgressRepo();
   const [rules, setRules] = useState<RuleOfCredit[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -62,14 +46,9 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
 
   useEffect(() => {
     if (!project.id) return;
-    const path = 'rulesOfCredit';
-    const q = query(collection(db, path), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as RuleOfCredit));
+    const unsubscribe = progressRepo.subscribeRulesOfCredit(project.id, (data) => {
       setRules(data);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
     });
     return unsubscribe;
   }, [project.id]);
@@ -103,7 +82,7 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
     });
 
     try {
-      await updateDoc(doc(db, 'rulesOfCredit', parentRoCId), { steps: newSteps });
+      await progressRepo.updateRuleOfCredit(parentRoCId, { steps: newSteps });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `rulesOfCredit/${parentRoCId}`);
     }
@@ -113,10 +92,9 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
     if (!window.confirm('Delete this step?')) return;
     const rule = rules.find(r => r.id === parentRoCId);
     if (!rule) return;
-
     const newSteps = (rule.steps || []).filter(s => s.id !== stepId);
     try {
-      await updateDoc(doc(db, 'rulesOfCredit', parentRoCId), { steps: newSteps });
+      await progressRepo.updateRuleOfCredit(parentRoCId, { steps: newSteps });
       toast.success('Step deleted');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `rulesOfCredit/${parentRoCId}`);
@@ -129,28 +107,22 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
     if (selectedSteps.length === 0) return;
     if (!window.confirm(`Delete ${selectedSteps.length} selected steps from their respective Rules of Credit?`)) return;
 
-    // Group selected steps by parentRoCId
     const groupedByRoC: Record<string, string[]> = {};
     selectedSteps.forEach(s => {
       if (!groupedByRoC[s.parentRoCId]) groupedByRoC[s.parentRoCId] = [];
       groupedByRoC[s.parentRoCId].push(s.id);
     });
 
-    const batch = writeBatch(db);
-    let affectedRules = 0;
-
-    for (const rocId in groupedByRoC) {
+    const updates = Object.entries(groupedByRoC).flatMap(([rocId, stepIds]) => {
       const rule = rules.find(r => r.id === rocId);
-      if (rule) {
-        const remainingSteps = (rule.steps || []).filter(s => !groupedByRoC[rocId].includes(s.id));
-        batch.update(doc(db, 'rulesOfCredit', rocId), { steps: remainingSteps });
-        affectedRules++;
-      }
-    }
+      if (!rule) return [];
+      const remainingSteps = (rule.steps || []).filter(s => !stepIds.includes(s.id));
+      return [{ id: rocId, data: { steps: remainingSteps } }];
+    });
 
     try {
-      await batch.commit();
-      toast.success(`Deleted ${selectedSteps.length} steps from ${affectedRules} rules`);
+      await progressRepo.updateManyRulesOfCredit(updates);
+      toast.success(`Deleted ${selectedSteps.length} steps from ${updates.length} rules`);
       setSelectedSteps([]);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, 'rulesOfCredit');
@@ -170,30 +142,25 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
       groupedByRoC[s.parentRoCId].push(s.id);
     });
 
-    const batch = writeBatch(db);
-    let affectedRules = 0;
-
-    for (const rocId in groupedByRoC) {
+    const updates = Object.entries(groupedByRoC).flatMap(([rocId, stepIds]) => {
       const rule = rules.find(r => r.id === rocId);
-      if (rule) {
-        const newSteps = (rule.steps || []).map(s => {
-          if (groupedByRoC[rocId].includes(s.id)) {
-            const val = bulkUpdateData.value;
-            if (bulkUpdateData.field === 'weight' || bulkUpdateData.field === 'orderNo') {
-              return { ...s, [bulkUpdateData.field]: parseFloat(val) || 0 };
-            }
-            return { ...s, [bulkUpdateData.field]: val };
+      if (!rule) return [];
+      const newSteps = (rule.steps || []).map(s => {
+        if (stepIds.includes(s.id)) {
+          const val = bulkUpdateData.value;
+          if (bulkUpdateData.field === 'weight' || bulkUpdateData.field === 'orderNo') {
+            return { ...s, [bulkUpdateData.field]: parseFloat(val) || 0 };
           }
-          return s;
-        });
-        batch.update(doc(db, 'rulesOfCredit', rocId), { steps: newSteps });
-        affectedRules++;
-      }
-    }
+          return { ...s, [bulkUpdateData.field]: val };
+        }
+        return s;
+      });
+      return [{ id: rocId, data: { steps: newSteps } }];
+    });
 
     try {
-      await batch.commit();
-      toast.success(`Updated ${selectedSteps.length} steps in ${affectedRules} rules`);
+      await progressRepo.updateManyRulesOfCredit(updates);
+      toast.success(`Updated ${selectedSteps.length} steps in ${updates.length} rules`);
       setIsBulkUpdateOpen(false);
       setSelectedSteps([]);
     } catch (error) {
@@ -307,21 +274,15 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
           });
         });
 
-        // Batch update
-        const batch = writeBatch(db);
-        let updatedCount = 0;
-
-        for (const rocId in groupedSteps) {
+        const importUpdates = Object.entries(groupedSteps).flatMap(([rocId, steps]) => {
           const rule = rules.find(r => r.ruleId.toLowerCase() === rocId.toLowerCase());
-          if (rule) {
-            batch.update(doc(db, 'rulesOfCredit', rule.id), { steps: groupedSteps[rocId] });
-            updatedCount++;
-          }
-        }
+          if (!rule) return [];
+          return [{ id: rule.id, data: { steps } }];
+        });
 
-        if (updatedCount > 0) {
-          await batch.commit();
-          toast.success(`Imported steps for ${updatedCount} Rules of Credit`);
+        if (importUpdates.length > 0) {
+          await progressRepo.updateManyRulesOfCredit(importUpdates);
+          toast.success(`Imported steps for ${importUpdates.length} Rules of Credit`);
         } else {
           toast.info('No matching Rule of Credit IDs found. Ensure parent RoCs are created first.');
         }
