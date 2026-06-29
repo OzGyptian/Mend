@@ -7,6 +7,7 @@ export interface ChangeRepository {
   createChange(data: Omit<Change, 'id' | 'createdAt' | 'updatedAt'>): Promise<Change>;
   updateChange(id: string, data: Partial<Change>): Promise<void>;
   deleteChange(id: string): Promise<void>;
+  updateManyChanges(updates: Array<{ id: string; data: Partial<Change> }>): Promise<void>;
 
   subscribeChangeRecords(projectId: string, callback: (records: ChangeRecord[]) => void): Unsubscribe;
   listChangeRecords(projectId: string, changeId?: string): Promise<ChangeRecord[]>;

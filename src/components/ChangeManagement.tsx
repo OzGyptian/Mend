@@ -1,18 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useChangeRepo, useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Project, Enterprise, Change, ChangeRecord, CostCode } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDocs,
-  writeBatch,
-  doc,
-  updateDoc,
-  addDoc,
-  deleteDoc
-} from 'firebase/firestore';
 import { 
   Search, 
   Plus, 
@@ -102,57 +90,6 @@ import {
   SelectValue 
 } from '@/components/ui/select';
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  toast.error(`Database Error: ${errInfo.error}`);
-  throw new Error(JSON.stringify(errInfo));
-}
 
 interface ChangeManagementProps {
   project: Project;
@@ -160,6 +97,9 @@ interface ChangeManagementProps {
 }
 
 export default function ChangeManagement({ project, enterprise }: ChangeManagementProps) {
+  const changeRepo = useChangeRepo();
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
   const [changes, setChanges] = useState<Change[]>([]);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -285,48 +225,27 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
 
   // Fetch Changes
   useEffect(() => {
-    const q = query(collection(db, 'changes'), where('projectId', '==', project.id));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Change));
+    return changeRepo.subscribeChanges(project.id, (data) => {
       setChanges(data);
       setIsLoading(false);
-    }, (error) => {
-      console.error("ChangeManagement: changes fetch error:", error);
-      toast.error("Failed to load changes: " + error.message);
-      setIsLoading(false);
     });
-    return () => unsub();
   }, [project.id]);
 
-  // Fetch Change Records for selected change
+  // Fetch all change records for project; filter by selectedChangeId
+  const [allChangeRecords, setAllChangeRecords] = useState<ChangeRecord[]>([]);
   useEffect(() => {
-    if (!selectedChangeId) {
-      setChangeRecords([]);
-      return;
-    }
-    const q = query(
-      collection(db, 'changeRecords'), 
-      where('projectId', '==', project.id),
-      where('changeId', '==', selectedChangeId)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChangeRecord));
-      setChangeRecords(data);
-    }, (error) => {
-      console.error("ChangeManagement: change records fetch error:", error);
-      toast.error("Failed to load change records: " + error.message);
-    });
-    return () => unsub();
-  }, [selectedChangeId]);
+    return changeRepo.subscribeChangeRecords(project.id, setAllChangeRecords);
+  }, [project.id]);
+  useEffect(() => {
+    if (!selectedChangeId) { setChangeRecords([]); return; }
+    setChangeRecords(allChangeRecords.filter(r => r.changeId === selectedChangeId));
+  }, [selectedChangeId, allChangeRecords]);
 
   // Fetch Cost Codes for dropdown
   useEffect(() => {
-    const q = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
-      setCostCodes(data.sort((a, b) => a.sortOrder - b.sortOrder));
+    return costRepo.subscribeCostCodes(project.id, (data) => {
+      setCostCodes([...data].sort((a, b) => a.sortOrder - b.sortOrder));
     });
-    return () => unsubscribe();
   }, [project.id]);
 
   const handleCreateChange = async (e: React.FormEvent) => {
@@ -367,67 +286,48 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         updatedAt: new Date().toISOString()
       };
 
-      await addDoc(collection(db, 'changes'), changeData);
+      await changeRepo.createChange(changeData as any);
       toast.success("Change created successfully");
       setIsCreateChangeOpen(false);
-      setNewChange({
-        changeId: '',
-        description: '',
-        status: 'Pending',
-        initiator: '',
-        reference: '',
-        periodId: ''
-      });
+      setNewChange({ changeId: '', description: '', status: 'Pending', initiator: '', reference: '', periodId: '' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'changes');
+      console.error(error);
+      toast.error("Failed to create change");
     }
   };
 
   const handleDeleteChange = async () => {
     if (!changeToDelete) return;
     try {
-      const batch = writeBatch(db);
-      
-      // Delete all child records
-      const recordsSnap = await getDocs(query(collection(db, 'changeRecords'), where('changeId', '==', changeToDelete.id)));
-      recordsSnap.docs.forEach(d => batch.delete(d.ref));
-      
-      // Delete the change itself
-      batch.delete(doc(db, 'changes', changeToDelete.id));
-      
-      await batch.commit();
+      const recordIds = allChangeRecords.filter(r => r.changeId === changeToDelete.id).map(r => r.id);
+      await Promise.all(recordIds.map(id => changeRepo.deleteChangeRecord(id)));
+      await changeRepo.deleteChange(changeToDelete.id);
       toast.success("Change and associated records deleted");
       setIsDeleteChangeOpen(false);
       setChangeToDelete(null);
       if (selectedChangeId === changeToDelete.id) setSelectedChangeId(null);
-      setSelectedIds(prev => {
-        const next = new Set(prev);
-        next.delete(changeToDelete.id);
-        return next;
-      });
+      setSelectedIds(prev => { const next = new Set(prev); next.delete(changeToDelete.id); return next; });
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'changes');
+      console.error(error);
+      toast.error("Failed to delete change");
     }
   };
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
       for (const id of selectedIds) {
-        // Delete child records
-        const recordsSnap = await getDocs(query(collection(db, 'changeRecords'), where('changeId', '==', id)));
-        recordsSnap.docs.forEach(d => batch.delete(d.ref));
-        // Delete change
-        batch.delete(doc(db, 'changes', id));
+        const recordIds = allChangeRecords.filter(r => r.changeId === id).map(r => r.id);
+        await Promise.all(recordIds.map(rid => changeRepo.deleteChangeRecord(rid)));
+        await changeRepo.deleteChange(id);
       }
-      await batch.commit();
       toast.success(`Deleted ${selectedIds.size} changes`);
       setSelectedIds(new Set());
       setIsBulkDeleteOpen(false);
       if (selectedChangeId && selectedIds.has(selectedChangeId)) setSelectedChangeId(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'changes/bulk');
+      console.error(error);
+      toast.error("Failed to delete changes");
     }
   };
 
@@ -524,62 +424,34 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
+        const importCreates: any[] = [];
         let addedCount = 0;
         let duplicateCount = 0;
 
         for (const row of data) {
           const changeId = String(row['Change ID'] || '').trim();
           if (!changeId) continue;
-
-          // Check for duplicates in current state and imported data
           const isDuplicate = changes.some(c => c.changeId.toLowerCase() === changeId.toLowerCase());
-          if (isDuplicate) {
-            duplicateCount++;
-            continue;
-          }
+          if (isDuplicate) { duplicateCount++; continue; }
 
           const entAttrs: Record<string, string> = {};
           enterprise.changeAttributes?.forEach(attr => {
             const key = `[E] ${attr.title}`;
-            if (row[key]) {
-              const valString = String(row[key]);
-              const id = valString.split(' - ')[0]; // Handle formatted 'id - description'
-              entAttrs[attr.id] = id;
-            }
+            if (row[key]) entAttrs[attr.id] = String(row[key]).split(' - ')[0];
           });
 
           const prjAttrs: Record<string, string> = {};
           project.changeAttributes?.forEach(attr => {
             const key = `[P] ${attr.title}`;
-            if (row[key]) {
-              const valString = String(row[key]);
-              const id = valString.split(' - ')[0];
-              prjAttrs[attr.id] = id;
-            }
+            if (row[key]) prjAttrs[attr.id] = String(row[key]).split(' - ')[0];
           });
 
-          const newChangeRef = doc(collection(db, 'changes'));
-          batch.set(newChangeRef, {
-            projectId: project.id,
-            changeId: changeId.slice(0, 20),
-            description: row['Description'] || '',
-            type: '',
-            status: row['Status'] || 'Pending',
-            initiator: String(row['Initiator'] || '').slice(0, 50),
-            reference: String(row['Reference'] || '').slice(0, 50),
-            budget: Number(row['Budget']) || 0,
-            eac: Number(row['EAC']) || 0,
-            enterpriseAttributes: entAttrs,
-            projectAttributes: prjAttrs,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
+          importCreates.push({ projectId: project.id, changeId: changeId.slice(0, 20), description: row['Description'] || '', type: '', status: row['Status'] || 'Pending', initiator: String(row['Initiator'] || '').slice(0, 50), reference: String(row['Reference'] || '').slice(0, 50), budget: Number(row['Budget']) || 0, eac: Number(row['EAC']) || 0, enterpriseAttributes: entAttrs, projectAttributes: prjAttrs });
           addedCount++;
         }
 
         if (addedCount > 0) {
-          await batch.commit();
+          await Promise.all(importCreates.map(c => changeRepo.createChange(c)));
           toast.success(`Imported ${addedCount} changes. ${duplicateCount > 0 ? `${duplicateCount} duplicates skipped.` : ''}`);
         } else if (duplicateCount > 0) {
           toast.warning(`No changes added. ${duplicateCount} duplicates found.`);
@@ -625,58 +497,27 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     if (selectedRecordIds.size === 0) return;
 
     try {
-      const batch = writeBatch(db);
-      const updates: any = {
-        updatedAt: new Date().toISOString()
-      };
-
+      const updates: any = {};
       if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
       if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope.slice(0, 100);
       if (bulkRecordUpdateData.budgetAmount !== '') updates.budgetAmount = Number(bulkRecordUpdateData.budgetAmount);
       if (bulkRecordUpdateData.eacAmount !== '') updates.eacAmount = Number(bulkRecordUpdateData.eacAmount);
+      Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => { if (val !== undefined && val !== '') updates[`enterpriseAttributes.${id}`] = val; });
+      Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => { if (val !== undefined && val !== '') updates[`projectAttributes.${id}`] = val; });
 
-      // Add attributes to updates
-      Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => {
-        if (val !== undefined && val !== '') {
-          updates[`enterpriseAttributes.${id}`] = val;
-        }
-      });
-      Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => {
-        if (val !== undefined && val !== '') {
-          updates[`projectAttributes.${id}`] = val;
-        }
-      });
+      await changeRepo.updateManyChangeRecords([...selectedRecordIds].map(id => ({ id, data: updates })));
 
-      selectedRecordIds.forEach(id => {
-        batch.update(doc(db, 'changeRecords', id), updates);
-      });
-
-      await batch.commit();
-      
-      // Update parent totals for all affected changes
       const affectedChangeIds = new Set<string>();
-      selectedRecordIds.forEach(id => {
-        const record = changeRecords.find(r => r.id === id);
-        if (record) affectedChangeIds.add(record.changeId);
-      });
-
-      for (const changeId of affectedChangeIds) {
-        await updateParentTotals(changeId);
-      }
+      selectedRecordIds.forEach(id => { const record = changeRecords.find(r => r.id === id); if (record) affectedChangeIds.add(record.changeId); });
+      for (const changeId of affectedChangeIds) { await updateParentTotals(changeId); }
 
       toast.success(`Updated ${selectedRecordIds.size} records`);
       setIsBulkRecordUpdateOpen(false);
-      setBulkRecordUpdateData({ 
-        costCodeId: '', 
-        scope: '', 
-        budgetAmount: '', 
-        eacAmount: '',
-        enterpriseAttributes: {},
-        projectAttributes: {}
-      });
+      setBulkRecordUpdateData({ costCodeId: '', scope: '', budgetAmount: '', eacAmount: '', enterpriseAttributes: {}, projectAttributes: {} });
       setSelectedRecordIds(new Set());
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'changeRecords');
+      console.error(error);
+      toast.error("Failed to update records");
     }
   };
 
@@ -694,7 +535,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
+        const importCreatesR: any[] = [];
         let addedCount = 0;
         const affectedChangeIds = new Set<string>();
 
@@ -702,40 +543,20 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
           const costCode = String(row['Cost Code'] || '').trim();
           if (!costCode) continue;
 
-          const targetChangeId = selectedChangeId;
-
           const entAttrs: Record<string, string> = {};
-          enterprise.lineItemAttributes?.forEach(a => {
-            if (row[a.title]) entAttrs[a.id] = String(row[a.title]);
-          });
+          enterprise.lineItemAttributes?.forEach(a => { if (row[a.title]) entAttrs[a.id] = String(row[a.title]); });
 
           const prjAttrs: Record<string, string> = {};
-          project.lineItemAttributes?.forEach(a => {
-            if (row[a.title]) prjAttrs[a.id] = String(row[a.title]);
-          });
+          project.lineItemAttributes?.forEach(a => { if (row[a.title]) prjAttrs[a.id] = String(row[a.title]); });
 
-          const newRecordRef = doc(collection(db, 'changeRecords'));
-          batch.set(newRecordRef, {
-            changeId: targetChangeId,
-            projectId: project.id,
-            costCodeId: costCode,
-            scope: String(row['Scope'] || '').slice(0, 100),
-            enterpriseAttributes: entAttrs,
-            projectAttributes: prjAttrs,
-            budgetAmount: Number(row['Budget Amount']) || 0,
-            eacAmount: Number(row['EAC Amount']) || 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
+          importCreatesR.push({ changeId: selectedChangeId, projectId: project.id, costCodeId: costCode, scope: String(row['Scope'] || '').slice(0, 100), enterpriseAttributes: entAttrs, projectAttributes: prjAttrs, budgetAmount: Number(row['Budget Amount']) || 0, eacAmount: Number(row['EAC Amount']) || 0 });
           addedCount++;
-          affectedChangeIds.add(targetChangeId);
+          affectedChangeIds.add(selectedChangeId);
         }
 
         if (addedCount > 0) {
-          await batch.commit();
-          for (const cid of affectedChangeIds) {
-            await updateParentTotals(cid);
-          }
+          await Promise.all(importCreatesR.map(r => changeRepo.createChangeRecord(r)));
+          for (const cid of affectedChangeIds) { await updateParentTotals(cid); }
           toast.success(`Imported ${addedCount} records`);
         }
       } catch (error) {
@@ -765,11 +586,12 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      await addDoc(collection(db, 'changeRecords'), newRecord);
+      await changeRepo.createChangeRecord(newRecord as any);
       toast.success("Record added", { id: toastId });
     } catch (error) {
       toast.dismiss(toastId);
-      handleFirestoreError(error, OperationType.WRITE, 'changeRecords');
+      console.error(error);
+      toast.error("Failed to add record");
     }
   };
 
@@ -809,64 +631,39 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         updates[colDef.field] = String(params.newValue).slice(0, 50);
       }
 
-      await updateDoc(doc(db, 'changes', data.id), updates);
+      await changeRepo.updateChange(data.id, updates);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `changes/${data.id}`);
+      console.error(error);
+      toast.error("Failed to update");
     }
   };
 
   const onRecordCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data, colDef } = params;
     if (!data.id) return;
-
     try {
-      let updates: any = {
-        [colDef.field!]: params.newValue,
-        updatedAt: new Date().toISOString()
-      };
-
-      // Handle attribute updates
+      let updates: any = { [colDef.field!]: params.newValue };
       if (colDef.field?.startsWith('enterpriseAttributes.') || colDef.field?.startsWith('projectAttributes.')) {
-        const parts = colDef.field.split('.');
-        const attrField = parts[0];
-        const attrId = parts[1];
-        updates = {
-          [`${attrField}.${attrId}`]: params.newValue,
-          updatedAt: new Date().toISOString()
-        };
+        const [attrField, attrId] = colDef.field.split('.');
+        updates = { [`${attrField}.${attrId}`]: params.newValue };
       }
-
-      // Enforce character limits
-      if (colDef.field === 'scope') {
-        updates.scope = String(params.newValue).slice(0, 100);
-      }
-
-      await updateDoc(doc(db, 'changeRecords', data.id), updates);
-      
-      // Update parent totals if amounts changed
-      if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') {
-        updateParentTotals(data.changeId);
-      }
+      if (colDef.field === 'scope') updates.scope = String(params.newValue).slice(0, 100);
+      await changeRepo.updateChangeRecord(data.id, updates);
+      if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') updateParentTotals(data.changeId);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `changeRecords/${data.id}`);
+      console.error(error);
+      toast.error("Failed to update record");
     }
   };
 
   const updateParentTotals = async (changeId: string) => {
     try {
-      const recordsSnap = await getDocs(query(collection(db, 'changeRecords'), where('changeId', '==', changeId)));
-      const records = recordsSnap.docs.map(d => d.data() as ChangeRecord);
-      
+      const records = allChangeRecords.filter(r => r.changeId === changeId);
       const totalBudget = records.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
       const totalEac = records.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-      
-      await updateDoc(doc(db, 'changes', changeId), {
-        budget: totalBudget,
-        eac: totalEac,
-        updatedAt: new Date().toISOString()
-      });
+      await changeRepo.updateChange(changeId, { budget: totalBudget, eac: totalEac });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `changes/${changeId}/totals`);
+      console.error(error);
     }
   };
 
@@ -1152,7 +949,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             <button 
               onClick={async (e) => {
                 e.stopPropagation();
-                await deleteDoc(doc(db, 'changeRecords', p.data.id));
+                await changeRepo.deleteChangeRecord(p.data.id);
                 updateParentTotals(p.data.changeId);
               }}
               className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
@@ -1237,14 +1034,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                   const newStatus = e.target.value;
                   if (!newStatus) return;
                   try {
-                    const batch = writeBatch(db);
-                    selectedIds.forEach(id => {
-                      batch.update(doc(db, 'changes', id), { 
-                        status: newStatus,
-                        updatedAt: new Date().toISOString()
-                      });
-                    });
-                    await batch.commit();
+                    await changeRepo.updateManyChanges([...selectedIds].map(id => ({ id, data: { status: newStatus as any } })));
                     toast.success(`Updated ${selectedIds.size} changes to ${newStatus}`);
                     e.target.value = '';
                   } catch (error) {
@@ -1549,9 +1339,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                     <button 
                       onClick={async () => {
                         if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
-                          const batch = writeBatch(db);
-                          selectedRecordIds.forEach(id => batch.delete(doc(db, 'changeRecords', id)));
-                          await batch.commit();
+                          await Promise.all([...selectedRecordIds].map(id => changeRepo.deleteChangeRecord(id)));
                           updateParentTotals(selectedChangeId);
                           setSelectedRecordIds(new Set());
                           toast.success(`Deleted ${selectedRecordIds.size} records`);
