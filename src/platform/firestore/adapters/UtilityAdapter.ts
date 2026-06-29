@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fromDoc } from '../converters';
-import type { SavedView, PeriodSnapshot } from '../../../domain/types';
+import type { SavedView, PeriodSnapshot, Sheet } from '../../../domain/types';
 import type { UtilityRepository } from '../../ports/utility.port';
 import type { Unsubscribe } from '../../ports/index';
 
@@ -60,6 +60,16 @@ export class UtilityAdapter implements UtilityRepository {
   }): Promise<{ id: string }> {
     const ref = await addDoc(collection(db, 'invitations'), data);
     return { id: ref.id };
+  }
+
+  async updateSheet(id: string, data: Partial<Sheet>): Promise<void> {
+    await updateDoc(doc(db, 'sheets', id), { ...data, updatedAt: new Date().toISOString() });
+  }
+
+  subscribeSheet(id: string, callback: (sheet: Sheet | null) => void): () => void {
+    return onSnapshot(doc(db, 'sheets', id), (snap) => {
+      callback(snap.exists() ? fromDoc<Sheet>(snap.id, snap.data()) : null);
+    });
   }
 
   async recordAuditEvent(data: {

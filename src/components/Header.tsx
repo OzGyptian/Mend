@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { User } from 'firebase/auth';
 import { Enterprise, Project, Sheet } from '../types';
 import { Bell, Search, User as UserIcon, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
-import { db } from '../firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { useProjectRepo, useUtilityRepo } from '../platform/firestore/hooks';
 
 interface HeaderProps {
-  user: User;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  user: any;
   enterprise: Enterprise | null;
 }
 
@@ -25,33 +24,19 @@ export default function Header({ user, enterprise }: HeaderProps) {
   const sheetMatch = matchPath({ path: '/project/:projectId/sheet/:sheetId', end: false }, location.pathname);
   const sheetId = sheetMatch?.params.sheetId;
 
+  const projectRepo = useProjectRepo();
+  const utilityRepo = useUtilityRepo();
   const [project, setProject] = useState<Project | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
 
   useEffect(() => {
-    if (!projectId) {
-      setProject(null);
-      return;
-    }
-    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (snapshot) => {
-      if (snapshot.exists()) {
-        setProject({ ...snapshot.data() as Project, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    if (!projectId) { setProject(null); return; }
+    return projectRepo.subscribe(projectId, setProject);
   }, [projectId]);
 
   useEffect(() => {
-    if (!sheetId) {
-      setSheet(null);
-      return;
-    }
-    const unsubscribe = onSnapshot(doc(db, 'sheets', sheetId), (snapshot) => {
-      if (snapshot.exists()) {
-        setSheet({ ...snapshot.data() as Sheet, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    if (!sheetId) { setSheet(null); return; }
+    return utilityRepo.subscribeSheet(sheetId, setSheet);
   }, [sheetId]);
 
   const isProjectView = location.pathname.startsWith('/project/');
@@ -116,7 +101,7 @@ export default function Header({ user, enterprise }: HeaderProps) {
               <p className="text-[10px] text-gray-400 font-mono uppercase tracking-widest leading-none">Project Controller</p>
             </div>
             <Avatar className="w-8 h-8 border border-gray-200 dark:border-white/10">
-              <AvatarImage src={user.photoURL || undefined} alt="Profile" referrerPolicy="no-referrer" />
+              <AvatarImage src={user.avatarUrl || undefined} alt="Profile" referrerPolicy="no-referrer" />
               <AvatarFallback className="bg-gray-100 dark:bg-white/5 text-gray-400">
                 <UserIcon className="w-4 h-4" />
               </AvatarFallback>

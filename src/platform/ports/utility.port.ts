@@ -1,4 +1,4 @@
-import type { SavedView, PeriodSnapshot } from '../../domain/types';
+import type { SavedView, PeriodSnapshot, Sheet } from '../../domain/types';
 import type { Unsubscribe } from './index';
 
 export interface UtilityRepository {
@@ -32,4 +32,6 @@ export interface UtilityRepository {
     occurredAt: string;
     details?: Record<string, unknown>;
   }): Promise<void>;
+  updateSheet(id: string, data: Partial<Sheet>): Promise<void>;
+  subscribeSheet(id: string, callback: (sheet: Sheet | null) => void): () => void;
 }
