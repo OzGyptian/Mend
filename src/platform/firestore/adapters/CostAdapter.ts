@@ -302,8 +302,20 @@ export class CostAdapter implements CostRepository {
     return snap.docs.map((d) => fromDoc<CostPhasingRecord>(d.id, d.data()));
   }
 
+  async listAllCostPhasing(projectId: string): Promise<CostPhasingRecord[]> {
+    const snap = await getDocs(query(collection(db, 'costPhasing'), where('projectId', '==', projectId)));
+    return snap.docs.map((d) => fromDoc<CostPhasingRecord>(d.id, d.data()));
+  }
+
   async updateCostPhasing(id: string, data: Partial<CostPhasingRecord>): Promise<void> {
     await updateDoc(doc(db, 'costPhasing', id), { ...data, updatedAt: new Date().toISOString() });
+  }
+
+  async updateManyPhasing(updates: Array<{ id: string; data: Partial<CostPhasingRecord> }>): Promise<void> {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    updates.forEach(({ id, data }) => batch.update(doc(db, 'costPhasing', id), { ...data, updatedAt: now }));
+    await batch.commit();
   }
 
   async saveCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void> {

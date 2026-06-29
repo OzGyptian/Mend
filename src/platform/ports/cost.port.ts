@@ -60,6 +60,8 @@ export interface CostRepository {
   // Cost Phasing
   subscribeCostPhasing(projectId: string, costCodeId: string, callback: (records: CostPhasingRecord[]) => void): Unsubscribe;
   listCostPhasing(projectId: string, costCodeId?: string): Promise<CostPhasingRecord[]>;
+  listAllCostPhasing(projectId: string): Promise<CostPhasingRecord[]>;
   updateCostPhasing(id: string, data: Partial<CostPhasingRecord>): Promise<void>;
+  updateManyPhasing(updates: Array<{ id: string; data: Partial<CostPhasingRecord> }>): Promise<void>;
   saveCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void>;
 }
