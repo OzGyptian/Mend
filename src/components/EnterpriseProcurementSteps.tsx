@@ -1,18 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp,
-  orderBy
-} from 'firebase/firestore';
 import { ProcurementStepDefinition } from '../types';
+import { useProcurementRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Trash2, 
@@ -30,6 +18,7 @@ interface EnterpriseProcurementStepsProps {
 }
 
 export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseProcurementStepsProps) {
+  const repo = useProcurementRepo();
   const [steps, setSteps] = useState<ProcurementStepDefinition[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newStepName, setNewStepName] = useState('');
@@ -38,13 +27,8 @@ export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseP
 
   useEffect(() => {
     if (!enterpriseId) return;
-    const q = query(
-      collection(db, 'procurementStepDefinitions'),
-      where('enterpriseId', '==', enterpriseId),
-      orderBy('order', 'asc')
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      setSteps(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProcurementStepDefinition)));
+    const unsub = repo.subscribeEnterpriseStepDefinitions(enterpriseId, (data) => {
+      setSteps([...data].sort((a, b) => (a.order || 0) - (b.order || 0)));
     });
     return () => unsub();
   }, [enterpriseId]);
@@ -53,12 +37,11 @@ export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseP
     if (!newStepName) return;
     try {
       const maxOrder = steps.length > 0 ? Math.max(...steps.map(s => s.order || 0)) : 0;
-      await addDoc(collection(db, 'procurementStepDefinitions'), {
+      await repo.createStepDefinition({
         enterpriseId,
         name: newStepName,
         order: maxOrder + 1,
         isEnterpriseStandard: true,
-        createdAt: serverTimestamp()
       });
       setNewStepName('');
       setIsAdding(false);
@@ -72,17 +55,12 @@ export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseP
   const handleUpdate = async (id: string) => {
     try {
       const order = Number(editData.order) || 0;
-      // Check for duplicate order
       const isDuplicate = steps.some(s => s.id !== id && s.order === order);
       if (isDuplicate) {
         toast.error(`Step order ${order} already exists. Please use a unique ID.`);
         return;
       }
-
-      await updateDoc(doc(db, 'procurementStepDefinitions', id), {
-        name: editData.name,
-        order: order
-      });
+      await repo.updateStepDefinition(id, { name: editData.name, order });
       setEditingStepId(null);
       toast.success('Step updated');
     } catch (e) {
@@ -94,7 +72,7 @@ export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseP
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this standard step? Projects already using it will not be affected.')) return;
     try {
-      await deleteDoc(doc(db, 'procurementStepDefinitions', id));
+      await repo.deleteStepDefinition(id);
       toast.success('Standard step deleted');
     } catch (e) {
       console.error(e);
