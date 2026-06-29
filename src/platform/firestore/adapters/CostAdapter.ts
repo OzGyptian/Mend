@@ -179,6 +179,26 @@ export class CostAdapter implements CostRepository {
     await deleteDoc(doc(db, 'etcDetails', id));
   }
 
+  async deleteManyEtcDetails(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    ids.forEach(id => batch.delete(doc(db, 'etcDetails', id)));
+    await batch.commit();
+  }
+
+  async createManyEtcDetails(data: Array<Omit<EtcDetail, 'id' | 'createdAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const chunks: typeof data[] = [];
+    for (let i = 0; i < data.length; i += 400) chunks.push(data.slice(i, i + 400));
+    for (const chunk of chunks) {
+      const batch = writeBatch(db);
+      chunk.forEach(item => {
+        const ref = doc(collection(db, 'etcDetails'));
+        batch.set(ref, { ...item, createdAt: now, updatedAt: now });
+      });
+      await batch.commit();
+    }
+  }
+
   async updateManyEtcDetails(updates: Array<{ id: string; data: Partial<EtcDetail> }>): Promise<void> {
     const batch = writeBatch(db);
     for (const { id, data } of updates) {

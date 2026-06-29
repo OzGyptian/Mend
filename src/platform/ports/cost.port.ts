@@ -38,6 +38,8 @@ export interface CostRepository {
   createEtcDetail(data: Omit<EtcDetail, 'id' | 'createdAt'>): Promise<EtcDetail>;
   updateEtcDetail(id: string, data: Partial<EtcDetail>): Promise<void>;
   deleteEtcDetail(id: string): Promise<void>;
+  deleteManyEtcDetails(ids: string[]): Promise<void>;
+  createManyEtcDetails(data: Array<Omit<EtcDetail, 'id' | 'createdAt'>>): Promise<void>;
   updateManyEtcDetails(updates: Array<{ id: string; data: Partial<EtcDetail> }>): Promise<void>;
 
   // Actual Costs
