@@ -590,3 +590,65 @@ export interface ScheduleItem {
   currentEndDate: string;
   updatedAt: string;
 }
+
+// Inline types extracted from components during recon
+
+export interface ActualCostRecord {
+  id: string;
+  projectId: string;
+  costCodeId: string;
+  item: string;
+  description: string;
+  source: 'MAN' | 'ACC' | 'FIN' | 'REV';
+  cost: number;
+  reportingPeriodId: string;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface BaselineBudgetRecord {
+  id: string;
+  projectId: string;
+  costCodeId: string;
+  item: string;
+  description: string;
+  source: 'EST' | 'CON' | 'BID';
+  amount: number;
+  reportingPeriodId: string;
+  enterpriseAttributes?: Record<string, string>;
+  projectAttributes?: Record<string, string>;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+// costPhasing and periodSnapshots shapes are inferred inline in components —
+// types will be finalised when those components are migrated in Phase 6.
+export interface CostPhasingRecord {
+  id: string;
+  projectId: string;
+  costCodeId: string;
+  periodValues: Record<string, number>;
+  type: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface PeriodSnapshot {
+  id: string;
+  projectId: string;
+  periodId: string;
+  periodName: string;
+  costCodes: Array<{
+    costCodeId: string;
+    costCode: string;
+    name: string;
+    approvedBudget: number;
+    actualCostToDate: number;
+    estimateToComplete: number;
+    estimateAtCompletion: number;
+    costVariance: number;
+  }>;
+  createdAt: string;
+}
