@@ -43,6 +43,11 @@ export class ChangeAdapter implements ChangeRepository {
     });
   }
 
+  async listChanges(projectId: string): Promise<Change[]> {
+    const snap = await getDocs(query(collection(db, 'changes'), where('projectId', '==', projectId)));
+    return snap.docs.map((d) => fromDoc<Change>(d.id, d.data()));
+  }
+
   async listChangeRecords(projectId: string, changeId?: string): Promise<ChangeRecord[]> {
     const constraints = [where('projectId', '==', projectId)];
     if (changeId) constraints.push(where('changeId', '==', changeId));

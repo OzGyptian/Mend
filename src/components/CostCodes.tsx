@@ -1,20 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useCostRepo, useAuthRepo, useScheduleRepo, useChangeRepo, useRiskRepo, useSubcontractRepo, useProjectRepo } from '../platform/firestore/hooks';
 import { createPortal } from 'react-dom';
 import { Project, Enterprise, CostCode, SavedView, Calendar as ProjectCalendar, Change, ChangeRecord, Subcontract, ScheduleItem } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  doc, 
-  updateDoc, 
-  onSnapshot, 
-  collection, 
-  query, 
-  where, 
-  addDoc, 
-  deleteDoc, 
-  writeBatch,
-  getDocs,
-  orderBy
-} from 'firebase/firestore';
 import { 
   Calendar,
   Search, 
@@ -346,6 +333,13 @@ const ActionsCellRenderer = (params: any) => {
 };
 
 export default function CostCodes({ project, enterprise, theme = 'light' }: CostCodesProps) {
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
+  const scheduleRepo = useScheduleRepo();
+  const changeRepo = useChangeRepo();
+  const riskRepo = useRiskRepo();
+  const subcontractRepo = useSubcontractRepo();
+  const projectRepo = useProjectRepo();
   const navigate = useNavigate();
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
@@ -405,12 +399,16 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     try {
       // 1. Bulk fetch all relevant data for the project
-      const [actualsSnap, budgetsSnap, changesSnap, changeRecordsSnap] = await Promise.all([
-        getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'changes'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'changeRecords'), where('projectId', '==', project.id)))
-      ]);
+      const [actualsData, budgetsData, changesData, changeRecordsData] = await Promise.all([
+        costRepo.listActualCosts(project.id),
+        costRepo.listBaselineBudgets(project.id),
+        changeRepo.listChanges(project.id),
+        changeRepo.listChangeRecords(project.id),
+      ] as [Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>]);
+      const actualsSnap = { docs: actualsData.map(d => ({ id: d.id, data: () => d })) };
+      const budgetsSnap = { docs: budgetsData.map(d => ({ id: d.id, data: () => d })) };
+      const changesSnap = { docs: changesData.map(d => ({ id: d.id, data: () => d })) };
+      const changeRecordsSnap = { docs: changeRecordsData.map(d => ({ id: d.id, data: () => d })) };
 
       const allActuals = actualsSnap.docs.map(d => d.data());
       const allBudgets = budgetsSnap.docs.map(d => d.data());
@@ -420,60 +418,23 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       // APPROVED CHANGES: Only sum records from approved changes
       const approvedChangeIds = new Set(fetchedChanges.filter(c => c.status === 'Approved').map(c => c.id));
 
-      const batch = writeBatch(db);
-      let count = 0;
+      const calcUpdates: Array<{ id: string; data: any }> = [];
 
       for (const cc of costCodes) {
         const ccId = cc.id;
         const ccCode = cc.code;
 
-        // Sum Actuals
-        const actualCost = allActuals
-          .filter((a: any) => a.costCodeId === ccId || a.costCodeId === ccCode)
-          .reduce((sum, a: any) => sum + (Number(a.cost) || 0), 0);
-
-        // Sum Baseline
-        const baselineBudget = allBudgets
-          .filter((b: any) => b.costCodeId === ccId || b.costCodeId === ccCode)
-          .reduce((sum, b: any) => sum + (Number(b.amount) || 0), 0);
-
-        // Sum Approved Changes
-        const approvedChanges = allChangeRecords
-          .filter((cr: any) => (cr.costCodeId === ccId || cr.costCodeId === ccCode) && approvedChangeIds.has(cr.changeId))
-          .reduce((sum, cr: any) => sum + (Number(cr.budgetAmount) || 0), 0);
-          
-        // Sum Subcontracts
+        const actualCost = allActuals.filter((a: any) => a.costCodeId === ccId || a.costCodeId === ccCode).reduce((sum, a: any) => sum + (Number(a.cost) || 0), 0);
+        const baselineBudget = allBudgets.filter((b: any) => b.costCodeId === ccId || b.costCodeId === ccCode).reduce((sum, b: any) => sum + (Number(b.amount) || 0), 0);
+        const approvedChanges = allChangeRecords.filter((cr: any) => (cr.costCodeId === ccId || cr.costCodeId === ccCode) && approvedChangeIds.has(cr.changeId)).reduce((sum, cr: any) => sum + (Number(cr.budgetAmount) || 0), 0);
         let subcontractAmount = 0;
-        subcontracts.forEach(sub => {
-          (sub.lineItems || []).forEach(li => {
-            if (li.status === 'Rejected') return;
-            const assignedId = li.costCodeId || sub.defaultCostCodeId;
-            if (assignedId === ccId || assignedId === ccCode) {
-              subcontractAmount += (Number(li.total) || 0);
-            }
-          });
-        });
+        subcontracts.forEach(sub => { (sub.lineItems || []).forEach(li => { if (li.status === 'Rejected') return; const assignedId = li.costCodeId || sub.defaultCostCodeId; if (assignedId === ccId || assignedId === ccCode) subcontractAmount += (Number(li.total) || 0); }); });
 
-        const ccRef = doc(db, 'costCodes', cc.id);
-        batch.update(ccRef, {
-          actualCostToDate: actualCost,
-          baselineBudget: baselineBudget,
-          approvedChanges: approvedChanges,
-          subcontractAmount: subcontractAmount,
-          updatedAt: new Date().toISOString()
-        });
-        count++;
-
-        // Batch limit is 500
-        if (count >= 450) {
-          await batch.commit();
-          // Reset batch for next set
-          // (Actually we would need a new batch object here)
-          // But usually cost codes are < 500. If more, we handle recursively.
-        }
+        calcUpdates.push({ id: cc.id, data: { actualCostToDate: actualCost, baselineBudget, approvedChanges, subcontractAmount } });
       }
 
-      if (count > 0) await batch.commit();
+      await costRepo.updateManyCostCodes(calcUpdates);
+      let count = calcUpdates.length;
 
       toast.success(`Recalculated totals for ${count} cost codes`, { id: toastId });
       setIsCalculated(true);
@@ -784,175 +745,82 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
   }, [resourceLibrarySource, enterprise.resourceRates, project.resourceRates, resourceSearch]);
 
-  // Fetch ETC Details
+  // ETC Details - project-level subscription
+  const [allEtcForProject, setAllEtcForProject] = useState<any[]>([]);
   useEffect(() => {
-    if (!selectedEtcCode) {
-      setEtcRows([]);
-      return;
-    }
-
     setIsEtcLoading(true);
-    const q = query(
-      collection(db, 'etcDetails'),
-      where('projectId', '==', project.id),
-      where('costCode', '==', selectedEtcCode)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const rows = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort in memory to include rows without sortOrder
-      const sortedRows = rows.sort((a: any, b: any) => {
-        const orderA = a.sortOrder ?? -1;
-        const orderB = b.sortOrder ?? -1;
-        if (orderA !== orderB) return orderA - orderB;
-        return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
-      });
-      setEtcRows(sortedRows);
-      setIsEtcLoading(false);
-    }, (error) => {
-      console.error("Error fetching ETC details:", error);
+    return costRepo.subscribeEtcDetails(project.id, (rows) => {
+      setAllEtcForProject(rows as any[]);
       setIsEtcLoading(false);
     });
-
-    return () => unsubscribe();
-  }, [selectedEtcCode, project.id]);
-
-  // Fetch Actual Cost Details
+  }, [project.id]);
   useEffect(() => {
-    if (!selectedBaselineCode) {
-      setBaselineRows([]);
-      return;
-    }
+    if (!selectedEtcCode) { setEtcRows([]); return; }
+    const filtered = (allEtcForProject as any[]).filter(r => r.costCode === selectedEtcCode || r.costCodeId === selectedEtcCode);
+    const sorted = [...filtered].sort((a: any, b: any) => { const oA = a.sortOrder ?? -1; const oB = b.sortOrder ?? -1; if (oA !== oB) return oA - oB; return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(); });
+    setEtcRows(sorted);
+  }, [selectedEtcCode, allEtcForProject]);
 
+  // Baseline subscriptions (project-level)
+  const [allBaseline, setAllBaseline] = useState<any[]>([]);
+  useEffect(() => {
+    return costRepo.subscribeBaselineBudgets(project.id, (rows) => setAllBaseline(rows as any[]));
+  }, [project.id]);
+  useEffect(() => {
+    if (!selectedBaselineCode) { setBaselineRows([]); return; }
     setIsBaselineLoading(true);
     const costCodeObj = costCodes.find(c => c.code === selectedBaselineCode);
-    
-    const q = query(
-      collection(db, 'baselineBudgets'), 
-      where('projectId', '==', project.id)
-    );
+    setBaselineRows(allBaseline.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedBaselineCode));
+    setIsBaselineLoading(false);
+  }, [selectedBaselineCode, allBaseline, costCodes]);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allBaseline = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      const filtered = allBaseline.filter((a: any) => 
-        a.costCodeId === costCodeObj?.id || a.costCodeId === selectedBaselineCode
-      );
-
-      setBaselineRows(filtered);
-      setIsBaselineLoading(false);
-    }, (error) => {
-      console.error("Error fetching baseline budgets:", error);
-      setIsBaselineLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [selectedBaselineCode, project.id, costCodes]);
-
+  // Actuals subscriptions (project-level)
+  const [allActuals, setAllActuals] = useState<any[]>([]);
   useEffect(() => {
-    if (!selectedActualsCode) {
-      setActualsRows([]);
-      return;
-    }
-
+    return costRepo.subscribeActualCosts(project.id, (rows) => setAllActuals(rows as any[]));
+  }, [project.id]);
+  useEffect(() => {
+    if (!selectedActualsCode) { setActualsRows([]); return; }
     setIsActualsLoading(true);
-    // We match on both ID and Code string for robustness
     const costCodeObj = costCodes.find(c => c.code === selectedActualsCode);
-    
-    const q = query(
-      collection(db, 'actualCosts'),
-      where('projectId', '==', project.id)
-    );
+    const filtered = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedActualsCode);
+    setActualsRows([...filtered].sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
+    setIsActualsLoading(false);
+  }, [selectedActualsCode, allActuals, costCodes]);
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allActuals = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      const filteredActuals = allActuals.filter((a: any) => 
-        a.costCodeId === costCodeObj?.id || a.costCodeId === selectedActualsCode
-      );
-      
-      // Sort by date/createdAt
-      const sortedRows = filteredActuals.sort((a: any, b: any) => {
-        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-      });
-      
-      setActualsRows(sortedRows);
-      setIsActualsLoading(false);
-    }, (error) => {
-      console.error("Error fetching Actual Cost details:", error);
-      setIsActualsLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [selectedActualsCode, project.id, costCodes]);
-
-  // Fetch Cost Phasing (Baseline/Approved)
+  // Cost Phasing subscriptions
   useEffect(() => {
-    if (!selectedTimephasingCode) {
-      setCostPhasing([]);
-      return;
-    }
-
-    const q = query(
-      collection(db, 'costPhasing'),
-      where('projectId', '==', project.id),
-      where('costCodeId', '==', selectedTimephasingCode)
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setCostPhasing(data);
-    });
-
-    return () => unsubscribe();
+    if (!selectedTimephasingCode) { setCostPhasing([]); return; }
+    return costRepo.subscribeCostPhasing(project.id, selectedTimephasingCode, setCostPhasing as any);
   }, [selectedTimephasingCode, project.id]);
 
   // Changes Effects
   useEffect(() => {
     if (!project.id) return;
-    const q = query(collection(db, 'changes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setAllChanges(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Change)));
-    });
-    return () => unsubscribe();
+    return changeRepo.subscribeChanges(project.id, setAllChanges as any);
   }, [project.id]);
 
   useEffect(() => {
     if (!project.id) return;
-    const q = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
-    });
-    return () => unsubscribe();
+    return subcontractRepo.subscribeSubcontracts(project.id, setSubcontracts as any);
   }, [project.id]);
 
+  // Change records - filter from project-wide subscription
+  const [allChangeRecords, setAllChangeRecords] = useState<ChangeRecord[]>([]);
   useEffect(() => {
-    if (!selectedChangesCode || !project.id) {
-      setChangeRecords([]);
-      return;
-    }
+    if (!project.id) return;
+    return changeRepo.subscribeChangeRecords(project.id, setAllChangeRecords);
+  }, [project.id]);
+  useEffect(() => {
+    if (!selectedChangesCode) { setChangeRecords([]); return; }
     setIsChangesLoading(true);
-    const q = query(
-      collection(db, 'changeRecords'), 
-      where('projectId', '==', project.id),
-      where('costCodeId', '==', selectedChangesCode)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setChangeRecords(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChangeRecord)));
-      setIsChangesLoading(false);
-    });
-    return () => unsubscribe();
-  }, [selectedChangesCode, project.id]);
+    setChangeRecords(allChangeRecords.filter(r => (r as any).costCodeId === selectedChangesCode));
+    setIsChangesLoading(false);
+  }, [selectedChangesCode, allChangeRecords]);
 
   useEffect(() => {
     if (!project.id) return;
-    const q = query(collection(db, 'riskRecords'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setRiskRecords(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-    return () => unsubscribe();
+    return riskRepo.subscribeRiskRecords(project.id, (rows) => setRiskRecords(rows as any[]));
   }, [project.id]);
 
   const riskExposureByCostCode = useMemo(() => {
@@ -1013,30 +881,17 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const currentPeriodId = project.reportingPeriods?.currentPeriodId;
         const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
         
-        // 1. Get Actuals
-        const actualsQuery = query(
-          collection(db, 'actualCosts'),
-          where('projectId', '==', project.id)
-        );
-        const actualsSnap = await getDocs(actualsQuery);
+        // 1. Get Actuals from local state
         const costCodeObj = costCodes.find(c => c.code === selectedTimephasingCode);
-        const filteredActuals = actualsSnap.docs
-          .map(doc => doc.data())
-          .filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedTimephasingCode);
-        
+        const filteredActuals = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedTimephasingCode);
+
         const actualsByPeriod: Record<string, number> = {};
         filteredActuals.forEach((a: any) => {
           actualsByPeriod[a.reportingPeriodId] = (actualsByPeriod[a.reportingPeriodId] || 0) + (a.cost || 0);
         });
 
-        // 2. Get ETC Details
-        const etcQuery = query(
-          collection(db, 'etcDetails'),
-          where('projectId', '==', project.id),
-          where('costCode', '==', selectedTimephasingCode)
-        );
-        const etcSnap = await getDocs(etcQuery);
-        const etcDetails = etcSnap.docs.map(doc => doc.data());
+        // 2. Get ETC Details from local state
+        const etcDetails = allEtcForProject.filter((e: any) => e.costCode === selectedTimephasingCode || e.costCodeId === selectedTimephasingCode);
         
         // 3. Get Subcontract Phasing
         const subphasingByPeriod: Record<string, number> = {};
@@ -1220,95 +1075,32 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     fetchData();
   }, [selectedTimephasingCode, project.id, costCodes, costPhasing, project.reportingPeriods, subcontracts]);
 
-  enum OperationType {
-    CREATE = 'create',
-    UPDATE = 'update',
-    DELETE = 'delete',
-    LIST = 'list',
-    GET = 'get',
-    WRITE = 'write',
-  }
-
-  const handleFirestoreError = (error: any, operationType: OperationType, path: string | null) => {
-    const errInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      authInfo: {
-        userId: auth.currentUser?.uid,
-        email: auth.currentUser?.email,
-        emailVerified: auth.currentUser?.emailVerified,
-        isAnonymous: auth.currentUser?.isAnonymous,
-        tenantId: auth.currentUser?.tenantId,
-        providerInfo: auth.currentUser?.providerData.map(provider => ({
-          providerId: provider.providerId,
-          displayName: provider.displayName,
-          email: provider.email,
-          photoUrl: provider.photoURL
-        })) || []
-      },
-      operationType,
-      path
-    };
-    console.error('Firestore Error: ', JSON.stringify(errInfo));
-    return error;
-  };
 
   const handleAddEtcRow = async () => {
     if (!selectedEtcCode) return;
     try {
-      const batch = writeBatch(db);
       const count = Math.max(1, Math.min(500, addRowsCount));
-      
-      // Determine insertion point
       let insertSortOrder: number;
       const selectedRows = etcGridRef.current?.api.getSelectedRows() || [];
       if (selectedRows.length > 0) {
-        // Insert after the last selected row
         const lastSelected = selectedRows[selectedRows.length - 1];
         insertSortOrder = lastSelected.sortOrder + 1;
-        
-        // Shift others
         const toShift = etcRows.filter(r => r.sortOrder >= insertSortOrder);
-        toShift.forEach(r => {
-          batch.update(doc(db, 'etcDetails', r.id), { sortOrder: r.sortOrder + count });
-        });
+        await costRepo.updateManyEtcDetails(toShift.map(r => ({ id: r.id, data: { sortOrder: r.sortOrder + count } })));
       } else {
-        // Add at the end
         const maxSortOrder = etcRows.length > 0 ? Math.max(...etcRows.map(r => r.sortOrder || 0)) : -1;
         insertSortOrder = maxSortOrder + 1;
       }
-      
-      for (let i = 0; i < count; i++) {
-          const newRow = {
-            projectId: project.id,
-            costCode: selectedEtcCode,
-            item: '',
-            description: '',
-            qty: 0,
-            unit: '',
-            rate: 0,
-            phasingMethod: 'Manual',
-            phasingStartDate: '',
-            phasingEndDate: '',
-            phasingUnit: '',
-            phasingQty: 0,
-            category: '',
-            periodValues: {},
-            enterpriseAttributes: {},
-            projectAttributes: {},
-            userDefined: {},
-            sortOrder: insertSortOrder + i,
-            createdAt: new Date().toISOString(),
-            source: 'MANUAL',
-            isEnterpriseResource: false
-          };
-        const docRef = doc(collection(db, 'etcDetails'));
-        batch.set(docRef, newRow);
-      }
-      
-      await batch.commit();
+      const newRows = Array.from({ length: count }, (_, i) => ({
+        projectId: project.id, costCode: selectedEtcCode, item: '', description: '',
+        qty: 0, unit: '', rate: 0, phasingMethod: 'Manual', phasingStartDate: '', phasingEndDate: '',
+        phasingUnit: '', phasingQty: 0, category: '', periodValues: {}, enterpriseAttributes: {},
+        projectAttributes: {}, userDefined: {}, sortOrder: insertSortOrder + i, source: 'MANUAL', isEnterpriseResource: false
+      }));
+      await costRepo.createManyEtcDetails(newRows as any);
       toast.success(`${count} row(s) added successfully`);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'etcDetails');
+      console.error(error);
       toast.error("Failed to add row. Check console for details.");
     }
   };
@@ -1317,62 +1109,28 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const handleAddResources = async (resources: any[], source: 'enterprise' | 'project' = 'enterprise') => {
     if (!selectedEtcCode || resources.length === 0) return;
     try {
-      const batch = writeBatch(db);
       const count = Math.max(1, Math.min(500, addRowsCount));
-      
-      // Determine insertion point
       let insertSortOrder: number;
       const selectedRows = etcGridRef.current?.api.getSelectedRows() || [];
       if (selectedRows.length > 0) {
-        // Insert after the last selected row
         const lastSelected = selectedRows[selectedRows.length - 1];
         insertSortOrder = lastSelected.sortOrder + 1;
-        
-        // Shift others
         const totalNewRows = count * resources.length;
         const toShift = etcRows.filter(r => r.sortOrder >= insertSortOrder);
-        toShift.forEach(r => {
-          batch.update(doc(db, 'etcDetails', r.id), { sortOrder: r.sortOrder + totalNewRows });
-        });
+        await costRepo.updateManyEtcDetails(toShift.map(r => ({ id: r.id, data: { sortOrder: r.sortOrder + totalNewRows } })));
       } else {
-        // Add at the end
         const maxSortOrder = etcRows.length > 0 ? Math.max(...etcRows.map(r => r.sortOrder || 0)) : -1;
         insertSortOrder = maxSortOrder + 1;
       }
 
       let currentSortOrder = insertSortOrder;
+      const newRows: any[] = [];
       for (const resource of resources) {
         for (let i = 0; i < count; i++) {
-          const newRow = {
-            projectId: project.id,
-            costCode: selectedEtcCode,
-            item: resource.id,
-            description: resource.name,
-            qty: 0,
-            unit: resource.unit || 'HR',
-            rate: resource.rate || 0,
-            phasingMethod: 'Manual',
-            phasingStartDate: '',
-            phasingEndDate: '',
-            phasingUnit: '',
-            phasingQty: 0,
-            category: resource.category || '',
-            periodValues: {},
-            enterpriseAttributes: {},
-            projectAttributes: {},
-            userDefined: {},
-            sortOrder: currentSortOrder++,
-            createdAt: new Date().toISOString(),
-            isEnterpriseResource: source === 'enterprise',
-            source: source.toUpperCase(),
-            resourceId: resource.id
-          };
-          const docRef = doc(collection(db, 'etcDetails'));
-          batch.set(docRef, newRow);
+          newRows.push({ projectId: project.id, costCode: selectedEtcCode, item: resource.id, description: resource.name, qty: 0, unit: resource.unit || 'HR', rate: resource.rate || 0, phasingMethod: 'Manual', phasingStartDate: '', phasingEndDate: '', phasingUnit: '', phasingQty: 0, category: resource.category || '', periodValues: {}, enterpriseAttributes: {}, projectAttributes: {}, userDefined: {}, sortOrder: currentSortOrder++, isEnterpriseResource: source === 'enterprise', source: source.toUpperCase(), resourceId: resource.id });
         }
       }
-      
-      await batch.commit();
+      await costRepo.createManyEtcDetails(newRows);
       setIsResourceModalOpen(false);
       setSelectedResourceIds(new Set());
       toast.success(`${resources.length * count} row(s) added successfully`);
@@ -1435,9 +1193,9 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         }
       });
 
-      await updateDoc(doc(db, 'etcDetails', rowId), updates);
+      await costRepo.updateEtcDetail(rowId, updates);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `etcDetails/${rowId}`);
+      console.error(error);
       toast.error("Failed to update row");
     }
   }, [project.id, project.reportingPeriods]);
@@ -1472,7 +1230,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       return;
     }
 
-    const batch = writeBatch(db);
+    const phasingUpdates: Array<{ id: string; data: any }> = [];
     let updatedCount = 0;
 
     const parseDateToUTCMidnight = (val: any): Date | null => {
@@ -1539,13 +1297,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             });
           }
 
-          batch.update(doc(db, 'etcDetails', row.id), {
+          phasingUpdates.push({ id: row.id, data: {
             periodValues: newPeriodValues,
             qty: Object.keys(newPeriodValues)
-              .filter(key => distributionPeriods.some(dp => dp.id === key)) 
+              .filter(key => distributionPeriods.some(dp => dp.id === key))
               .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
-            updatedAt: new Date().toISOString()
-          });
+          } });
           updatedCount++;
           continue;
         }
@@ -1704,19 +1461,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           newPeriodValues[key] = Math.round(newPeriodValues[key] * 10000) / 10000;
         });
 
-        batch.update(doc(db, 'etcDetails', row.id), {
-          periodValues: newPeriodValues,
-          qty: Object.keys(newPeriodValues)
-            .filter(key => distributionPeriods.some(dp => dp.id === key)) 
-            .reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0),
-          updatedAt: new Date().toISOString()
-        });
+        phasingUpdates.push({ id: row.id, data: { periodValues: newPeriodValues, qty: Object.keys(newPeriodValues).filter(key => distributionPeriods.some(dp => dp.id === key)).reduce((sum, key) => sum + (newPeriodValues[key] || 0), 0) } });
         updatedCount++;
       }
 
     if (updatedCount > 0) {
       try {
-        await batch.commit();
+        await costRepo.updateManyEtcDetails(phasingUpdates);
         toast.success(`Calculated phasing for ${updatedCount} rows`);
       } catch (error) {
         console.error("Error calculating phasing:", error);
@@ -1729,7 +1480,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const handleDeleteEtcRow = async (rowId: string) => {
     try {
-      await deleteDoc(doc(db, 'etcDetails', rowId));
+      await costRepo.deleteEtcDetail(rowId);
       toast.success("Row deleted");
     } catch (error) {
       console.error("Error deleting ETC row:", error);
@@ -1749,11 +1500,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (!confirm(`Are you sure you want to delete ${type === 'selected' ? rowsToDelete.length : 'all'} row(s)?`)) return;
 
     try {
-      const batch = writeBatch(db);
-      rowsToDelete.forEach(id => {
-        batch.delete(doc(db, 'etcDetails', id));
-      });
-      await batch.commit();
+      await costRepo.deleteManyEtcDetails(rowsToDelete);
       setSelectedEtcIds(new Set());
       toast.success(`${rowsToDelete.length} row(s) deleted`);
     } catch (error) {
@@ -1767,48 +1514,20 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     
     setIsSaving(true);
     try {
-      const batch = writeBatch(db);
-      selectedEtcIds.forEach(id => {
+      const bulkUpdates = Array.from(selectedEtcIds).map(id => {
         const row = etcRows.find(r => r.id === id);
-        const updateObj: any = {
-          updatedAt: new Date().toISOString()
-        };
-        
-        // Only allow category update if NOT a library resource
+        const updateObj: any = {};
         const isLibraryResource = row?.isEnterpriseResource || row?.source === 'PROJECT';
-        if (etcBulkUpdateData.category && !isLibraryResource) {
-          updateObj.category = etcBulkUpdateData.category;
-        }
-        
+        if (etcBulkUpdateData.category && !isLibraryResource) updateObj.category = etcBulkUpdateData.category;
         if (etcBulkUpdateData.calendarId) updateObj.calendarId = etcBulkUpdateData.calendarId;
         if (etcBulkUpdateData.phasingMethod) updateObj.phasingMethod = etcBulkUpdateData.phasingMethod;
         if (etcBulkUpdateData.phasingUnit) updateObj.phasingUnit = etcBulkUpdateData.phasingUnit;
-        
-        if (Object.keys(etcBulkUpdateData.enterpriseAttributes).length > 0) {
-          updateObj.enterpriseAttributes = { 
-            ...(row?.enterpriseAttributes || {}), 
-            ...etcBulkUpdateData.enterpriseAttributes 
-          };
-        }
-        
-        if (Object.keys(etcBulkUpdateData.projectAttributes).length > 0) {
-          updateObj.projectAttributes = { 
-            ...(row?.projectAttributes || {}), 
-            ...etcBulkUpdateData.projectAttributes 
-          };
-        }
-
-        if (Object.keys(etcBulkUpdateData.userDefined || {}).length > 0) {
-          updateObj.userDefined = {
-            ...(row?.userDefined || {}),
-            ...etcBulkUpdateData.userDefined
-          };
-        }
-        
-        batch.update(doc(db, 'etcDetails', id), updateObj);
+        if (Object.keys(etcBulkUpdateData.enterpriseAttributes).length > 0) updateObj.enterpriseAttributes = { ...(row?.enterpriseAttributes || {}), ...etcBulkUpdateData.enterpriseAttributes };
+        if (Object.keys(etcBulkUpdateData.projectAttributes).length > 0) updateObj.projectAttributes = { ...(row?.projectAttributes || {}), ...etcBulkUpdateData.projectAttributes };
+        if (Object.keys(etcBulkUpdateData.userDefined || {}).length > 0) updateObj.userDefined = { ...(row?.userDefined || {}), ...etcBulkUpdateData.userDefined };
+        return { id, data: updateObj };
       });
-      
-      await batch.commit();
+      await costRepo.updateManyEtcDetails(bulkUpdates);
       setIsEtcBulkUpdating(false);
       setSelectedEtcIds(new Set());
       setEtcBulkUpdateData({ enterpriseAttributes: {}, projectAttributes: {}, userDefined: {} });
@@ -1883,7 +1602,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
         const futurePeriodIds = allPeriods.slice(currentIndex + 1).map(p => p.id);
 
-        const batch = writeBatch(db);
+        const importRows: any[] = [];
 
         data.forEach(row => {
           const periodValues: Record<string, number> = {};
@@ -1918,26 +1637,15 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             if (row[`Text ${i}`] !== undefined) userDefined[`text${i}`] = String(row[`Text ${i}`]);
           }
 
-          const newRowRef = doc(collection(db, 'etcDetails'));
-          batch.set(newRowRef, {
-            projectId: project.id,
-            costCode: selectedEtcCode,
-            activityId: row['Activity ID'] || '',
-            item: row['Item'] || '',
-            description: row['Description'] || '',
-            orderNumber: row['Order Number'] || '',
-            qty: 0, // Calculated by valueGetter
-            unit: row['Unit'] || '',
-            rate: Number(row['Rate']) || 0,
-            periodValues,
-            enterpriseAttributes,
-            projectAttributes,
-            userDefined,
-            createdAt: new Date().toISOString()
+          importRows.push({
+            projectId: project.id, costCode: selectedEtcCode, activityId: row['Activity ID'] || '',
+            item: row['Item'] || '', description: row['Description'] || '', orderNumber: row['Order Number'] || '',
+            qty: 0, unit: row['Unit'] || '', rate: Number(row['Rate']) || 0,
+            periodValues, enterpriseAttributes, projectAttributes, userDefined
           });
         });
 
-        await batch.commit();
+        await costRepo.createManyEtcDetails(importRows);
         toast.success(`Imported ${data.length} rows successfully`);
       } catch (error) {
         console.error("Error importing ETC details:", error);
@@ -2833,7 +2541,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     setIsTimephasingLoading(true);
     try {
-      const batch = writeBatch(db);
       const periods = project.reportingPeriods?.periods || [];
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = periods.find(p => p.id === currentPeriodId);
@@ -2875,45 +2582,30 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             row.periodValues
           );
 
-          // Find doc to update
-          const q = query(
-            collection(db, 'costPhasing'),
-            where('projectId', '==', project.id),
-            where('costCodeId', '==', selectedTimephasingCode),
-            where('type', '==', row.id)
-          );
-          const snap = await getDocs(q);
-          
-          const updatePayload = {
-            projectId: project.id,
-            costCodeId: selectedTimephasingCode,
-            type: row.id,
-            phasingSource: 'Auto',
-            startDate: row.startDate instanceof Date ? row.startDate.toISOString() : row.startDate,
+               const updatePayload = {
+            projectId: project.id, costCodeId: selectedTimephasingCode, type: row.id,
+            phasingSource: 'Auto', startDate: row.startDate instanceof Date ? row.startDate.toISOString() : row.startDate,
             endDate: row.endDate instanceof Date ? row.endDate.toISOString() : row.endDate,
-            distribution: row.distribution,
-            periodValues: newPhasing,
-            updatedAt: new Date().toISOString()
+            distribution: row.distribution, periodValues: newPhasing,
           };
-
-          if (!snap.empty) {
-            batch.update(snap.docs[0].ref, updatePayload);
+          const existing = (costPhasing as any[]).find(p => p.costCodeId === selectedTimephasingCode && p.type === row.id);
+          if (existing) {
+            await costRepo.updateCostPhasing(existing.id, updatePayload);
           } else {
-            batch.set(doc(collection(db, 'costPhasing')), updatePayload);
+            await costRepo.saveCostPhasing([updatePayload]);
           }
           updatedCount++;
         }
       }
 
       if (updatedCount > 0) {
-        await batch.commit();
         toast.success(`Recalculated phasing for ${updatedCount} row(s)`);
       } else {
         toast.warning("Incomplete auto-phasing settings (Dates or Distribution missing)");
       }
     } catch (error) {
       console.error("Error calculating auto phasing:", error);
-      handleFirestoreError(error, OperationType.UPDATE, 'costPhasing/batch');
+      console.error(error);
       toast.error("Failed to calculate auto phasing");
     } finally {
       setIsTimephasingLoading(false);
@@ -2963,8 +2655,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
         const futurePeriodIds = periods.slice(currentPeriodIndex + 1).map(p => p.id);
 
-        const batch = writeBatch(db);
-
         for (const row of data) {
           const type = row['Type'];
           let phasingType = '';
@@ -2993,26 +2683,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
             }
           });
 
-          const updatePayload: any = {
-            projectId: project.id,
-            costCodeId: selectedTimephasingCode,
-            type: phasingType,
-            phasingSource: row['Phasing Source'] || (phasingType === 'eac' ? 'ETC Details' : 'Manual'),
-            startDate: row['Start Date'] || '',
-            endDate: row['End Date'] || '',
-            distribution: row['Distribution'] || 'Even',
-            periodValues,
-            updatedAt: new Date().toISOString()
-          };
-
+          const updatePayload: any = { projectId: project.id, costCodeId: selectedTimephasingCode, type: phasingType, phasingSource: row['Phasing Source'] || (phasingType === 'eac' ? 'ETC Details' : 'Manual'), startDate: row['Start Date'] || '', endDate: row['End Date'] || '', distribution: row['Distribution'] || 'Even', periodValues };
           if (existingDoc) {
-            batch.update(doc(db, 'costPhasing', existingDoc.id), updatePayload);
+            await costRepo.updateCostPhasing(existingDoc.id, updatePayload);
           } else {
-            batch.set(doc(collection(db, 'costPhasing')), updatePayload);
+            await costRepo.saveCostPhasing([updatePayload]);
           }
         }
-
-        await batch.commit();
         toast.success("Timephasing imported successfully");
       } catch (error) {
         console.error("Error importing timephasing:", error);
@@ -3073,30 +2750,20 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       };
 
       if (data.docId) {
-        console.log(`Updating existing doc: ${data.docId}`);
-        await updateDoc(doc(db, 'costPhasing', data.docId), updatePayload);
+        await costRepo.updateCostPhasing(data.docId, updatePayload);
       } else {
-        console.log(`Searching for existing doc via query...`);
-        const q = query(
-          collection(db, 'costPhasing'),
-          where('projectId', '==', project.id),
-          where('costCodeId', '==', selectedTimephasingCode),
-          where('type', '==', data.id)
-        );
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          console.log(`Found doc via query: ${snap.docs[0].id}`);
-          await updateDoc(snap.docs[0].ref, updatePayload);
+        const existing = costPhasing.find((p: any) => p.costCodeId === selectedTimephasingCode && p.type === data.id);
+        if (existing) {
+          await costRepo.updateCostPhasing(existing.id, updatePayload);
         } else {
-          console.log(`No doc found, creating new one.`);
-          await addDoc(collection(db, 'costPhasing'), updatePayload);
+          await costRepo.saveCostPhasing([updatePayload]);
         }
       }
       
       toast.success(`${data.type} updated`);
     } catch (error) {
       console.error("Error updating cost phasing:", error);
-      handleFirestoreError(error, OperationType.UPDATE, `costPhasing/${data.docId || 'new'}`);
+      console.error(error);
       toast.error("Failed to update cost phasing");
     }
   }, [project.id, selectedTimephasingCode]);
@@ -3242,22 +2909,22 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         return;
       }
 
-      // 1. Fetch all project data once
-      const [actualsSnap, budgetsSnap, etcSnap, changesSnap, recordsSnap, subSnap] = await Promise.all([
-        getDocs(query(collection(db, 'actualCosts'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'baselineBudgets'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'etcDetails'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'changes'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'changeRecords'), where('projectId', '==', project.id))),
-        getDocs(query(collection(db, 'subcontracts'), where('projectId', '==', project.id)))
-      ]);
+      // 1. Use local subscribed state (already up to date)
+      const [fetchedActuals, fetchedBudgets, fetchedEtc, fetchedChanges, fetchedChangeRecords, fetchedSubcontracts] = await Promise.all([
+        costRepo.listActualCosts(project.id),
+        costRepo.listBaselineBudgets(project.id),
+        costRepo.listEtcDetails(project.id),
+        changeRepo.listChanges(project.id),
+        changeRepo.listChangeRecords(project.id),
+        subcontractRepo.listSubcontracts(project.id),
+      ] as [Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>]);
 
-      const allActuals = actualsSnap.docs.map(d => d.data());
-      const allBudgets = budgetsSnap.docs.map(d => d.data());
-      const allEtcRows = etcSnap.docs.map(d => d.data());
-      const allChanges = changesSnap.docs.map(d => ({ ...d.data(), id: d.id } as Change));
-      const allChangeRecords = recordsSnap.docs.map(d => d.data());
-      const allSubcontracts = subSnap.docs.map(d => ({ ...d.data(), id: d.id } as Subcontract));
+      const allActuals = fetchedActuals;
+      const allBudgets = fetchedBudgets;
+      const allEtcRows = fetchedEtc;
+      const allChanges = fetchedChanges as Change[];
+      const allChangeRecords = fetchedChangeRecords;
+      const allSubcontracts = fetchedSubcontracts as Subcontract[];
 
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
@@ -3326,70 +2993,31 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         });
       });
 
-      // 5. Bulk updates in chunks of 500
-      const batchSize = 450;
-      for (let i = 0; i < codesToUpdate.length; i += batchSize) {
-        const batch = writeBatch(db);
-        const chunk = codesToUpdate.slice(i, i + batchSize);
-
-        chunk.forEach(code => {
-          const baselineBudget = Number(getVal(baselineMap, code.id, code.code)) || 0;
-          const actualCostToDate = Number(getVal(actualsToDateMap, code.id, code.code)) || 0;
-          const actualCostThisPeriod = Number(getVal(actualsThisPeriodMap, code.id, code.code)) || 0;
-          const budgetChanges = Number(getVal(budgetChangeMap, code.id, code.code)) || 0;
-          const approvedBudget = baselineBudget + budgetChanges;
-          
-          let estimateAtCompletion = 0;
-          let estimateToComplete = 0;
-
-          if (code.eacMethod === 'ETC Details') {
-            estimateToComplete = Number(getVal(etcMap, code.id, code.code)) || 0;
-            estimateAtCompletion = actualCostToDate + estimateToComplete;
-          } else if (code.eacMethod === 'Change Management') {
-            const eacChanges = Number(getVal(eacChangeMap, code.id, code.code)) || 0;
-            estimateAtCompletion = baselineBudget + eacChanges;
-            estimateToComplete = estimateAtCompletion - actualCostToDate;
-          } else if (code.eacMethod === 'Sub-Contract Management') {
-            estimateAtCompletion = Number(getVal(subTotalsByCode, code.id, code.code)) || 0;
-            estimateToComplete = estimateAtCompletion - actualCostToDate;
-          } else {
-            estimateAtCompletion = Number(code.estimateAtCompletion) || 0;
-            estimateToComplete = estimateAtCompletion - actualCostToDate;
-          }
-
-          const approvedBudgetMovement = approvedBudget - (Number(code.approvedBudgetPrevious) || 0);
-          const estimateAtCompletionMovement = estimateAtCompletion - (Number(code.estimateAtCompletionPrevious) || 0);
-          const costVariance = approvedBudget - estimateAtCompletion;
-          const costVarianceMovement = costVariance - (Number(code.costVariancePrevious) || 0);
-
-          // Sanitize values to prevent Firestore rejection of NaN/Infinity
-          const sanitize = (val: number) => isFinite(val) ? val : 0;
-
-          batch.update(doc(db, 'costCodes', code.id), {
-            baselineBudget: sanitize(baselineBudget),
-            budgetChanges: sanitize(budgetChanges),
-            approvedBudget: sanitize(approvedBudget),
-            approvedBudgetMovement: sanitize(approvedBudgetMovement),
-            actualCostToDate: sanitize(actualCostToDate),
-            actualCostThisPeriod: sanitize(actualCostThisPeriod),
-            estimateToComplete: sanitize(estimateToComplete),
-            estimateAtCompletion: sanitize(estimateAtCompletion),
-            estimateAtCompletionMovement: sanitize(estimateAtCompletionMovement),
-            costVariance: sanitize(costVariance),
-            costVarianceMovement: sanitize(costVarianceMovement),
-            updatedAt: new Date().toISOString(),
-            projectId: code.projectId, // Re-affirming to satisfy rules
-            code: code.code // Re-affirming to satisfy rules
-          });
-        });
-
-        await batch.commit();
-      }
+      // 5. Bulk updates
+      const sanitize = (val: number) => isFinite(val) ? val : 0;
+      const calcUpdates2 = codesToUpdate.map(code => {
+        const baselineBudget = Number(getVal(baselineMap, code.id, code.code)) || 0;
+        const actualCostToDate = Number(getVal(actualsToDateMap, code.id, code.code)) || 0;
+        const actualCostThisPeriod = Number(getVal(actualsThisPeriodMap, code.id, code.code)) || 0;
+        const budgetChanges = Number(getVal(budgetChangeMap, code.id, code.code)) || 0;
+        const approvedBudget = baselineBudget + budgetChanges;
+        let estimateAtCompletion = 0, estimateToComplete = 0;
+        if (code.eacMethod === 'ETC Details') { estimateToComplete = Number(getVal(etcMap, code.id, code.code)) || 0; estimateAtCompletion = actualCostToDate + estimateToComplete; }
+        else if (code.eacMethod === 'Change Management') { const eacChanges = Number(getVal(eacChangeMap, code.id, code.code)) || 0; estimateAtCompletion = baselineBudget + eacChanges; estimateToComplete = estimateAtCompletion - actualCostToDate; }
+        else if (code.eacMethod === 'Sub-Contract Management') { estimateAtCompletion = Number(getVal(subTotalsByCode, code.id, code.code)) || 0; estimateToComplete = estimateAtCompletion - actualCostToDate; }
+        else { estimateAtCompletion = Number(code.estimateAtCompletion) || 0; estimateToComplete = estimateAtCompletion - actualCostToDate; }
+        const approvedBudgetMovement = approvedBudget - (Number(code.approvedBudgetPrevious) || 0);
+        const estimateAtCompletionMovement = estimateAtCompletion - (Number(code.estimateAtCompletionPrevious) || 0);
+        const costVariance = approvedBudget - estimateAtCompletion;
+        const costVarianceMovement = costVariance - (Number(code.costVariancePrevious) || 0);
+        return { id: code.id, data: { baselineBudget: sanitize(baselineBudget), budgetChanges: sanitize(budgetChanges), approvedBudget: sanitize(approvedBudget), approvedBudgetMovement: sanitize(approvedBudgetMovement), actualCostToDate: sanitize(actualCostToDate), actualCostThisPeriod: sanitize(actualCostThisPeriod), estimateToComplete: sanitize(estimateToComplete), estimateAtCompletion: sanitize(estimateAtCompletion), estimateAtCompletionMovement: sanitize(estimateAtCompletionMovement), costVariance: sanitize(costVariance), costVarianceMovement: sanitize(costVarianceMovement), projectId: code.projectId, code: code.code } };
+      });
+      await costRepo.updateManyCostCodes(calcUpdates2);
 
       toast.success('Calculations completed successfully.', { id: toastId });
     } catch (error: any) {
       console.error('Error calculating costs:', error);
-      handleFirestoreError(error, OperationType.UPDATE, 'costCodes/batch_calculate');
+      console.error(error);
       toast.error(`Failed to complete calculations: ${error.message || 'Unknown error'}`, { id: toastId });
     } finally {
       setIsSaving(false);
@@ -3398,65 +3026,28 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const handleUpdateField = async (id: string, field: string, value: any) => {
     try {
-      await updateDoc(doc(db, 'costCodes', id), {
-        [field]: value,
-        updatedAt: new Date().toISOString()
-      });
+      await costRepo.updateCostCode(id, { [field]: value } as any);
     } catch (error: any) {
       console.error('Error updating field:', error);
-      handleFirestoreError(error, OperationType.UPDATE, `costCodes/${id}/${field}`);
+      console.error(error);
       toast.error(`Failed to update field: ${error.message || 'Unknown error'}`);
     }
   };
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'costCodes'), 
-      where('projectId', '==', project.id),
-      orderBy('sortOrder', 'asc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allCodes = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
-      
-      // Filter codes based on assignedUsers
-      const currentUser = auth.currentUser;
-      const isAdmin = project.users[currentUser?.uid || ''] === 'Project Admin';
-      
-      const filteredCodes = isAdmin 
-        ? allCodes 
-        : allCodes.filter(code => 
-            !code.assignedUsers || 
-            code.assignedUsers.length === 0 || 
-            code.assignedUsers.includes(currentUser?.uid || '')
-          );
-
+    const currentUser = authRepo.getCurrentUser();
+    const isAdmin = project.users[currentUser?.id || ''] === 'Project Admin';
+    const unsubscribe = costRepo.subscribeCostCodes(project.id, (allCodes) => {
+      const filteredCodes = isAdmin ? allCodes : allCodes.filter(code => !code.assignedUsers || code.assignedUsers.length === 0 || code.assignedUsers.includes(currentUser?.id || ''));
       setCostCodes(filteredCodes);
       setLoading(false);
-    }, (error) => {
-      console.error("Cost codes fetch error:", error);
-      toast.error("Failed to fetch cost codes. Check permissions.");
-      setLoading(false);
     });
-
-    const qSch = query(collection(db, 'scheduleItems'), where('projectId', '==', project.id));
-    const unsubSch = onSnapshot(qSch, (snapshot) => {
-      setScheduleItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ScheduleItem)));
-    });
-
-    return () => {
-      unsubscribe();
-      unsubSch();
-    };
+    const unsubSch = scheduleRepo.subscribeScheduleItems(project.id, setScheduleItems);
+    return () => { unsubscribe(); unsubSch(); };
   }, [project.id, project.users]);
 
   useEffect(() => {
-    const q = query(collection(db, 'calendars'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setCalendars(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectCalendar)));
-    }, (error) => {
-      console.error("Error fetching calendars:", error);
-    });
-    return () => unsubscribe();
+    return scheduleRepo.subscribeProjectCalendars(project.id, setCalendars as any);
   }, [project.id]);
 
   const gridRef = useRef<AgGridReact>(null);
@@ -4015,11 +3606,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (isSaving) return; // Prevent triggering during bulk calculations or imports
 
     try {
-      const docRef = doc(db, 'costCodes', data.id);
-      const updates: any = {
-        [colDef.field]: newValue,
-        updatedAt: new Date().toISOString()
-      };
+      const updates: any = { [colDef.field]: newValue };
 
       // Reactive calculations for immediate feedback
       const baseline = Number(colDef.field === 'baselineBudget' ? newValue : data.baselineBudget) || 0;
@@ -4061,10 +3648,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       // Update grid data immediately for UI responsiveness
       event.node.setData({ ...data, ...updates });
 
-      await updateDoc(docRef, updates);
+      await costRepo.updateCostCode(data.id, updates);
     } catch (error: any) {
       console.error('Update error:', error);
-      handleFirestoreError(error, OperationType.UPDATE, `costCodes/${data.id}`);
+      console.error(error);
       toast.error(`Failed to update cell: ${error.message || 'Unknown error'}`);
       event.node.setDataValue(colDef.field, oldValue);
     }
@@ -4120,42 +3707,24 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     setIsSaving(true);
     try {
       if (isEditing?.id) {
-        // Update existing
-        await updateDoc(doc(db, 'costCodes', isEditing.id), formData);
+        await costRepo.updateCostCode(isEditing.id, formData as any);
         toast.success('Cost code updated.');
       } else {
-        // Create new
-        // Check for duplicates within the current project
         const isDuplicate = costCodes.some(c => c.code.toLowerCase() === formData.code?.toLowerCase());
         if (isDuplicate) {
           toast.error(`Cost Code ID "${formData.code}" already exists in this project.`);
           setIsSaving(false);
           return;
         }
-
-        const batch = writeBatch(db);
         let newSortOrder = 0;
-        
         if (typeof isEditing?.insertIndex === 'number') {
-          // Insert at index: shift others
           newSortOrder = isEditing.insertIndex;
           const toShift = costCodes.filter(c => c.sortOrder >= isEditing.insertIndex!);
-          toShift.forEach(c => {
-            batch.update(doc(db, 'costCodes', c.id), { sortOrder: c.sortOrder + 1 });
-          });
+          await costRepo.updateManyCostCodes(toShift.map(c => ({ id: c.id, data: { sortOrder: c.sortOrder + 1 } })));
         } else {
-          // Append at end
           newSortOrder = costCodes.length > 0 ? Math.max(...costCodes.map(c => c.sortOrder)) + 1 : 0;
         }
-
-        const newRef = doc(collection(db, 'costCodes'));
-        batch.set(newRef, {
-          ...formData,
-          projectId: project.id,
-          sortOrder: newSortOrder
-        });
-        
-        await batch.commit();
+        await costRepo.createCostCode({ ...formData, projectId: project.id, sortOrder: newSortOrder } as any);
         toast.success('Cost code created.');
       }
       setIsEditing(null);
@@ -4180,13 +3749,9 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     try {
       if (deleteConfirm.type === 'single' && deleteConfirm.id) {
-        await deleteDoc(doc(db, 'costCodes', deleteConfirm.id));
+        await costRepo.deleteCostCode(deleteConfirm.id);
       } else if (deleteConfirm.type === 'bulk') {
-        const batch = writeBatch(db);
-        selectedIds.forEach(id => {
-          batch.delete(doc(db, 'costCodes', id));
-        });
-        await batch.commit();
+        await Promise.all(Array.from(selectedIds).map(id => costRepo.deleteCostCode(id)));
       }
       setSelectedIds(new Set());
       setDeleteConfirm(null);
@@ -4201,27 +3766,14 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (selectedIds.size === 0) return;
     setIsSaving(true);
     try {
-      const batch = writeBatch(db);
-      selectedIds.forEach(id => {
+      const bulkCCUpdates = Array.from(selectedIds).map(id => {
         const updateObj: any = {};
         if (bulkUpdateData.eacMethod) updateObj.eacMethod = bulkUpdateData.eacMethod;
-        
-        // Merge attributes
         const currentCode = costCodes.find(c => c.id === id);
-        if (currentCode) {
-          updateObj.enterpriseAttributes = { 
-            ...(currentCode.enterpriseAttributes || {}), 
-            ...bulkUpdateData.enterpriseAttributes 
-          };
-          updateObj.projectAttributes = { 
-            ...(currentCode.projectAttributes || {}), 
-            ...bulkUpdateData.projectAttributes 
-          };
-        }
-        
-        batch.update(doc(db, 'costCodes', id), updateObj);
+        if (currentCode) { updateObj.enterpriseAttributes = { ...(currentCode.enterpriseAttributes || {}), ...bulkUpdateData.enterpriseAttributes }; updateObj.projectAttributes = { ...(currentCode.projectAttributes || {}), ...bulkUpdateData.projectAttributes }; }
+        return { id, data: updateObj };
       });
-      await batch.commit();
+      await costRepo.updateManyCostCodes(bulkCCUpdates);
       toast.success(`Updated ${selectedIds.size} cost codes.`);
       setIsBulkUpdating(false);
       setSelectedIds(new Set());
@@ -4236,44 +3788,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const handleOpenForecast = async (code: CostCode) => {
     try {
-      const q = query(
-        collection(db, 'sheets'), 
-        where('projectId', '==', project.id),
-        where('sheetName', '==', `Forecast: ${code.code}`)
-      );
-      const snapshot = await getDocs(q);
-      
-      let sheetId = '';
-      if (!snapshot.empty) {
-        sheetId = snapshot.docs[0].id;
-      } else {
-        const newSheet = {
-          projectId: project.id,
-          sheetName: `Forecast: ${code.code}`,
-          forecastMethod: 'time-based',
-          version: '1.0',
-          lockedStatus: false,
-          createdBy: auth.currentUser?.uid || 'system',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        const docRef = await addDoc(collection(db, 'sheets'), newSheet);
-        sheetId = docRef.id;
-        
-        await addDoc(collection(db, `sheets/${sheetId}/rows`), {
-          sheetId,
-          costCode: code.code,
-          description: code.name,
-          vendor: '',
-          budget: code.baselineBudget || 0,
-          committedCost: 0,
-          actualCostToDate: code.actualCostToDate || 0,
-          costToGo: 0,
-          eac: code.baselineBudget || 0,
-          timePhasing: {},
-          distributionMethod: 'even',
-          attributes: {}
-        });
+      const existingSheets = await projectRepo.findSheetsByName(project.id, `Forecast: ${code.code}`);
+      let sheetId = existingSheets.length > 0 ? existingSheets[0].id : '';
+      if (!sheetId) {
+        const { id } = await projectRepo.createSheet({ projectId: project.id, sheetName: `Forecast: ${code.code}`, forecastMethod: 'time-based', version: '1.0', lockedStatus: false, createdBy: authRepo.getCurrentUser()?.id || 'system' });
+        sheetId = id;
+        await projectRepo.createSheetRow(sheetId, { sheetId, costCode: code.code, description: code.name, vendor: '', budget: code.baselineBudget || 0, committedCost: 0, actualCostToDate: code.actualCostToDate || 0, costToGo: 0, eac: code.baselineBudget || 0, timePhasing: {}, distributionMethod: 'even', attributes: {} });
       }
       navigate(`/project/${project.id}/sheet/${sheetId}`);
     } catch (error) {
@@ -4316,12 +3836,12 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     
     const toastId = toast.loading('Importing cost codes...');
     try {
-      const batch = writeBatch(db);
       let currentMaxOrder = costCodes.length > 0 ? Math.max(...costCodes.map(c => c.sortOrder)) : -1;
       let importCount = 0;
       let updateCount = 0;
-      
       const { data } = importPreview;
+      const importUpdates: Array<{ id: string; data: any }> = [];
+      const importCreates: any[] = [];
 
       for (const row of data) {
         const code = row.code || row.Code || row['Cost Code ID'] || row['Code'];
@@ -4331,55 +3851,25 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         if (code) {
           const entAttrs: Record<string, string> = {};
           const prjAttrs: Record<string, string> = {};
-
-          enterpriseAttrs.forEach(attr => {
-            const val = row[attr.title];
-            if (val) {
-              const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
-              if (match) entAttrs[attr.id] = match.id;
-            }
-          });
-
-          projectAttrs.forEach(attr => {
-            const val = row[attr.title];
-            if (val) {
-              const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase());
-              if (match) prjAttrs[attr.id] = match.id;
-            }
-          });
+          enterpriseAttrs.forEach(attr => { const val = row[attr.title]; if (val) { const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase()); if (match) entAttrs[attr.id] = match.id; } });
+          projectAttrs.forEach(attr => { const val = row[attr.title]; if (val) { const match = attr.values.find(v => v.description.toLowerCase() === String(val).toLowerCase()); if (match) prjAttrs[attr.id] = match.id; } });
 
           const existing = costCodes.find(c => c.code.toLowerCase() === String(code).toLowerCase());
-          const costCodeData: any = {
-            code: String(code),
-            name: String(name),
-            eacMethod: String(eacMethod),
-            projectId: project.id,
-            enterpriseAttributes: entAttrs,
-            projectAttributes: prjAttrs,
-            updatedAt: new Date().toISOString()
-          };
-          
+          const costCodeData: any = { code: String(code), name: String(name), eacMethod: String(eacMethod), projectId: project.id, enterpriseAttributes: entAttrs, projectAttributes: prjAttrs };
+
           if (existing) {
-            batch.update(doc(db, 'costCodes', existing.id), costCodeData);
+            importUpdates.push({ id: existing.id, data: costCodeData });
             updateCount++;
           } else {
             currentMaxOrder++;
-            const newRef = doc(collection(db, 'costCodes'));
-            batch.set(newRef, { 
-              ...costCodeData, 
-              sortOrder: currentMaxOrder,
-              createdAt: new Date().toISOString(),
-              actualCostToDate: 0,
-              baselineBudget: 0,
-              approvedChanges: 0,
-              subcontractAmount: 0
-            });
+            importCreates.push({ ...costCodeData, sortOrder: currentMaxOrder, actualCostToDate: 0, baselineBudget: 0, approvedChanges: 0, subcontractAmount: 0 });
             importCount++;
           }
         }
       }
 
-      await batch.commit();
+      await costRepo.updateManyCostCodes(importUpdates);
+      await Promise.all(importCreates.map(cc => costRepo.createCostCode(cc)));
       toast.success(`Import complete: ${importCount} new, ${updateCount} updated.`, { id: toastId });
       setImportPreview(null);
     } catch (error) {

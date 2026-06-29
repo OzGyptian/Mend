@@ -271,6 +271,11 @@ export class CostAdapter implements CostRepository {
     });
   }
 
+  async listBaselineBudgets(projectId: string): Promise<BaselineBudgetRecord[]> {
+    const snap = await getDocs(query(collection(db, 'baselineBudgets'), where('projectId', '==', projectId)));
+    return snap.docs.map((d) => fromDoc<BaselineBudgetRecord>(d.id, d.data()));
+  }
+
   async createBaselineBudget(
     data: Omit<BaselineBudgetRecord, 'id' | 'createdAt'>,
   ): Promise<BaselineBudgetRecord> {

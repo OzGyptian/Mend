@@ -76,6 +76,20 @@ export class ProjectAdapter implements ProjectRepository {
     await batch.commit();
   }
 
+  async findSheetsByName(projectId: string, sheetName: string): Promise<Array<{ id: string }>> {
+    const snap = await getDocs(query(collection(db, 'sheets'), where('projectId', '==', projectId), where('sheetName', '==', sheetName)));
+    return snap.docs.map(d => ({ id: d.id }));
+  }
+
+  async createSheet(data: Record<string, unknown>): Promise<{ id: string }> {
+    const ref = await addDoc(collection(db, 'sheets'), { ...data, createdAt: new Date().toISOString() });
+    return { id: ref.id };
+  }
+
+  async createSheetRow(sheetId: string, data: Record<string, unknown>): Promise<void> {
+    await addDoc(collection(db, `sheets/${sheetId}/rows`), { ...data, createdAt: new Date().toISOString() });
+  }
+
   async checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean> {
     const snap = await getDocs(query(collection(db, 'projects'), where('enterpriseId', '==', enterpriseId), where('projectCode', '==', projectCode)));
     return !snap.empty;

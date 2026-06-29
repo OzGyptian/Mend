@@ -11,4 +11,7 @@ export interface ProjectRepository {
   delete(projectId: string): Promise<void>;
   checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean>;
   deleteProjectWithSheets(projectId: string): Promise<void>;
+  createSheet(data: Record<string, unknown>): Promise<{ id: string }>;
+  createSheetRow(sheetId: string, data: Record<string, unknown>): Promise<void>;
+  findSheetsByName(projectId: string, sheetName: string): Promise<Array<{ id: string }>>;
 }

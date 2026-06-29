@@ -3,6 +3,7 @@ import type { Unsubscribe } from './index';
 
 export interface ChangeRepository {
   subscribeChanges(projectId: string, callback: (changes: Change[]) => void): Unsubscribe;
+  listChanges(projectId: string): Promise<Change[]>;
   getChange(id: string): Promise<Change | null>;
   createChange(data: Omit<Change, 'id' | 'createdAt' | 'updatedAt'>): Promise<Change>;
   updateChange(id: string, data: Partial<Change>): Promise<void>;

@@ -54,6 +54,7 @@ export interface CostRepository {
 
   // Baseline Budgets
   subscribeBaselineBudgets(projectId: string, callback: (records: BaselineBudgetRecord[]) => void): Unsubscribe;
+  listBaselineBudgets(projectId: string): Promise<BaselineBudgetRecord[]>;
   createBaselineBudget(data: Omit<BaselineBudgetRecord, 'id' | 'createdAt'>): Promise<BaselineBudgetRecord>;
   updateBaselineBudget(id: string, data: Partial<BaselineBudgetRecord>): Promise<void>;
   deleteBaselineBudget(id: string): Promise<void>;
