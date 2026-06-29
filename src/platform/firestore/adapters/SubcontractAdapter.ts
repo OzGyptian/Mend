@@ -109,4 +109,21 @@ export class SubcontractAdapter implements SubcontractRepository {
     }
     await batch.commit();
   }
+
+  async deleteManyInvoices(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const id of ids) {
+      batch.delete(doc(db, 'invoices', id));
+    }
+    await batch.commit();
+  }
+
+  async createManyInvoices(invoices: Array<Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    for (const inv of invoices) {
+      batch.set(doc(collection(db, 'invoices')), { ...inv, createdAt: now, updatedAt: now });
+    }
+    await batch.commit();
+  }
 }

@@ -20,4 +20,6 @@ export interface SubcontractRepository {
   updateInvoice(id: string, data: Partial<Invoice>): Promise<void>;
   deleteInvoice(id: string): Promise<void>;
   updateManyInvoices(updates: Array<{ id: string; data: Partial<Invoice> }>): Promise<void>;
+  deleteManyInvoices(ids: string[]): Promise<void>;
+  createManyInvoices(invoices: Array<Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void>;
 }
