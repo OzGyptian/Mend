@@ -76,36 +76,53 @@ export class CostAdapter implements CostRepository {
   // ── Forecast Rows ─────────────────────────────────────────────────────────
 
   subscribeForecastRows(sheetId: string, callback: (rows: ForecastRow[]) => void): Unsubscribe {
-    const q = query(collection(db, 'sheets', sheetId, 'forecastRows'));
+    const q = query(collection(db, 'sheets', sheetId, 'rows'));
     return onSnapshot(q, (snap) => {
       callback(snap.docs.map((d) => fromDoc<ForecastRow>(d.id, d.data())));
     });
   }
 
   async listForecastRows(sheetId: string): Promise<ForecastRow[]> {
-    const snap = await getDocs(collection(db, 'sheets', sheetId, 'forecastRows'));
+    const snap = await getDocs(collection(db, 'sheets', sheetId, 'rows'));
     return snap.docs.map((d) => fromDoc<ForecastRow>(d.id, d.data()));
   }
 
   async createForecastRow(data: Omit<ForecastRow, 'id'>): Promise<ForecastRow> {
-    const ref = await addDoc(collection(db, 'sheets', data.sheetId, 'forecastRows'), data);
+    const ref = await addDoc(collection(db, 'sheets', data.sheetId, 'rows'), data);
     return { id: ref.id, ...data };
   }
 
-  async updateForecastRow(id: string, data: Partial<ForecastRow> & { sheetId: string }): Promise<void> {
-    await updateDoc(doc(db, 'sheets', data.sheetId, 'forecastRows', id), data);
+  async createManyForecastRows(rows: Array<Omit<ForecastRow, 'id'>>): Promise<void> {
+    const batch = writeBatch(db);
+    for (const row of rows) {
+      batch.set(doc(collection(db, 'sheets', row.sheetId, 'rows')), row);
+    }
+    await batch.commit();
   }
 
-  async deleteForecastRow(id: string): Promise<void> {
-    await deleteDoc(doc(db, 'forecastRows', id));
+  async updateForecastRow(sheetId: string, rowId: string, data: Partial<ForecastRow>): Promise<void> {
+    await updateDoc(doc(db, 'sheets', sheetId, 'rows', rowId), data);
+  }
+
+  async deleteForecastRow(sheetId: string, rowId: string): Promise<void> {
+    await deleteDoc(doc(db, 'sheets', sheetId, 'rows', rowId));
   }
 
   async updateManyForecastRows(
-    updates: Array<{ id: string; data: Partial<ForecastRow> & { sheetId: string } }>,
+    sheetId: string,
+    updates: Array<{ id: string; data: Partial<ForecastRow> }>,
   ): Promise<void> {
     const batch = writeBatch(db);
     for (const { id, data } of updates) {
-      batch.update(doc(db, 'sheets', data.sheetId, 'forecastRows', id), data);
+      batch.set(doc(db, 'sheets', sheetId, 'rows', id), data, { merge: true });
+    }
+    await batch.commit();
+  }
+
+  async deleteManyForecastRows(sheetId: string, rowIds: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const rowId of rowIds) {
+      batch.delete(doc(db, 'sheets', sheetId, 'rows', rowId));
     }
     await batch.commit();
   }

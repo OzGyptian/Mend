@@ -1,11 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase';
-import { collection, query, onSnapshot, doc, updateDoc, setDoc, addDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import { Sheet, Project, ForecastRow, Enterprise } from '../types';
 import { RefreshCw, Settings, Save, Plus, Filter, Download, Trash2, FileSpreadsheet, Upload } from 'lucide-react';
 import SheetSettings from './SheetSettings';
 import AgGridSheet, { AgGridSheetRef } from './AgGridSheet';
-import { logAuditAction } from '../lib/audit';
+import { useCostRepo, useUtilityRepo, useAuthRepo } from '../platform/firestore/hooks';
 import * as XLSX from 'xlsx';
 
 interface ForecastGridProps {
@@ -16,6 +14,9 @@ interface ForecastGridProps {
 }
 
 export default function ForecastGrid({ sheet, project, enterprise, theme }: ForecastGridProps) {
+  const costRepo = useCostRepo();
+  const utilityRepo = useUtilityRepo();
+  const authRepo = useAuthRepo();
   const [rows, setRows] = useState<ForecastRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -24,20 +25,25 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
   const gridRef = useRef<AgGridSheetRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const audit = async (action: string, details?: Record<string, unknown>) => {
+    const user = authRepo.getCurrentUser();
+    if (!user) return;
+    await utilityRepo.recordAuditEvent({
+      enterpriseId: enterprise.id,
+      projectId: project.id,
+      userId: user.id,
+      userEmail: user.email ?? '',
+      action,
+      occurredAt: new Date().toISOString(),
+      details,
+    });
+  };
+
   useEffect(() => {
     if (!sheet?.id) return;
-    
-    console.log('Subscribing to rows for sheet:', sheet.id);
-    const q = query(collection(db, `sheets/${sheet.id}/rows`));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log(`Received ${snapshot.size} rows for sheet: ${sheet.id}`);
-      const r = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ForecastRow));
+    const unsubscribe = costRepo.subscribeForecastRows(sheet.id, (r) => {
       setRows(r);
       setLoading(false);
-    }, (error) => {
-      console.error("Rows fetch error:", error);
-      setLoading(false);
-      alert(`Error fetching rows: ${error.message}`);
     });
     return () => unsubscribe();
   }, [sheet.id]);
@@ -47,8 +53,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       alert('Cannot add row: Sheet ID is missing.');
       return;
     }
-
-    const newRow: Partial<ForecastRow> = {
+    const newRow: Omit<ForecastRow, 'id'> = {
       sheetId: sheet.id,
       costCode: 'NEW-ITEM',
       description: 'New Item Description',
@@ -61,20 +66,11 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       costToGo: 0,
       eac: 0,
       timePhasing: {},
-      distributionMethod: 'even'
+      distributionMethod: 'even',
     };
-    
     try {
-      console.log('Adding row to sheet:', sheet.id, newRow);
-      const rowsCollection = collection(db, `sheets/${sheet.id}/rows`);
-      const docRef = await addDoc(rowsCollection, newRow);
-      console.log('Row added successfully');
-      
-      await logAuditAction(enterprise.id, project.id, 'ADD_ROW', { 
-        sheetId: sheet.id, 
-        rowId: docRef.id,
-        costCode: newRow.costCode 
-      });
+      const created = await costRepo.createForecastRow(newRow);
+      await audit('ADD_ROW', { sheetId: sheet.id, rowId: created.id, costCode: newRow.costCode });
     } catch (error: any) {
       console.error('Failed to add row', error);
       alert(`Failed to add row: ${error.message}`);
@@ -83,23 +79,11 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
 
   const handleSaveChanges = async () => {
     if (!pendingChanges) return;
-    
     setSaving(true);
     try {
-      const batch = writeBatch(db);
-      for (const row of pendingChanges) {
-        const rowRef = doc(db, `sheets/${sheet.id}/rows`, row.id);
-        const { id, ...dataToUpdate } = row;
-        batch.set(rowRef, dataToUpdate, { merge: true });
-      }
-      await batch.commit();
-      
-      await logAuditAction(enterprise.id, project.id, 'UPDATE_ROWS', { 
-        sheetId: sheet.id, 
-        rowCount: pendingChanges.length,
-        rowIds: pendingChanges.map(r => r.id)
-      });
-
+      const updates = pendingChanges.map(({ id, ...data }) => ({ id, data }));
+      await costRepo.updateManyForecastRows(sheet.id, updates);
+      await audit('UPDATE_ROWS', { sheetId: sheet.id, rowCount: pendingChanges.length, rowIds: pendingChanges.map(r => r.id) });
       setPendingChanges(null);
       gridRef.current?.saveViewState();
     } catch (error) {
@@ -124,26 +108,10 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       alert('No rows selected for deletion.');
       return;
     }
-
-    if (!confirm(`Are you sure you want to delete ${selectedRows.length} selected row(s)?`)) {
-      return;
-    }
-
+    if (!confirm(`Are you sure you want to delete ${selectedRows.length} selected row(s)?`)) return;
     try {
-      const batch = writeBatch(db);
-      for (const row of selectedRows) {
-        const rowRef = doc(db, `sheets/${sheet.id}/rows`, row.id);
-        batch.delete(rowRef);
-      }
-      await batch.commit();
-      
-      await logAuditAction(enterprise.id, project.id, 'DELETE_ROWS', { 
-        sheetId: sheet.id, 
-        rowCount: selectedRows.length,
-        rowIds: selectedRows.map(r => r.id)
-      });
-
-      console.log('Rows deleted successfully');
+      await costRepo.deleteManyForecastRows(sheet.id, selectedRows.map(r => r.id));
+      await audit('DELETE_ROWS', { sheetId: sheet.id, rowCount: selectedRows.length, rowIds: selectedRows.map(r => r.id) });
     } catch (error: any) {
       console.error('Failed to delete rows', error);
       alert(`Failed to delete rows: ${error.message}`);
@@ -177,34 +145,23 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
         }
 
         setSaving(true);
-        const batch = writeBatch(db);
-        const rowsCollection = collection(db, `sheets/${sheet.id}/rows`);
-
-        data.forEach((item) => {
-          const newRowRef = doc(rowsCollection);
-          const newRow: Partial<ForecastRow> = {
-            sheetId: sheet.id,
-            costCode: String(item.Item || item.costCode || 'NEW'),
-            description: String(item.Description || item.description || ''),
-            vendor: String(item.Vendor || item.vendor || ''),
-            qty: Number(item.Qty || item.qty || 0),
-            rate: Number(item.Rate || item.rate || 0),
-            budget: Number(item.Budget || item.budget || 0),
-            committedCost: Number(item.Committed || item.committedCost || 0),
-            actualCostToDate: Number(item.Actuals || item.actualCostToDate || 0),
-            costToGo: Number(item.CostToGo || item.costToGo || 0),
-            eac: Number(item.EAC || item.eac || 0),
-            timePhasing: {},
-            distributionMethod: 'even'
-          };
-          batch.set(newRowRef, newRow);
-        });
-
-        await batch.commit();
-        await logAuditAction(enterprise.id, project.id, 'IMPORT_ROWS', { 
-          sheetId: sheet.id, 
-          rowCount: data.length 
-        });
+        const newRows: Array<Omit<ForecastRow, 'id'>> = data.map((item) => ({
+          sheetId: sheet.id,
+          costCode: String(item.Item || item.costCode || 'NEW'),
+          description: String(item.Description || item.description || ''),
+          vendor: String(item.Vendor || item.vendor || ''),
+          qty: Number(item.Qty || item.qty || 0),
+          rate: Number(item.Rate || item.rate || 0),
+          budget: Number(item.Budget || item.budget || 0),
+          committedCost: Number(item.Committed || item.committedCost || 0),
+          actualCostToDate: Number(item.Actuals || item.actualCostToDate || 0),
+          costToGo: Number(item.CostToGo || item.costToGo || 0),
+          eac: Number(item.EAC || item.eac || 0),
+          timePhasing: {},
+          distributionMethod: 'even',
+        }));
+        await costRepo.createManyForecastRows(newRows);
+        await audit('IMPORT_ROWS', { sheetId: sheet.id, rowCount: data.length });
 
         alert(`Successfully imported ${data.length} rows.`);
       } catch (error: any) {

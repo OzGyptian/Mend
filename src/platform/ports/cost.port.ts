@@ -20,13 +20,15 @@ export interface CostRepository {
   updateSheet(id: string, data: Partial<Sheet>): Promise<void>;
   deleteSheet(id: string): Promise<void>;
 
-  // Forecast Rows
+  // Forecast Rows (subcollection of Sheet — all mutations require sheetId for the path)
   subscribeForecastRows(sheetId: string, callback: (rows: ForecastRow[]) => void): Unsubscribe;
   listForecastRows(sheetId: string): Promise<ForecastRow[]>;
   createForecastRow(data: Omit<ForecastRow, 'id'>): Promise<ForecastRow>;
-  updateForecastRow(id: string, data: Partial<ForecastRow>): Promise<void>;
-  deleteForecastRow(id: string): Promise<void>;
-  updateManyForecastRows(updates: Array<{ id: string; data: Partial<ForecastRow> }>): Promise<void>;
+  createManyForecastRows(rows: Array<Omit<ForecastRow, 'id'>>): Promise<void>;
+  updateForecastRow(sheetId: string, rowId: string, data: Partial<ForecastRow>): Promise<void>;
+  deleteForecastRow(sheetId: string, rowId: string): Promise<void>;
+  updateManyForecastRows(sheetId: string, updates: Array<{ id: string; data: Partial<ForecastRow> }>): Promise<void>;
+  deleteManyForecastRows(sheetId: string, rowIds: string[]): Promise<void>;
 
   // ETC Details
   subscribeEtcDetails(projectId: string, callback: (details: EtcDetail[]) => void): Unsubscribe;
