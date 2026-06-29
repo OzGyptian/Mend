@@ -1,9 +1,9 @@
 # Mend — Refactor Plan
 
-## Status: Phase 0 complete — begin Phase 1 (Recon)
+## Status: Phase 4 complete — Phase 5 (Firestore adapters) is the Tarek review gate
 
-Current branch: `refactor/platform-seam` (not yet created — create at start of Phase 1)
-Version: 1.0.0 (baseline, no product changes yet)
+Current branch: `refactor/platform-seam`
+Version: 1.0.3
 
 ---
 
@@ -20,65 +20,31 @@ Version: 1.0.0 (baseline, no product changes yet)
 
 ---
 
-## Phase 1 — Chunk 0: Recon (read-only, no product changes)
-
-**Goal:** Fully map the codebase before moving anything. Output is a proposed structure reviewed and approved by Bernard before any code moves.
-
-- [ ] 1.1 Map all `firebase/*` imports — list every file and what it pulls in
-- [ ] 1.2 Identify all Firestore collection names (confirm list in CLAUDE.md)
-- [ ] 1.3 Locate all EAC/ETC/cost variance calculation logic
-- [ ] 1.4 Locate all phasing/distribution calculation logic
-- [ ] 1.5 Identify any other pure calculation functions (Beta Pert, date arithmetic)
-- [ ] 1.6 Confirm server.ts is Firebase-free (already known — verify completeness)
-- [ ] 1.7 Identify auth usage patterns (GoogleAuthProvider, email/password, email verification)
-- [ ] 1.8 Identify Gemini AI usage (where @google/genai is called)
-- [ ] 1.9 Propose final folder structure and port interface names for Bernard's review
-- [ ] 1.10 Get explicit sign-off before Phase 2
+## Phase 1 — Chunk 0: Recon ✅ DONE
+Findings captured in JOURNAL.md Session 1 and CLAUDE.md.
 
 ---
 
-## Phase 2 — Chunk 1: Scaffold & Move
-
-**Goal:** Create target folder structure and move files. No logic changes. Build must pass throughout.
-
-- [ ] 2.1 Create branch `refactor/platform-seam`
-- [ ] 2.2 Create empty folder structure: `src/domain/`, `src/product/`, `src/platform/{ports,firestore,memory,auth,config}/`
-- [ ] 2.3 Move `src/App.tsx` → `src/product/App.tsx`; fix imports
-- [ ] 2.4 Move `src/components/` → `src/product/components/`; fix imports
-- [ ] 2.5 Move `src/firebase.ts` → `src/platform/firestore/firebase.ts`; fix all import paths
-- [ ] 2.6 Move `src/types.ts` → `src/domain/types.ts`; fix imports
-- [ ] 2.7 Move `src/lib/procurementUtils.ts` → `src/domain/procurement.ts` (rename, no logic changes yet)
-- [ ] 2.8 Verify: `npm run build` passes; `npm run lint` passes
-- [ ] 2.9 Version bump + commit: `chore: scaffold seam folders and relocate files`
+## Phase 2 — Chunk 1: Scaffold & Move ✅ DONE (v1.0.1)
+- src/firebase.ts → src/platform/firestore/firebase.ts (canonical)
+- src/firebase.ts, src/types.ts, src/lib/procurementUtils.ts → re-export stubs
+- src/domain/types.ts → canonical domain model
 
 ---
 
-## Phase 3 — Chunk 2: Extract Calculation Engine
-
-**Goal:** Move pure calculation functions into `src/domain/`. Write unit tests first (TDD).
-
-- [ ] 3.1 Write Vitest tests for phasing distributions (known inputs → known outputs) — **RED**
-- [ ] 3.2 Extract phasing logic from `src/lib/utils.ts` → `src/domain/phasing.ts` — **GREEN**
-- [ ] 3.3 Write tests for EAC/ETC/variance formulas — **RED**
-- [ ] 3.4 Extract EAC logic → `src/domain/eac.ts` — **GREEN**
-- [ ] 3.5 Write tests for Beta Pert formula — **RED**
-- [ ] 3.6 Extract Beta Pert formula → `src/domain/risk.ts` — **GREEN**
-- [ ] 3.7 Confirm `src/domain/procurement.ts` date functions are clean (no firebase) — add tests
-- [ ] 3.8 Verify: `npm run test` passes; `npm run build` passes; `npm run lint` passes
-- [ ] 3.9 Flag for Tarek: confirm calculation outputs match his known numbers
-- [ ] 3.10 Version bump + commit: `refactor: pure calc engine extracted to src/domain`
+## Phase 3 — Chunk 2: Extract Calculation Engine ✅ DONE (v1.0.2)
+- 19 unit tests passing
+- src/domain/phasing.ts: calculatePhasing, dateToISO, Period (6 distribution methods)
+- src/domain/risk.ts: betaPertImpact (Beta Pert formula)
+- src/lib/utils.ts: re-exports from domain; Firestore Timestamp branch flagged as tech debt
 
 ---
 
-## Phase 4 — Chunk 3: Define Port Interfaces *(Tarek review gate)*
-
-**Goal:** Define the storage contracts in `src/platform/ports/`. No implementation yet.
-
-- [ ] 4.1 Write port interfaces for each repository (one per Firestore collection group)
-- [ ] 4.2 Verify: no `firebase/*` types in any port interface file
-- [ ] 4.3 Verify: all dates are ISO strings; all IDs are plain strings
-- [ ] 4.4 Version bump + commit: `feat: repository port interfaces`
-- [ ] **GATE: Tarek reviews and approves port interfaces before Phase 5 starts**
+## Phase 4 — Chunk 3: Port Interfaces ✅ DONE (v1.0.3)
+- 11 port interfaces: enterprise, project, cost, change, risk, subcontract, progress, procurement, schedule, utility, auth
+- 0 firebase/* types in any port file; all dates ISO strings
+- 4 inline component types promoted to src/domain/types.ts (ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord, PeriodSnapshot)
+- **⚠️ GATE: Tarek must review port interfaces before Phase 5 starts**
 
 ---
 

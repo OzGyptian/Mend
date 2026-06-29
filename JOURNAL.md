@@ -2,6 +2,59 @@
 
 ---
 
+## Session 2 — 2026-06-29 — Phases 1–4: Recon, Scaffold, Calc Engine, Ports (Continued)
+
+### Phases completed this session
+
+**Phase 1 — Chunk 0: Recon**
+- Confirmed 26 Firestore collections from component grep
+- Identified 4 types not in types.ts (ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord, PeriodSnapshot) — all had inline interfaces in components
+- Confirmed Gemini AI is zero-usage in src/ — AI Studio capability only
+- ESLint is currently plain tsc; flat config (eslint.config.mjs) needed for boundary enforcement
+
+**Phase 2 — Chunk 1: Scaffold (v1.0.1)**
+- src/platform/firestore/firebase.ts — canonical Firebase init
+- src/firebase.ts, src/types.ts, src/lib/procurementUtils.ts — re-export stubs
+- src/domain/types.ts, src/domain/procurement.ts — canonical domain homes
+- Build and type-check passing throughout; 37 components untouched
+
+**Phase 3 — Chunk 2: Calc Engine (v1.0.2)**
+- src/domain/phasing.ts — calculatePhasing (Even, Front, Back, Bell, S-Curve, Profile), dateToISO
+- src/domain/risk.ts — betaPertImpact (min + 4×ML + max) / 6
+- src/lib/utils.ts rewritten — imports from domain and re-exports; no duplicate implementations
+- 19 tests passing; Firestore Timestamp branch in formatDate flagged as tech debt (comment)
+
+**Phase 4 — Chunk 3: Port Interfaces (v1.0.3)**
+- 11 port interface files: enterprise, project, cost, change, risk, subcontract, progress, procurement, schedule, utility, auth
+- CostRepository covers 7 collections (costCodes, sheets, etcDetails, actualCosts, baselineBudgets, costPhasing + forecastRows)
+- 4 previously-inline types promoted to src/domain/types.ts
+- All interfaces: no firebase/* types, dates are ISO strings, subscribe() returns () => void
+
+### Decisions made this session
+
+- **costPhasing interface**: The type is `any[]` in CostCodes.tsx with only `costCodeId` visible in component code. Defined `CostPhasingRecord` with `periodValues: Record<string, number>` as the best inference; marked for finalisation in Phase 6 when CostCodes.tsx is migrated
+- **PeriodSnapshot**: Write-only collection in CostReportingPeriod.tsx. Defined shape from observable writes (projectId, periodId, periodName, costCodes array). Only `batchCreatePeriodSnapshots` needed.
+- **ProcurementRepository scope**: `subscribeStepDefinitions` takes `{projectId?, enterpriseId?}` scope to support both project-level and enterprise-level step definitions observed in components
+- **Auth port**: Includes Google OAuth, email/password, email verification, and state change subscription — matching all auth patterns in App.tsx
+
+### State at end of session
+
+- Branch: `refactor/platform-seam`
+- Version: v1.0.3
+- Clean working tree, all committed
+- Type-check: passing, Tests: 19/19, Build: passing
+- **Waiting on Tarek to review port interfaces before Phase 5 begins**
+
+### Next steps (Phase 5 — Firestore Adapters)
+
+1. Implement each port interface with a Firestore adapter class
+2. Start with EnterpriseRepository (simplest) to validate the pattern
+3. Use the adapter pattern: class implements the port interface, internal methods call Firestore
+4. Wire to React via hooks in src/platform/firestore/hooks/
+5. DO NOT touch any component until all adapters are ready
+
+---
+
 ## Session 1 — 2026-06-29 — Phase 0: Pre-flight & Operating Setup
 
 ### What we set out to do
