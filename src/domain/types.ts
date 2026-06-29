@@ -309,7 +309,7 @@ export interface Project {
   };
   progressPeriods?: {
     baseDate: string;
-    duration: 'week';
+    duration: 'week' | 'month';
     numberOfPeriods: number;
     periods: { id: string; startDate: string; endDate: string; name: string; status: 'open' | 'closed' }[];
     currentPeriodId?: string;
