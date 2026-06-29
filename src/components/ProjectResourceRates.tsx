@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { useProjectRepo } from '../platform/firestore/hooks';
 import { Project, ResourceRate } from '../types';
 import { Plus, Trash2, Edit2, Download, Upload, DollarSign } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -17,6 +16,7 @@ interface ProjectResourceRatesProps {
 }
 
 export default function ProjectResourceRates({ project }: ProjectResourceRatesProps) {
+  const projectRepo = useProjectRepo();
   const [selectedRateIds, setSelectedRateIds] = useState<Set<string>>(new Set());
   const [isEditingResource, setIsEditingResource] = useState<{ id: string | null } | null>(null);
   const [resourceFormData, setResourceFormData] = useState<ResourceRate>({ 
@@ -99,7 +99,7 @@ export default function ProjectResourceRates({ project }: ProjectResourceRatesPr
         newRates = [...currentRates, resourceFormData];
       }
 
-      await updateDoc(doc(db, 'projects', project.id), { resourceRates: newRates });
+      await projectRepo.update(project.id, { resourceRates: newRates });
       setIsEditingResource(null);
       toast.success(isEditingResource?.id ? 'Resource updated' : 'Resource added');
     } catch (error) {
@@ -115,7 +115,7 @@ export default function ProjectResourceRates({ project }: ProjectResourceRatesPr
     
     try {
       const newRates = (project.resourceRates || []).filter(r => !selectedRateIds.has(r.id));
-      await updateDoc(doc(db, 'projects', project.id), { resourceRates: newRates });
+      await projectRepo.update(project.id, { resourceRates: newRates });
       setSelectedRateIds(new Set());
       toast.success('Resources deleted');
     } catch (error) {
@@ -148,7 +148,7 @@ export default function ProjectResourceRates({ project }: ProjectResourceRatesPr
           udf3: String(row.UDF3 || row.udf3 || '')
         })).filter(r => r.id && r.name);
 
-        await updateDoc(doc(db, 'projects', project.id), { resourceRates: [...(project.resourceRates || []), ...newRates] });
+        await projectRepo.update(project.id, { resourceRates: [...(project.resourceRates || []), ...newRates] });
         toast.success(`Imported ${newRates.length} resources`);
       } catch (error) {
         console.error('Import failed', error);

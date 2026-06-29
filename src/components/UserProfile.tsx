@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, auth } from '../firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { useEnterpriseRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
 import { 
   User, 
@@ -24,6 +23,8 @@ interface UserProfileProps {
 }
 
 export default function UserProfile({ userId, enterprise }: UserProfileProps) {
+  const enterpriseRepo = useEnterpriseRepo();
+  const authRepo = useAuthRepo();
   const [userData, setUserData] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -31,11 +32,12 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
   useEffect(() => {
     if (!enterprise || !userId) return;
     const user = enterprise.users?.[userId] as any;
+    const currentUser = authRepo.getCurrentUser();
     if (user) {
       setUserData({
         ...user,
-        displayName: user.displayName || auth.currentUser?.displayName || '',
-        email: user.email || auth.currentUser?.email || '',
+        displayName: user.displayName || currentUser?.displayName || '',
+        email: user.email || currentUser?.email || '',
         preferences: user.preferences || {
           notifications: true,
           darkMode: true,
@@ -66,9 +68,9 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
       
       // Auto-save photo
       try {
-        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        await enterpriseRepo.update(enterprise.id, {
           [`users.${userId}.photoURL`]: base64String
-        });
+        } as any);
       } catch (error) {
         console.error('Failed to save photo', error);
       }
@@ -79,10 +81,10 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
   const handleSavePreferences = async () => {
     setIsSaving(true);
     try {
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         [`users.${userId}.displayName`]: userData.displayName,
         [`users.${userId}.preferences`]: userData.preferences
-      });
+      } as any);
     } catch (error) {
       console.error('Failed to save preferences', error);
     } finally {
