@@ -98,4 +98,24 @@ export class ProcurementAdapter implements ProcurementRepository {
   async deleteStepDefinition(id: string): Promise<void> {
     await deleteDoc(doc(db, 'procurementStepDefinitions', id));
   }
+
+  async deleteManyProcurementItems(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    ids.forEach(id => batch.delete(doc(db, 'procurementItems', id)));
+    await batch.commit();
+  }
+
+  async createManyProcurementItems(data: Array<Omit<ProcurementItem, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const chunks: typeof data[] = [];
+    for (let i = 0; i < data.length; i += 400) chunks.push(data.slice(i, i + 400));
+    for (const chunk of chunks) {
+      const batch = writeBatch(db);
+      chunk.forEach(item => {
+        const ref = doc(collection(db, 'procurementItems'));
+        batch.set(ref, { ...item, createdAt: now, updatedAt: now });
+      });
+      await batch.commit();
+    }
+  }
 }

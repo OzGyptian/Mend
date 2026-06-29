@@ -7,7 +7,9 @@ export interface ProcurementRepository {
   createProcurementItem(data: Omit<ProcurementItem, 'id' | 'createdAt' | 'updatedAt'>): Promise<ProcurementItem>;
   updateProcurementItem(id: string, data: Partial<ProcurementItem>): Promise<void>;
   deleteProcurementItem(id: string): Promise<void>;
+  deleteManyProcurementItems(ids: string[]): Promise<void>;
   updateManyProcurementItems(updates: Array<{ id: string; data: Partial<ProcurementItem> }>): Promise<void>;
+  createManyProcurementItems(data: Array<Omit<ProcurementItem, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void>;
 
   subscribeProjectStepDefinitions(projectId: string, callback: (steps: ProcurementStepDefinition[]) => void): Unsubscribe;
   subscribeEnterpriseStepDefinitions(enterpriseId: string, callback: (steps: ProcurementStepDefinition[]) => void): Unsubscribe;
