@@ -31,6 +31,20 @@ export class ScheduleAdapter implements ScheduleRepository {
     await updateDoc(doc(db, 'scheduleItems', id), { ...data, updatedAt: new Date().toISOString() });
   }
 
+  async createManyScheduleItems(data: Array<Omit<ScheduleItem, 'id' | 'updatedAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const chunks = [];
+    for (let i = 0; i < data.length; i += 400) chunks.push(data.slice(i, i + 400));
+    for (const chunk of chunks) {
+      const batch = writeBatch(db);
+      for (const item of chunk) {
+        const ref = doc(collection(db, 'scheduleItems'));
+        batch.set(ref, { ...item, updatedAt: now });
+      }
+      await batch.commit();
+    }
+  }
+
   async deleteScheduleItem(id: string): Promise<void> {
     await deleteDoc(doc(db, 'scheduleItems', id));
   }

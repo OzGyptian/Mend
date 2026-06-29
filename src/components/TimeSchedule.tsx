@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { db, auth } from '../firebase';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch, getDocs } from 'firebase/firestore';
+import { useScheduleRepo, useProgressRepo, useCostRepo, useSubcontractRepo } from '../platform/firestore/hooks';
 import { Project, Enterprise } from '../types';
 import DataGridModule from './DataGridModule';
 import { GanttChartSquare, Activity, CheckCircle2, AlertCircle, Clock, RefreshCw, Upload, Download, Edit2, Trash2, X } from 'lucide-react';
@@ -21,62 +20,6 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { cn } from '../lib/utils';
-
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const message = error instanceof Error ? error.message : String(error);
-  const errInfo: FirestoreErrorInfo = {
-    error: message,
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData?.map(provider => ({
-        providerId: provider.providerId,
-        email: provider.email,
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  
-  // Show user-friendly error toast
-  if (message.includes('permission-denied')) {
-    toast.error('Permission denied: You do not have access to perform this operation.');
-  } else {
-    toast.error(`Operation failed: ${message}`);
-  }
-  
-  throw new Error(JSON.stringify(errInfo));
-}
 
 interface ScheduleItem {
   id: string;
@@ -100,6 +43,10 @@ interface TimeScheduleProps {
 }
 
 export default function TimeSchedule({ project, enterprise, theme = 'light' }: TimeScheduleProps) {
+  const scheduleRepo = useScheduleRepo();
+  const progressRepo = useProgressRepo();
+  const costRepo = useCostRepo();
+  const subcontractRepo = useSubcontractRepo();
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -120,15 +67,10 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'scheduleItems'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data() as ScheduleItem, id: doc.id }));
-      setItems(data);
+    return scheduleRepo.subscribeScheduleItems(project.id, (data) => {
+      setItems(data as any[]);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'scheduleItems');
     });
-    return () => unsubscribe();
   }, [project.id]);
 
   const dateFormatter = (params: any) => {
@@ -323,10 +265,10 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
     const updateData: any = { [colDef.field]: newValue || '', updatedAt: new Date().toISOString() };
     
     try {
-      await updateDoc(doc(db, 'scheduleItems', data.id), updateData);
+      await scheduleRepo.updateScheduleItem(data.id, updateData);
     } catch (error: any) {
       console.error('Update failed', error);
-      handleFirestoreError(error, OperationType.UPDATE, `scheduleItems/${data.id}`);
+      toast.error('Failed to update.');
     }
   };
 
@@ -341,23 +283,15 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
       }
 
       const today = new Date().toISOString().split('T')[0];
-      await addDoc(collection(db, 'scheduleItems'), {
-        projectId: project.id,
-        activityId,
-        description: 'New Activity',
-        activityPercentComplete: 0,
-        baselineStartDate: today,
-        baselineEndDate: today,
-        plannedStartDate: today,
-        plannedEndDate: today,
-        currentStartDate: today,
-        currentEndDate: today,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+      await scheduleRepo.createScheduleItem({
+        projectId: project.id, activityId, description: 'New Activity', activityPercentComplete: 0,
+        baselineStartDate: today, baselineEndDate: today, plannedStartDate: today, plannedEndDate: today,
+        currentStartDate: today, currentEndDate: today,
       });
       toast.success('Activity added');
     } catch (error: any) {
-      handleFirestoreError(error, OperationType.CREATE, 'scheduleItems');
+      console.error('Create schedule item failed', error);
+      toast.error('Failed to add activity.');
     }
   };
 
@@ -385,11 +319,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
     updates.updatedAt = new Date().toISOString();
 
     toast.promise(async () => {
-      const batch = writeBatch(db);
-      selectedRows.forEach(row => {
-        batch.update(doc(db, 'scheduleItems', row.id), updates);
-      });
-      await batch.commit();
+      await scheduleRepo.updateManyScheduleItems(selectedRows.map(row => ({ id: row.id, data: updates })));
       setIsBulkUpdating(false);
       setBulkUpdateData({
         description: '',
@@ -413,15 +343,11 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
     if (!confirm(`Are you sure you want to delete ${selectedRows.length} activities?`)) return;
 
     try {
-      const batch = writeBatch(db);
-      selectedRows.forEach(row => {
-        batch.delete(doc(db, 'scheduleItems', row.id));
-      });
-      await batch.commit();
+      await Promise.all(selectedRows.map(row => scheduleRepo.deleteScheduleItem(row.id)));
       toast.success('Activities deleted');
     } catch (error: any) {
       toast.error('Failed to delete activities: ' + (error.message || 'Unknown error'));
-      handleFirestoreError(error, OperationType.DELETE, 'scheduleItems');
+      console.error('Delete schedule items failed', error);
     }
   };
 
@@ -429,86 +355,76 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
     if (items.length === 0) return;
     
     toast.promise(async () => {
-      try {
-        const batch = writeBatch(db);
-        let totalUpdated = 0;
+      let totalUpdated = 0;
+      const [progressItems, etcDetails, costCodes, subcontracts] = await Promise.all([
+        progressRepo.listProgressItems(project.id),
+        costRepo.listEtcDetails(project.id),
+        costRepo.listCostCodes(project.id),
+        subcontractRepo.listSubcontracts(project.id),
+      ]);
 
-        // Collections to sync
-        const syncCollections = ['progressItems', 'etcDetails', 'subcontractLineItems', 'costCodes', 'subcontracts'];
-        
-        for (const colName of syncCollections) {
-          const q = query(collection(db, colName), where('projectId', '==', project.id));
-          const snap = await getDocs(q);
-          
-          snap.docs.forEach(d => {
-            const itemData = d.data();
-            
-            // Handle standard individual items
-            if (colName !== 'subcontracts') {
-              if (itemData.activityId) {
-                const scheduleItem = items.find(s => s.activityId === itemData.activityId);
-                if (scheduleItem) {
-                  const updates: any = {};
-                  let hasChange = false;
+      const progUpdates = progressItems.flatMap(item => {
+        if (!item.activityId) return [];
+        const s = items.find(si => si.activityId === item.activityId);
+        if (!s) return [];
+        const u: any = {};
+        if (item.plannedStartDate !== s.plannedStartDate) u.plannedStartDate = s.plannedStartDate;
+        if (item.plannedEndDate !== s.plannedEndDate) u.plannedEndDate = s.plannedEndDate;
+        if (item.currentStartDate !== s.currentStartDate) u.currentStartDate = s.currentStartDate;
+        if (item.currentEndDate !== s.currentEndDate) u.currentEndDate = s.currentEndDate;
+        if (!Object.keys(u).length) return [];
+        totalUpdated++;
+        return [{ id: item.id, data: u }];
+      });
 
-                  // Progress Items Mapping
-                  if (colName === 'progressItems') {
-                    if (itemData.plannedStartDate !== scheduleItem.plannedStartDate) { updates.plannedStartDate = scheduleItem.plannedStartDate; hasChange = true; }
-                    if (itemData.plannedEndDate !== scheduleItem.plannedEndDate) { updates.plannedEndDate = scheduleItem.plannedEndDate; hasChange = true; }
-                    if (itemData.currentStartDate !== scheduleItem.currentStartDate) { updates.currentStartDate = scheduleItem.currentStartDate; hasChange = true; }
-                    if (itemData.currentEndDate !== scheduleItem.currentEndDate) { updates.currentEndDate = scheduleItem.currentEndDate; hasChange = true; }
-                  }
-                  
-                  // ETC Details Mapping
-                  if (colName === 'etcDetails') {
-                    if (itemData.phasingStartDate !== scheduleItem.currentStartDate) { updates.phasingStartDate = scheduleItem.currentStartDate; hasChange = true; }
-                    if (itemData.phasingEndDate !== scheduleItem.currentEndDate) { updates.phasingEndDate = scheduleItem.currentEndDate; hasChange = true; }
-                  }
+      const etcUpdates = etcDetails.flatMap((item: any) => {
+        if (!item.activityId) return [];
+        const s = items.find(si => si.activityId === item.activityId);
+        if (!s) return [];
+        const u: any = {};
+        if (item.phasingStartDate !== s.currentStartDate) u.phasingStartDate = s.currentStartDate;
+        if (item.phasingEndDate !== s.currentEndDate) u.phasingEndDate = s.currentEndDate;
+        if (!Object.keys(u).length) return [];
+        totalUpdated++;
+        return [{ id: item.id, data: u }];
+      });
 
-                  // Cost Codes Mapping
-                  if (colName === 'costCodes') {
-                    if (itemData.plannedStartDate !== scheduleItem.plannedStartDate) { updates.plannedStartDate = scheduleItem.plannedStartDate; hasChange = true; }
-                    if (itemData.plannedEndDate !== scheduleItem.plannedEndDate) { updates.plannedEndDate = scheduleItem.plannedEndDate; hasChange = true; }
-                  }
+      const costUpdates = costCodes.flatMap(item => {
+        if (!item.activityId) return [];
+        const s = items.find(si => si.activityId === item.activityId);
+        if (!s) return [];
+        const u: any = {};
+        if (item.plannedStartDate !== s.plannedStartDate) u.plannedStartDate = s.plannedStartDate;
+        if (item.plannedEndDate !== s.plannedEndDate) u.plannedEndDate = s.plannedEndDate;
+        if (!Object.keys(u).length) return [];
+        totalUpdated++;
+        return [{ id: item.id, data: u }];
+      });
 
-                  if (hasChange) {
-                    batch.update(d.ref, { ...updates, updatedAt: new Date().toISOString() });
-                    totalUpdated++;
-                  }
-                }
-              }
-            } else {
-              // Handle subcontracts (nested line items)
-              if (itemData.lineItems) {
-                let subChange = false;
-                const newItems = itemData.lineItems.map((li: any) => {
-                  if (li.activityId) {
-                    const scheduleItem = items.find(s => s.activityId === li.activityId);
-                    if (scheduleItem) {
-                      let liChange = false;
-                      if (li.startDate !== scheduleItem.currentStartDate) { li.startDate = scheduleItem.currentStartDate; liChange = true; }
-                      if (li.endDate !== scheduleItem.currentEndDate) { li.endDate = scheduleItem.currentEndDate; liChange = true; }
-                      if (liChange) subChange = true;
-                    }
-                  }
-                  return li;
-                });
-                if (subChange) {
-                  batch.update(d.ref, { lineItems: newItems, updatedAt: new Date().toISOString() });
-                  totalUpdated++;
-                }
-              }
-            }
-          });
-        }
+      const subUpdates = subcontracts.flatMap(sub => {
+        if (!sub.lineItems?.length) return [];
+        let changed = false;
+        const newItems = sub.lineItems.map((li: any) => {
+          if (!li.activityId) return li;
+          const s = items.find(si => si.activityId === li.activityId);
+          if (!s) return li;
+          const newLi = { ...li };
+          if (li.startDate !== s.currentStartDate) { newLi.startDate = s.currentStartDate; changed = true; }
+          if (li.endDate !== s.currentEndDate) { newLi.endDate = s.currentEndDate; changed = true; }
+          return newLi;
+        });
+        if (!changed) return [];
+        totalUpdated++;
+        return [{ id: sub.id, data: { lineItems: newItems } }];
+      });
 
-        if (totalUpdated > 0) {
-          await batch.commit();
-        }
-        return `${totalUpdated} records synchronized across modules`;
-      } catch (error) {
-        handleFirestoreError(error, OperationType.WRITE, 'syncCollections');
-      }
+      await Promise.all([
+        progUpdates.length ? progressRepo.updateManyProgressItems(progUpdates) : Promise.resolve(),
+        etcUpdates.length ? costRepo.updateManyEtcDetails(etcUpdates) : Promise.resolve(),
+        costUpdates.length ? costRepo.updateManyCostCodes(costUpdates) : Promise.resolve(),
+        subUpdates.length ? subcontractRepo.updateManySubcontracts(subUpdates) : Promise.resolve(),
+      ]);
+      return `${totalUpdated} records synchronized across modules`;
     }, {
       loading: 'Synchronizing dates across modules...',
       success: (msg) => msg,
@@ -538,19 +454,18 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
           const ws = wb.Sheets[wsname];
           const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-          const batch = writeBatch(db);
           let count = 0;
           let duplicates = 0;
-          
+          const toCreate: any[] = [];
           const existingIds = new Set(items.map(i => i.activityId));
 
           data.forEach(row => {
             const activityId = String(row['Activity ID'] || row['activityId'] || row['ID'] || '');
             const description = String(row['Activity Description'] || row['description'] || row['Description'] || '');
             const percentComplete = Number(row['Activity % Complete'] || row['activityPercentComplete'] || row['Percent Complete'] || 0);
-            
+
             if (activityId && !existingIds.has(activityId)) {
-              existingIds.add(activityId); // Prevent duplicates within same import
+              existingIds.add(activityId);
               const bStart = row['Baseline Start Date'] || row['baselineStartDate'] || row['Baseline Start'];
               const bEnd = row['Baseline End Date'] || row['baselineEndDate'] || row['Baseline Finish'];
               const pStart = row['Planned Start Date'] || row['plannedStartDate'] || row['Start'];
@@ -558,19 +473,14 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
               const cStart = row['Current Start Date'] || row['currentStartDate'] || row['Current Start'];
               const cEnd = row['Current End Date'] || row['currentEndDate'] || row['Current Finish'];
  
-              const docRef = doc(collection(db, 'scheduleItems'));
-              batch.set(docRef, {
-                projectId: project.id,
-                activityId,
-                description,
-                activityPercentComplete: percentComplete,
+              toCreate.push({
+                projectId: project.id, activityId, description, activityPercentComplete: percentComplete,
                 baselineStartDate: bStart ? new Date(new Date(bStart).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 baselineEndDate: bEnd ? new Date(new Date(bEnd).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 plannedStartDate: pStart ? new Date(new Date(pStart).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 plannedEndDate: pEnd ? new Date(new Date(pEnd).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 currentStartDate: cStart ? new Date(new Date(cStart).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
                 currentEndDate: cEnd ? new Date(new Date(cEnd).setHours(0,0,0,0)).toISOString().split('T')[0] : '',
-                updatedAt: new Date().toISOString()
               });
               count++;
             } else if (activityId) {
@@ -578,11 +488,11 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
             }
           });
 
-          await batch.commit();
+          if (toCreate.length > 0) await scheduleRepo.createManyScheduleItems(toCreate);
           toast.success(`Successfully imported ${count} activities. ${duplicates > 0 ? `Skipped ${duplicates} duplicate IDs.` : ''}`);
         } catch (err) {
           console.error(err);
-          handleFirestoreError(err, OperationType.WRITE, 'scheduleItems/import');
+          toast.error('Import failed.');
         }
       };
       reader.readAsBinaryString(file);

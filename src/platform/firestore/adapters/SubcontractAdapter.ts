@@ -37,6 +37,15 @@ export class SubcontractAdapter implements SubcontractRepository {
     await updateDoc(doc(db, 'subcontracts', id), { ...data, updatedAt: new Date().toISOString() });
   }
 
+  async updateManySubcontracts(updates: Array<{ id: string; data: Partial<Subcontract> }>): Promise<void> {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    for (const { id, data } of updates) {
+      batch.update(doc(db, 'subcontracts', id), { ...data, updatedAt: now });
+    }
+    await batch.commit();
+  }
+
   async deleteSubcontract(id: string): Promise<void> {
     await deleteDoc(doc(db, 'subcontracts', id));
   }

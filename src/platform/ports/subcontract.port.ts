@@ -7,6 +7,7 @@ export interface SubcontractRepository {
   listSubcontracts(projectId: string): Promise<Subcontract[]>;
   createSubcontract(data: Omit<Subcontract, 'id' | 'createdAt' | 'updatedAt'>): Promise<Subcontract>;
   updateSubcontract(id: string, data: Partial<Subcontract>): Promise<void>;
+  updateManySubcontracts(updates: Array<{ id: string; data: Partial<Subcontract> }>): Promise<void>;
   deleteSubcontract(id: string): Promise<void>;
 
   subscribeSubcontractLineItems(subcontractId: string, callback: (items: SubcontractLineItem[]) => void): Unsubscribe;

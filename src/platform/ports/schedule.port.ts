@@ -5,6 +5,7 @@ export interface ScheduleRepository {
   subscribeScheduleItems(projectId: string, callback: (items: ScheduleItem[]) => void): Unsubscribe;
   listScheduleItems(projectId: string): Promise<ScheduleItem[]>;
   createScheduleItem(data: Omit<ScheduleItem, 'id' | 'updatedAt'>): Promise<ScheduleItem>;
+  createManyScheduleItems(data: Array<Omit<ScheduleItem, 'id' | 'updatedAt'>>): Promise<void>;
   updateScheduleItem(id: string, data: Partial<ScheduleItem>): Promise<void>;
   deleteScheduleItem(id: string): Promise<void>;
   updateManyScheduleItems(updates: Array<{ id: string; data: Partial<ScheduleItem> }>): Promise<void>;
