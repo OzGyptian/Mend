@@ -32,8 +32,32 @@ export class RiskAdapter implements RiskRepository {
     await updateDoc(doc(db, 'risks', id), { ...data, updatedAt: new Date().toISOString() });
   }
 
+  async updateManyRisks(updates: Array<{ id: string; data: Partial<Risk> }>): Promise<void> {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    for (const { id, data } of updates) {
+      batch.update(doc(db, 'risks', id), { ...data, updatedAt: now });
+    }
+    await batch.commit();
+  }
+
   async deleteRisk(id: string): Promise<void> {
     await deleteDoc(doc(db, 'risks', id));
+  }
+
+  async deleteManyRisks(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const id of ids) batch.delete(doc(db, 'risks', id));
+    await batch.commit();
+  }
+
+  async createManyRisks(records: Array<Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>>): Promise<string[]> {
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    const refs = records.map(() => doc(collection(db, 'risks')));
+    records.forEach((record, i) => batch.set(refs[i], { ...record, createdAt: now, updatedAt: now }));
+    await batch.commit();
+    return refs.map(r => r.id);
   }
 
   subscribeRiskRecords(projectId: string, callback: (records: RiskRecord[]) => void): Unsubscribe {
@@ -63,6 +87,19 @@ export class RiskAdapter implements RiskRepository {
 
   async deleteRiskRecord(id: string): Promise<void> {
     await deleteDoc(doc(db, 'riskRecords', id));
+  }
+
+  async deleteManyRiskRecords(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const id of ids) batch.delete(doc(db, 'riskRecords', id));
+    await batch.commit();
+  }
+
+  async createManyRiskRecords(records: Array<Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    for (const record of records) batch.set(doc(collection(db, 'riskRecords')), { ...record, createdAt: now, updatedAt: now });
+    await batch.commit();
   }
 
   async updateManyRiskRecords(updates: Array<{ id: string; data: Partial<RiskRecord> }>): Promise<void> {

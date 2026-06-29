@@ -6,12 +6,17 @@ export interface RiskRepository {
   listRisks(projectId: string): Promise<Risk[]>;
   createRisk(data: Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>): Promise<Risk>;
   updateRisk(id: string, data: Partial<Risk>): Promise<void>;
+  updateManyRisks(updates: Array<{ id: string; data: Partial<Risk> }>): Promise<void>;
   deleteRisk(id: string): Promise<void>;
+  deleteManyRisks(ids: string[]): Promise<void>;
+  createManyRisks(records: Array<Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>>): Promise<string[]>;
 
   subscribeRiskRecords(projectId: string, callback: (records: RiskRecord[]) => void): Unsubscribe;
   listRiskRecords(projectId: string, riskId?: string): Promise<RiskRecord[]>;
   createRiskRecord(data: Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<RiskRecord>;
   updateRiskRecord(id: string, data: Partial<RiskRecord>): Promise<void>;
   deleteRiskRecord(id: string): Promise<void>;
+  deleteManyRiskRecords(ids: string[]): Promise<void>;
+  createManyRiskRecords(records: Array<Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void>;
   updateManyRiskRecords(updates: Array<{ id: string; data: Partial<RiskRecord> }>): Promise<void>;
 }
