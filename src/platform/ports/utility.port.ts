@@ -8,11 +8,11 @@ export interface UtilityRepository {
   updateSavedView(id: string, data: Partial<SavedView>): Promise<void>;
   deleteSavedView(id: string): Promise<void>;
 
-  // Period Snapshots (write-only — used when closing a reporting period)
-  createPeriodSnapshot(data: Omit<PeriodSnapshot, 'id' | 'createdAt'>): Promise<void>;
-  batchCreatePeriodSnapshots(records: Array<Omit<PeriodSnapshot, 'id' | 'createdAt'>>): Promise<void>;
+  // Period Snapshots — recorded when a reporting period is closed; never updated
+  savePeriodSnapshot(data: Omit<PeriodSnapshot, 'id' | 'createdAt'>): Promise<void>;
+  savePeriodSnapshots(records: Array<Omit<PeriodSnapshot, 'id' | 'createdAt'>>): Promise<void>;
 
-  // Invitations (write-only)
+  // Invitations — write-only; status lifecycle managed server-side
   createInvitation(data: {
     email: string;
     enterpriseId: string;
@@ -22,14 +22,14 @@ export interface UtilityRepository {
     createdAt: string;
   }): Promise<{ id: string }>;
 
-  // Audit log (write-only)
-  logAudit(data: {
+  // Audit trail — append-only record of significant domain events
+  recordAuditEvent(data: {
     enterpriseId: string;
     projectId: string | null;
     userId: string;
     userEmail: string;
     action: string;
-    timestamp: string;
+    occurredAt: string;
     details?: Record<string, unknown>;
   }): Promise<void>;
 }

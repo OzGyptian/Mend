@@ -13,5 +13,5 @@ export interface ChangeRepository {
   createChangeRecord(data: Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<ChangeRecord>;
   updateChangeRecord(id: string, data: Partial<ChangeRecord>): Promise<void>;
   deleteChangeRecord(id: string): Promise<void>;
-  batchUpdateChangeRecords(updates: Array<{ id: string; data: Partial<ChangeRecord> }>): Promise<void>;
+  updateManyChangeRecords(updates: Array<{ id: string; data: Partial<ChangeRecord> }>): Promise<void>;
 }

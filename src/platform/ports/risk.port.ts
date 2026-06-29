@@ -13,5 +13,5 @@ export interface RiskRepository {
   createRiskRecord(data: Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<RiskRecord>;
   updateRiskRecord(id: string, data: Partial<RiskRecord>): Promise<void>;
   deleteRiskRecord(id: string): Promise<void>;
-  batchUpdateRiskRecords(updates: Array<{ id: string; data: Partial<RiskRecord> }>): Promise<void>;
+  updateManyRiskRecords(updates: Array<{ id: string; data: Partial<RiskRecord> }>): Promise<void>;
 }

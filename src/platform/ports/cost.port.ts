@@ -26,7 +26,7 @@ export interface CostRepository {
   createForecastRow(data: Omit<ForecastRow, 'id'>): Promise<ForecastRow>;
   updateForecastRow(id: string, data: Partial<ForecastRow>): Promise<void>;
   deleteForecastRow(id: string): Promise<void>;
-  batchUpdateForecastRows(updates: Array<{ id: string; data: Partial<ForecastRow> }>): Promise<void>;
+  updateManyForecastRows(updates: Array<{ id: string; data: Partial<ForecastRow> }>): Promise<void>;
 
   // ETC Details
   subscribeEtcDetails(projectId: string, callback: (details: EtcDetail[]) => void): Unsubscribe;
@@ -34,24 +34,24 @@ export interface CostRepository {
   createEtcDetail(data: Omit<EtcDetail, 'id' | 'createdAt'>): Promise<EtcDetail>;
   updateEtcDetail(id: string, data: Partial<EtcDetail>): Promise<void>;
   deleteEtcDetail(id: string): Promise<void>;
-  batchUpdateEtcDetails(updates: Array<{ id: string; data: Partial<EtcDetail> }>): Promise<void>;
+  updateManyEtcDetails(updates: Array<{ id: string; data: Partial<EtcDetail> }>): Promise<void>;
 
   // Actual Costs
   subscribeActualCosts(projectId: string, callback: (records: ActualCostRecord[]) => void): Unsubscribe;
   createActualCost(data: Omit<ActualCostRecord, 'id' | 'createdAt'>): Promise<ActualCostRecord>;
   updateActualCost(id: string, data: Partial<ActualCostRecord>): Promise<void>;
   deleteActualCost(id: string): Promise<void>;
-  batchUpdateActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>): Promise<void>;
+  updateManyActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>): Promise<void>;
 
   // Baseline Budgets
   subscribeBaselineBudgets(projectId: string, callback: (records: BaselineBudgetRecord[]) => void): Unsubscribe;
   createBaselineBudget(data: Omit<BaselineBudgetRecord, 'id' | 'createdAt'>): Promise<BaselineBudgetRecord>;
   updateBaselineBudget(id: string, data: Partial<BaselineBudgetRecord>): Promise<void>;
   deleteBaselineBudget(id: string): Promise<void>;
-  batchUpdateBaselineBudgets(updates: Array<{ id: string; data: Partial<BaselineBudgetRecord> }>): Promise<void>;
+  updateManyBaselineBudgets(updates: Array<{ id: string; data: Partial<BaselineBudgetRecord> }>): Promise<void>;
 
   // Cost Phasing
   subscribeCostPhasing(projectId: string, costCodeId: string, callback: (records: CostPhasingRecord[]) => void): Unsubscribe;
   listCostPhasing(projectId: string, costCodeId?: string): Promise<CostPhasingRecord[]>;
-  batchSetCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void>;
+  saveCostPhasing(records: Array<Omit<CostPhasingRecord, 'id' | 'createdAt'>>): Promise<void>;
 }
