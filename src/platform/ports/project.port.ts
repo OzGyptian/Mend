@@ -9,4 +9,5 @@ export interface ProjectRepository {
   create(data: Omit<Project, 'id' | 'dateCreated' | 'dateLastModified'>): Promise<Project>;
   update(projectId: string, data: Partial<Project>): Promise<void>;
   delete(projectId: string): Promise<void>;
+  checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean>;
 }

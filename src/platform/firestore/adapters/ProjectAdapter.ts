@@ -63,4 +63,9 @@ export class ProjectAdapter implements ProjectRepository {
   async delete(projectId: string): Promise<void> {
     await deleteDoc(doc(db, 'projects', projectId));
   }
+
+  async checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean> {
+    const snap = await getDocs(query(collection(db, 'projects'), where('enterpriseId', '==', enterpriseId), where('projectCode', '==', projectCode)));
+    return !snap.empty;
+  }
 }
