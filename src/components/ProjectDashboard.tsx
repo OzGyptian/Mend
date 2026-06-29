@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch, collectionGroup } from 'firebase/firestore';
-import { Project, Sheet, Enterprise, ForecastRow } from '../types';
+import { Project, Sheet, Enterprise } from '../types';
+import { useCostRepo } from '../platform/firestore/hooks';
 import CostManagement from './CostManagement';
 import ChangeManagementSubPane from './ChangeManagementSubPane';
 import RiskManagementSubPane from './RiskManagementSubPane';
@@ -47,6 +46,7 @@ interface ProjectDashboardProps {
 }
 
 export default function ProjectDashboard({ project, enterprise, currentModule, subModuleId, onSelectSheet, setIsSidebarCollapsed, user, theme = 'light' }: ProjectDashboardProps) {
+  const costRepo = useCostRepo();
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [sheetStats, setSheetStats] = useState<Record<string, { eac: number, etc: number }>>({});
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -55,52 +55,36 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
-    const q = query(collection(db, 'sheets'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const s = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sheet));
+    const unsubscribe = costRepo.subscribeSheets(project.id, (s) => {
       setSheets(s);
-      
-      // Fetch stats for each sheet
       s.forEach(async (sheet) => {
-        const rowsQuery = query(collection(db, `sheets/${sheet.id}/rows`));
-        const rowsSnapshot = await getDocs(rowsQuery);
-        const rows = rowsSnapshot.docs.map(doc => doc.data() as ForecastRow);
-        
+        const rows = await costRepo.listForecastRows(sheet.id);
         let totalEac = 0;
         let totalEtc = 0;
-        
         rows.forEach(r => {
-          const eac = sheet.forecastMethod === 'commitment' 
-            ? (r.qty || 0) * (r.rate || 0) 
+          const eac = sheet.forecastMethod === 'commitment'
+            ? (r.qty || 0) * (r.rate || 0)
             : (r.actualCostToDate || 0) + (r.costToGo || 0);
           const etc = Math.max(0, eac - (r.actualCostToDate || 0));
-          
           totalEac += eac;
           totalEtc += etc;
         });
-        
-        setSheetStats(prev => ({
-          ...prev,
-          [sheet.id]: { eac: totalEac, etc: totalEtc }
-        }));
+        setSheetStats(prev => ({ ...prev, [sheet.id]: { eac: totalEac, etc: totalEtc } }));
       });
-    }, (error) => {
-      console.error("Sheets fetch error:", error);
     });
     return () => unsubscribe();
-  }, [project]);
+  }, [project.id]);
 
   const handleCreateSheet = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await addDoc(collection(db, 'sheets'), {
+      await costRepo.createSheet({
         projectId: project.id,
         sheetName: newSheet.name,
         forecastMethod: newSheet.method,
         version: 'v1.0',
         lockedStatus: false,
         createdBy: 'System',
-        createdAt: new Date().toISOString()
       });
       setIsModalOpen(false);
       setNewSheet({ name: '', method: 'commitment' });
@@ -113,19 +97,11 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
     if (!sheetToDelete) return;
     setIsDeleting(true);
     try {
-      const batch = writeBatch(db);
-      
-      // 1. Find all rows for this sheet
-      const rowsQuery = query(collection(db, `sheets/${sheetToDelete.id}/rows`));
-      const rowsSnapshot = await getDocs(rowsQuery);
-      rowsSnapshot.docs.forEach(rowDoc => {
-        batch.delete(rowDoc.ref);
-      });
-      
-      // 2. Delete the sheet
-      batch.delete(doc(db, 'sheets', sheetToDelete.id));
-      
-      await batch.commit();
+      const rows = await costRepo.listForecastRows(sheetToDelete.id);
+      if (rows.length > 0) {
+        await costRepo.deleteManyForecastRows(sheetToDelete.id, rows.map(r => r.id));
+      }
+      await costRepo.deleteSheet(sheetToDelete.id);
       setSheetToDelete(null);
     } catch (error) {
       console.error('Failed to delete sheet', error);
