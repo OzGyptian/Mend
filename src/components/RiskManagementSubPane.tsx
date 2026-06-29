@@ -3,7 +3,7 @@ import { Project, Enterprise } from '../types';
 import { ShieldAlert, ClipboardList, ChevronLeft, Menu, Settings, Layout, AlertCircle } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { auth } from '../firebase';
+import { useAuthRepo } from '../platform/firestore/hooks';
 import RiskManagement from './RiskManagement';
 import BulkRiskRecords from './BulkRiskRecords';
 import ErrorBoundary from './ErrorBoundary';
@@ -26,8 +26,9 @@ const RiskManagementSubPane: React.FC<RiskManagementSubPaneProps> = ({
   const activeTab = (subModuleId as RiskTab) || 'standard';
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const userId = auth.currentUser?.uid;
-  const userEmail = auth.currentUser?.email;
+  const currentUser = useAuthRepo().getCurrentUser();
+  const userId = currentUser?.id;
+  const userEmail = currentUser?.email;
   const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);
