@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "command": "cd /Users/bernardleung/Documents/Claude/Projects/MendApp && npm run lint 2>&1 | tail -20",
+        "description": "Type-check after every file edit"
+      }
+    ]
+  }
+}
