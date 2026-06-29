@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db } from '../firebase';
-import { collection, onSnapshot, addDoc, deleteDoc, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { useEnterpriseRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
 import { Plus, Trash2, Edit2, Building2, Shield, Search, AlertTriangle, X, Download, Upload, Filter, Eye, EyeOff, Lock, Unlock, Check, ChevronDown, CheckCircle2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -45,13 +44,9 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
     { id: 'admins', label: 'Admins' }
   ];
 
+  const enterpriseRepo = useEnterpriseRepo();
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'enterprises'), (snapshot) => {
-      setEnterprises(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Enterprise)));
-    }, (error) => {
-      console.error("Enterprises fetch error:", error);
-    });
-    return () => unsubscribe();
+    return enterpriseRepo.subscribeAll(setEnterprises);
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -69,7 +64,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
       setIsSubmitting(true);
       const finalName = formData.name.trim() || 'Enterprise Name';
       if (editingEnterprise) {
-        await updateDoc(doc(db, 'enterprises', editingEnterprise.id), {
+        await enterpriseRepo.update(editingEnterprise.id, {
           name: finalName,
           enterpriseId: formData.enterpriseId,
         });
@@ -88,15 +83,15 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
           values: []
         }));
 
-        await addDoc(collection(db, 'enterprises'), {
+        await enterpriseRepo.create({
           name: finalName,
           enterpriseId: formData.enterpriseId,
-          adminUsers: [], 
+          adminUsers: [],
           users: {},
           projectAttributes: defaultAttributes,
           lineItemAttributes: defaultAttributes,
           createdAt: new Date().toISOString()
-        });
+        } as Omit<Enterprise, 'id'>);
       }
       setIsModalOpen(false);
       setEditingEnterprise(null);
@@ -110,10 +105,10 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
 
   const handleDelete = async (id: string | string[]) => {
     if (Array.isArray(id)) {
-      await Promise.all(id.map(i => deleteDoc(doc(db, 'enterprises', i))));
+      await enterpriseRepo.deleteMany(id);
       setSelectedIds([]);
     } else {
-      await deleteDoc(doc(db, 'enterprises', id));
+      await enterpriseRepo.delete(id);
       setSelectedIds(prev => prev.filter(i => i !== id));
     }
     setDeleteConfirm(null);
@@ -192,40 +187,27 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const completeImport = async () => {
     if (!importPreview) return;
 
-    const batch = writeBatch(db);
     const defaultAttributes = Array.from({ length: 10 }, (_, i) => ({
       id: (i + 1).toString().padStart(2, '0'),
       title: '',
       values: []
     }));
 
+    const toUpdate: Array<{ id: string; data: Partial<Enterprise> }> = [];
+    const toCreate: Array<Omit<Enterprise, 'id'>> = [];
     for (const row of importPreview) {
       const entId = row['Enterprise ID']?.toString() || '';
       const name = row['Enterprise Name']?.toString() || '';
-      
       if (!name) continue;
-
       const existing = enterprises.find(e => e.enterpriseId === entId);
       if (existing) {
-        batch.update(doc(db, 'enterprises', existing.id), {
-          name,
-          enterpriseId: entId
-        });
+        toUpdate.push({ id: existing.id, data: { name, enterpriseId: entId } });
       } else {
-        const newDocRef = doc(collection(db, 'enterprises'));
-        batch.set(newDocRef, {
-          name,
-          enterpriseId: entId,
-          adminUsers: [],
-          users: {},
-          projectAttributes: defaultAttributes,
-          lineItemAttributes: defaultAttributes,
-          createdAt: new Date().toISOString()
-        });
+        toCreate.push({ name, enterpriseId: entId, adminUsers: [], users: {}, projectAttributes: defaultAttributes, lineItemAttributes: defaultAttributes, createdAt: new Date().toISOString() } as Omit<Enterprise, 'id'>);
       }
     }
-
-    await batch.commit();
+    await Promise.all(toUpdate.map(({ id, data }) => enterpriseRepo.update(id, data)));
+    if (toCreate.length > 0) await enterpriseRepo.createMany(toCreate);
     setImportPreview(null);
     setShowImportSuccessModal(true);
   };

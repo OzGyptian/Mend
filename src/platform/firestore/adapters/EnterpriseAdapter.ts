@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, addDoc, updateDoc, onSnapshot, query, where,
+  collection, doc, getDoc, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot, query, where,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fromDoc } from '../converters';
@@ -34,6 +34,28 @@ export class EnterpriseAdapter implements EnterpriseRepository {
       ...data,
       updatedAt: new Date().toISOString(),
     });
+  }
+
+  subscribeAll(callback: (enterprises: Enterprise[]) => void): () => void {
+    return onSnapshot(collection(db, 'enterprises'), (snap) => {
+      callback(snap.docs.map(d => fromDoc<Enterprise>(d.id, d.data())));
+    });
+  }
+
+  async delete(id: string): Promise<void> {
+    await deleteDoc(doc(db, 'enterprises', id));
+  }
+
+  async deleteMany(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const id of ids) batch.delete(doc(db, 'enterprises', id));
+    await batch.commit();
+  }
+
+  async createMany(records: Array<Omit<Enterprise, 'id'>>): Promise<void> {
+    const batch = writeBatch(db);
+    for (const record of records) batch.set(doc(collection(db, 'enterprises')), record);
+    await batch.commit();
   }
 
   async create(data: Omit<Enterprise, 'id'>): Promise<Enterprise> {
