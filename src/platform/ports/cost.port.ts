@@ -7,6 +7,7 @@ import type { Unsubscribe } from './index';
 export interface CostRepository {
   // Cost Codes
   subscribeCostCodes(projectId: string, callback: (codes: CostCode[]) => void): Unsubscribe;
+  subscribeCostCodesByProjectIds(projectIds: string[], callback: (codes: CostCode[]) => void): () => void;
   getCostCode(id: string): Promise<CostCode | null>;
   listCostCodes(projectId: string): Promise<CostCode[]>;
   createCostCode(data: Omit<CostCode, 'id'>): Promise<CostCode>;

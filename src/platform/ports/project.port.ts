@@ -10,4 +10,5 @@ export interface ProjectRepository {
   update(projectId: string, data: Partial<Project>): Promise<void>;
   delete(projectId: string): Promise<void>;
   checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean>;
+  deleteProjectWithSheets(projectId: string): Promise<void>;
 }

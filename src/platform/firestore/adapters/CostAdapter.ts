@@ -21,6 +21,21 @@ export class CostAdapter implements CostRepository {
     });
   }
 
+  subscribeCostCodesByProjectIds(projectIds: string[], callback: (codes: CostCode[]) => void): () => void {
+    if (projectIds.length === 0) { callback([]); return () => {}; }
+    const chunks: string[][] = [];
+    for (let i = 0; i < projectIds.length; i += 10) chunks.push(projectIds.slice(i, i + 10));
+    const combined = new Map<string, CostCode>();
+    const unsubs = chunks.map((chunk) => {
+      const q = query(collection(db, 'costCodes'), where('projectId', 'in', chunk));
+      return onSnapshot(q, (snap) => {
+        snap.docs.forEach(d => combined.set(d.id, fromDoc<CostCode>(d.id, d.data())));
+        callback([...combined.values()]);
+      });
+    });
+    return () => unsubs.forEach(u => u());
+  }
+
   async getCostCode(id: string): Promise<CostCode | null> {
     const snap = await getDoc(doc(db, 'costCodes', id));
     return snap.exists() ? fromDoc<CostCode>(snap.id, snap.data()) : null;

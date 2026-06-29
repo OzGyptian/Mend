@@ -1,6 +1,6 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
-  onSnapshot, query, where, limit,
+  onSnapshot, query, where, limit, writeBatch,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fromDoc } from '../converters';
@@ -62,6 +62,18 @@ export class ProjectAdapter implements ProjectRepository {
 
   async delete(projectId: string): Promise<void> {
     await deleteDoc(doc(db, 'projects', projectId));
+  }
+
+  async deleteProjectWithSheets(projectId: string): Promise<void> {
+    const sheetsSnap = await getDocs(query(collection(db, 'sheets'), where('projectId', '==', projectId)));
+    const batch = writeBatch(db);
+    for (const sheetDoc of sheetsSnap.docs) {
+      const rowsSnap = await getDocs(collection(db, `sheets/${sheetDoc.id}/rows`));
+      rowsSnap.docs.forEach(rowDoc => batch.delete(rowDoc.ref));
+      batch.delete(sheetDoc.ref);
+    }
+    batch.delete(doc(db, 'projects', projectId));
+    await batch.commit();
   }
 
   async checkProjectCodeExists(enterpriseId: string, projectCode: string): Promise<boolean> {
