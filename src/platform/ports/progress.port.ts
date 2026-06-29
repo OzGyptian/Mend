@@ -9,6 +9,7 @@ export interface ProgressRepository {
   createProgressPackage(data: Omit<ProgressPackage, 'id' | 'createdAt' | 'updatedAt'>): Promise<ProgressPackage>;
   updateProgressPackage(id: string, data: Partial<ProgressPackage>): Promise<void>;
   deleteProgressPackage(id: string): Promise<void>;
+  updateManyProgressPackages(updates: Array<{ id: string; data: Partial<ProgressPackage> }>): Promise<void>;
 
   subscribeProgressItems(projectId: string, callback: (items: ProgressItem[]) => void): Unsubscribe;
   listProgressItems(projectId: string, packageId?: string): Promise<ProgressItem[]>;

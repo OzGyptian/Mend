@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useProgressRepo, useScheduleRepo, useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Search, 
@@ -21,20 +22,6 @@ import {
   Download,
   Upload
 } from 'lucide-react';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc,
-  serverTimestamp,
-  getDocs,
-  writeBatch
-} from 'firebase/firestore';
-import { db, auth } from '../firebase';
 import { Enterprise, Project, ProgressPackage, ProgressItem, CostCode, RuleOfCredit, ScheduleItem } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -70,6 +57,10 @@ interface ProgressTrackingProps {
 }
 
 export default function ProgressTracking({ enterprise, project, user, theme = 'light', isAdmin: isAdminProp, setIsSidebarCollapsed }: ProgressTrackingProps) {
+  const progressRepo = useProgressRepo();
+  const scheduleRepo = useScheduleRepo();
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
   const [packages, setPackages] = useState<ProgressPackage[]>([]);
   const [items, setItems] = useState<ProgressItem[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -95,7 +86,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const [isPackageSettingsOpen, setIsPackageSettingsOpen] = useState(false);
   const [itemBulkUpdateData, setItemBulkUpdateData] = useState({ field: '', value: '' });
   const [itemsToAddCount, setItemsToAddCount] = useState(1);
-  const isAdmin = isAdminProp !== undefined ? isAdminProp : (project.users?.[auth.currentUser?.uid || ''] === 'Project Admin' || (auth.currentUser?.email?.toLowerCase() === 'tarek.guindy@gmail.com'));
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : (project.users?.[authRepo.getCurrentUser()?.id || ''] === 'Project Admin' || (authRepo.getCurrentUser()?.email?.toLowerCase() === 'tarek.guindy@gmail.com'));
 
   const gridRef = useRef<AgGridReact>(null);
   const itemsGridRef = useRef<AgGridReact>(null);
@@ -103,43 +94,12 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   useEffect(() => {
     if (!project.id) return;
 
-    const qPackages = query(collection(db, 'progressPackages'), where('projectId', '==', project.id));
-    const unsubscribePackages = onSnapshot(qPackages, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProgressPackage));
-      setPackages(data);
-      setLoading(false);
-    });
-
-    const qCostCodes = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribeCostCodes = onSnapshot(qCostCodes, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
-      setCostCodes(data);
-    });
-
-    const qRoC = query(collection(db, 'rulesOfCredit'), where('projectId', '==', project.id));
-    const unsubscribeRoC = onSnapshot(qRoC, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as RuleOfCredit));
-      setRulesOfCredit(data);
-    });
-
-    const qSch = query(collection(db, 'scheduleItems'), where('projectId', '==', project.id));
-    const unsubscribeSch = onSnapshot(qSch, (snapshot) => {
-      setScheduleItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ScheduleItem)));
-    });
-
-    const qItems = query(collection(db, 'progressItems'), where('projectId', '==', project.id));
-    const unsubscribeItems = onSnapshot(qItems, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProgressItem));
-      setItems(data);
-    });
-
-    return () => {
-      unsubscribePackages();
-      unsubscribeCostCodes();
-      unsubscribeRoC();
-      unsubscribeSch();
-      unsubscribeItems();
-    };
+    const u1 = progressRepo.subscribeProgressPackages(project.id, (data) => { setPackages(data); setLoading(false); });
+    const u2 = costRepo.subscribeCostCodes(project.id, setCostCodes);
+    const u3 = progressRepo.subscribeRulesOfCredit(project.id, setRulesOfCredit);
+    const u4 = scheduleRepo.subscribeScheduleItems(project.id, setScheduleItems);
+    const u5 = progressRepo.subscribeProgressItems(project.id, setItems);
+    return () => { u1(); u2(); u3(); u4(); u5(); };
   }, [project.id]);
 
   const filteredItems = useMemo(() => {
@@ -181,10 +141,10 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         updatedAt: new Date().toISOString()
       };
 
-      const docRef = await addDoc(collection(db, 'progressPackages'), newPackage);
+      const created = await progressRepo.createProgressPackage(newPackage as any);
       setIsAddingPackage(false);
       setPackageFormData({ packageId: '', description: '' });
-      setSelectedPackageId(docRef.id);
+      setSelectedPackageId(created.id);
     } catch (error) {
       console.error('Error adding package:', error);
     }
@@ -202,49 +162,17 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         const lastSelected = selectedNodes[selectedNodes.length - 1].data as ProgressItem;
         insertAfterOrder = lastSelected.sortOrder || 0;
         
-        // Shift existing items after the selected point
         const itemsToShift = items.filter(i => (i.sortOrder || 0) > insertAfterOrder);
-        const batch = writeBatch(db);
-        itemsToShift.forEach(item => {
-          batch.update(doc(db, 'progressItems', item.id), {
-            sortOrder: (item.sortOrder || 0) + itemsToAddCount,
-            updatedAt: new Date().toISOString()
-          });
-        });
-        await batch.commit();
+        if (itemsToShift.length > 0) {
+          await progressRepo.updateManyProgressItems(itemsToShift.map(item => ({ id: item.id, data: { sortOrder: (item.sortOrder || 0) + itemsToAddCount } })));
+        }
       } else {
-        // If no selection, add to the end
         const maxOrder = items.length > 0 ? Math.max(...items.map(i => i.sortOrder || 0)) : 0;
         insertAfterOrder = maxOrder;
       }
 
-      const batch = writeBatch(db);
-      for (let i = 0; i < itemsToAddCount; i++) {
-        const newDocRef = doc(collection(db, 'progressItems'));
-        const newItem: Partial<ProgressItem> = {
-          projectId: project.id,
-          packageId: selectedPackage.packageId,
-          packageDocId: selectedPackageId,
-          itemId: `Item-${items.length + i + 1}`,
-          description: 'New Item',
-          costCodeId: '',
-          totalQty: 0,
-          plannedStartDate: selectedPackage.defaultStartDate || new Date().toISOString().split('T')[0],
-          plannedEndDate: selectedPackage.defaultEndDate || new Date().toISOString().split('T')[0],
-          phasingMethod: selectedPackage.defaultPhasingMethod || 'Auto',
-          phasingCurve: selectedPackage.defaultPhasingCurve || 'even',
-          currentStartDate: selectedPackage.defaultStartDate || new Date().toISOString().split('T')[0],
-          currentEndDate: selectedPackage.defaultEndDate || new Date().toISOString().split('T')[0],
-          currentPhasingMethod: selectedPackage.defaultPhasingMethod || 'Auto',
-          currentPhasingCurve: selectedPackage.defaultPhasingCurve || 'even',
-          sortOrder: insertAfterOrder + i + 1,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        batch.set(newDocRef, newItem);
-      }
-      
-      await batch.commit();
+      const newItems = Array.from({ length: itemsToAddCount }, (_, i) => ({ projectId: project.id, packageId: selectedPackage.packageId, packageDocId: selectedPackageId, itemId: `Item-${items.length + i + 1}`, description: 'New Item', costCodeId: '', totalQty: 0, plannedStartDate: selectedPackage.defaultStartDate || new Date().toISOString().split('T')[0], plannedEndDate: selectedPackage.defaultEndDate || new Date().toISOString().split('T')[0], phasingMethod: selectedPackage.defaultPhasingMethod || 'Auto', phasingCurve: selectedPackage.defaultPhasingCurve || 'even', currentStartDate: selectedPackage.defaultStartDate || new Date().toISOString().split('T')[0], currentEndDate: selectedPackage.defaultEndDate || new Date().toISOString().split('T')[0], currentPhasingMethod: selectedPackage.defaultPhasingMethod || 'Auto', currentPhasingCurve: selectedPackage.defaultPhasingCurve || 'even', sortOrder: insertAfterOrder + i + 1 }));
+      await Promise.all(newItems.map(item => progressRepo.createProgressItem(item as any)));
       setItemsToAddCount(1);
       toast.success(`Added ${itemsToAddCount} item(s)`);
     } catch (error) {
@@ -256,15 +184,9 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const deletePackage = async (pkg: ProgressPackage) => {
     if (!window.confirm(`Are you sure you want to delete commodity ${pkg.packageId}? This will also delete all related items.`)) return;
     try {
-      // Find related items
-      const qItems = query(collection(db, 'progressItems'), where('packageDocId', '==', pkg.id));
-      const itemsSnapshot = await getDocs(qItems);
-      
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'progressPackages', pkg.id));
-      itemsSnapshot.docs.forEach(d => batch.delete(doc(db, 'progressItems', d.id)));
-      
-      await batch.commit();
+      const itemIds = items.filter(i => (i as any).packageDocId === pkg.id).map(i => i.id);
+      await Promise.all(itemIds.map(id => progressRepo.deleteProgressItem(id)));
+      await progressRepo.deleteProgressPackage(pkg.id);
       toast.success(`Deleted commodity ${pkg.packageId} and its items`);
       if (selectedPackageId === pkg.id) setSelectedPackageId(null);
     } catch (error) {
@@ -275,10 +197,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
   const updatePackage = async (pkgId: string, updates: any) => {
     try {
-      await updateDoc(doc(db, 'progressPackages', pkgId), {
-        ...updates,
-        updatedAt: new Date().toISOString()
-      });
+      await progressRepo.updateProgressPackage(pkgId, updates);
     } catch (error) {
       console.error('Update package failed', error);
       toast.error('Failed to update commodity');
@@ -288,23 +207,12 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const handleBulkDelete = async () => {
     if (selectedPackageIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedPackageIds.length} commodities and all their related items?`)) return;
-
     try {
-      const batch = writeBatch(db);
       for (const id of selectedPackageIds) {
-        batch.delete(doc(db, 'progressPackages', id));
-        // Note: In a production app, you might want to use a Cloud Function for recursive deletion
-        // but here we'll try to find items for each. 
-        // For efficiency in this demo, let's just delete the packages.
-        // Actually, let's try to be thorough for a few.
+        const itemIds = items.filter(i => (i as any).packageDocId === id).map(i => i.id);
+        await Promise.all(itemIds.map(iid => progressRepo.deleteProgressItem(iid)));
+        await progressRepo.deleteProgressPackage(id);
       }
-      
-      // To properly delete related items for multiple packages in a batch, we need their IDs
-      const qItems = query(collection(db, 'progressItems'), where('packageDocId', 'in', selectedPackageIds.slice(0, 10))); // Firestore 'in' limit is 10
-      const itemsSnapshot = await getDocs(qItems);
-      itemsSnapshot.docs.forEach(d => batch.delete(doc(db, 'progressItems', d.id)));
-
-      await batch.commit();
       toast.success(`Deleted ${selectedPackageIds.length} commodities`);
       setSelectedPackageIds([]);
       if (selectedPackageIds.includes(selectedPackageId || '')) setSelectedPackageId(null);
@@ -316,16 +224,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
   const handleBulkUpdate = async () => {
     if (!bulkUpdateData.field || selectedPackageIds.length === 0) return;
-
     try {
-      const batch = writeBatch(db);
-      selectedPackageIds.forEach(id => {
-        batch.update(doc(db, 'progressPackages', id), { 
-          [bulkUpdateData.field]: bulkUpdateData.value,
-          updatedAt: new Date().toISOString()
-        });
-      });
-      await batch.commit();
+      await progressRepo.updateManyProgressPackages(selectedPackageIds.map(id => ({ id, data: { [bulkUpdateData.field]: bulkUpdateData.value } })));
       toast.success(`Updated ${selectedPackageIds.length} commodities`);
       setIsBulkUpdateOpen(false);
       setSelectedPackageIds([]);
@@ -364,35 +264,24 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
+        const importUpdates: Array<{ id: string; data: any }> = [];
+        const importCreates: any[] = [];
         let count = 0;
 
         for (const row of data) {
           const commodityId = (row['Commodity ID'] || row['Package ID'])?.toString().trim();
           if (!commodityId) continue;
-
           const existing = packages.find(p => p.packageId.toLowerCase() === commodityId.toLowerCase());
-          const payload = {
-            packageId: commodityId,
-            description: (row['Commodity Description'] || row['Description'])?.toString() || '',
-            ruleOfCreditId: (row['Rule of Credit ID'] || row['ruleOfCreditId'] || row['Rule of Credit'])?.toString() || '',
-            projectId: project.id,
-            updatedAt: new Date().toISOString()
-          };
-
-          if (existing) {
-            batch.update(doc(db, 'progressPackages', existing.id), payload);
-          } else {
-            const newDocRef = doc(collection(db, 'progressPackages'));
-            batch.set(newDocRef, {
-              ...payload,
-              createdAt: new Date().toISOString()
-            });
-          }
+          const payload = { packageId: commodityId, description: (row['Commodity Description'] || row['Description'])?.toString() || '', ruleOfCreditId: (row['Rule of Credit ID'] || row['ruleOfCreditId'] || row['Rule of Credit'])?.toString() || '', projectId: project.id };
+          if (existing) importUpdates.push({ id: existing.id, data: payload });
+          else importCreates.push(payload);
           count++;
         }
 
-        await batch.commit();
+        await Promise.all([
+          ...importUpdates.map(u => progressRepo.updateProgressPackage(u.id, u.data)),
+          ...importCreates.map(c => progressRepo.createProgressPackage(c as any)),
+        ]);
         toast.success(`Successfully imported/updated ${count} commodities`);
       } catch (error) {
         console.error('Import error:', error);
@@ -408,7 +297,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const deleteItem = async (item: ProgressItem) => {
     if (!window.confirm(`Delete commodity item ${item.description}?`)) return;
     try {
-      await deleteDoc(doc(db, 'progressItems', item.id));
+      await progressRepo.deleteProgressItem(item.id);
     } catch (error) {
       console.error('Delete failed', error);
     }
@@ -417,13 +306,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const handleItemBulkDelete = async () => {
     if (selectedItemIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedItemIds.length} commodity items?`)) return;
-
     try {
-      const batch = writeBatch(db);
-      selectedItemIds.forEach(id => {
-        batch.delete(doc(db, 'progressItems', id));
-      });
-      await batch.commit();
+      await Promise.all(selectedItemIds.map(id => progressRepo.deleteProgressItem(id)));
       toast.success(`Deleted ${selectedItemIds.length} commodity items`);
       setSelectedItemIds([]);
     } catch (error) {
@@ -436,7 +320,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
     if (!itemBulkUpdateData.field || selectedItemIds.length === 0) return;
 
     try {
-      const batch = writeBatch(db);
+      const bulkItemUpdates: Array<{ id: string; data: any }> = [];
       selectedItemIds.forEach(id => {
         let value: any = itemBulkUpdateData.value;
         if (itemBulkUpdateData.field.toLowerCase().includes('date')) {
@@ -445,14 +329,9 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
           value = parseFloat(value) || 0;
         }
         
-        if (value !== undefined) {
-          batch.update(doc(db, 'progressItems', id), { 
-            [itemBulkUpdateData.field]: value,
-            updatedAt: new Date().toISOString()
-          });
-        }
+        if (value !== undefined) bulkItemUpdates.push({ id, data: { [itemBulkUpdateData.field]: value } });
       });
-      await batch.commit();
+      await progressRepo.updateManyProgressItems(bulkItemUpdates);
       toast.success(`Updated ${selectedItemIds.length} commodity items`);
       setIsItemBulkUpdateOpen(false);
       setSelectedItemIds([]);
@@ -493,40 +372,24 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
+        const importItemUpdates: Array<{ id: string; data: any }> = [];
+        const importItemCreates: any[] = [];
         let count = 0;
 
         for (const row of data) {
           const itemId = (row['Commodity Item ID'] || row['Item ID'] || row['itemId'])?.toString();
           if (!itemId) continue;
-
           const existing = items.find(i => i.itemId === itemId);
-          const payload = {
-            itemId: itemId,
-            description: row['Description']?.toString() || '',
-            costCodeId: row['Cost Code']?.toString() || '',
-            totalQty: parseFloat(row['Total Qty']) || 0,
-            plannedStartDate: row['Pl Start']?.toString() || '',
-            plannedEndDate: row['Pl End']?.toString() || '',
-            projectId: project.id,
-            packageId: selectedPackage.packageId,
-            packageDocId: selectedPackageId,
-            updatedAt: new Date().toISOString()
-          };
-
-          if (existing) {
-            batch.update(doc(db, 'progressItems', existing.id), payload);
-          } else {
-            const newDocRef = doc(collection(db, 'progressItems'));
-            batch.set(newDocRef, {
-              ...payload,
-              createdAt: new Date().toISOString()
-            });
-          }
+          const payload = { itemId, description: row['Description']?.toString() || '', costCodeId: row['Cost Code']?.toString() || '', totalQty: parseFloat(row['Total Qty']) || 0, plannedStartDate: row['Pl Start']?.toString() || '', plannedEndDate: row['Pl End']?.toString() || '', projectId: project.id, packageId: selectedPackage.packageId, packageDocId: selectedPackageId };
+          if (existing) importItemUpdates.push({ id: existing.id, data: payload });
+          else importItemCreates.push(payload);
           count++;
         }
 
-        await batch.commit();
+        await Promise.all([
+          ...importItemUpdates.map(u => progressRepo.updateProgressItem(u.id, u.data)),
+          ...importItemCreates.map(c => progressRepo.createProgressItem(c as any)),
+        ]);
         toast.success(`Imported ${count} commodity items`);
       } catch (error) {
         console.error('Import error:', error);
@@ -540,10 +403,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
   const updateItem = async (itemId: string, updates: Partial<ProgressItem>) => {
     try {
-      await updateDoc(doc(db, 'progressItems', itemId), {
-        ...updates,
-        updatedAt: new Date().toISOString()
-      });
+      await progressRepo.updateProgressItem(itemId, updates);
     } catch (error) {
       console.error('Update failed', error);
     }
@@ -973,7 +833,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
     }
 
     try {
-      const batch = writeBatch(db);
+      const calcUpdates: Array<{ id: string; data: any }> = [];
       let updateCount = 0;
       
       // Process all items
@@ -1063,13 +923,13 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         }
 
         if (hasChanges) {
-          batch.update(doc(db, 'progressItems', item.id), updates);
+          calcUpdates.push({ id: item.id, data: updates });
           updateCount++;
         }
       });
 
       if (updateCount > 0) {
-        await batch.commit();
+        await progressRepo.updateManyProgressItems(calcUpdates);
         toast.success(`Calculated and updated ${updateCount} items`);
       } else {
         toast.info('Calculation complete: No changes needed');

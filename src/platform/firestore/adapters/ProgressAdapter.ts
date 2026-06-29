@@ -38,6 +38,13 @@ export class ProgressAdapter implements ProgressRepository {
     await deleteDoc(doc(db, 'progressPackages', id));
   }
 
+  async updateManyProgressPackages(updates: Array<{ id: string; data: Partial<ProgressPackage> }>): Promise<void> {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    updates.forEach(({ id, data }) => batch.update(doc(db, 'progressPackages', id), { ...data, updatedAt: now }));
+    await batch.commit();
+  }
+
   subscribeProgressItems(projectId: string, callback: (items: ProgressItem[]) => void): Unsubscribe {
     const q = query(collection(db, 'progressItems'), where('projectId', '==', projectId));
     return onSnapshot(q, (snap) => {
