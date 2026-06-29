@@ -73,4 +73,19 @@ export class ChangeAdapter implements ChangeRepository {
     }
     await batch.commit();
   }
+
+  async createManyChangeRecords(records: Array<Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    const now = new Date().toISOString();
+    const batch = writeBatch(db);
+    for (const record of records) {
+      batch.set(doc(collection(db, 'changeRecords')), { ...record, createdAt: now, updatedAt: now });
+    }
+    await batch.commit();
+  }
+
+  async deleteManyChangeRecords(ids: string[]): Promise<void> {
+    const batch = writeBatch(db);
+    for (const id of ids) batch.delete(doc(db, 'changeRecords', id));
+    await batch.commit();
+  }
 }
