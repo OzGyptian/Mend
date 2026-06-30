@@ -35,15 +35,13 @@ export class ProjectAdapter implements ProjectRepository {
     userEmail: string,
     callback: (projects: Project[]) => void,
   ): Unsubscribe {
-    const q = query(
-      collection(db, 'projects'),
-      where('enterpriseId', '==', enterpriseId),
-      where('members', 'array-contains', userEmail),
-      limit(100),
-    );
-    return onSnapshot(q, (snap) => {
-      callback(snap.docs.map((d) => fromDoc<Project>(d.id, d.data())));
-    });
+    const q = query(collection(db, 'projects'), where('enterpriseId', '==', enterpriseId), where('members', 'array-contains', userEmail), limit(100));
+    return onSnapshot(q, (snap) => { callback(snap.docs.map((d) => fromDoc<Project>(d.id, d.data()))); });
+  }
+
+  async listByEnterprise(enterpriseId: string): Promise<Project[]> {
+    const snap = await getDocs(query(collection(db, 'projects'), where('enterpriseId', '==', enterpriseId)));
+    return snap.docs.map((d) => fromDoc<Project>(d.id, d.data()));
   }
 
   async create(data: Omit<Project, 'id' | 'dateCreated' | 'dateLastModified'>): Promise<Project> {
@@ -74,6 +72,12 @@ export class ProjectAdapter implements ProjectRepository {
     }
     batch.delete(doc(db, 'projects', projectId));
     await batch.commit();
+  }
+
+  subscribeSheet(sheetId: string, callback: (sheet: any | null) => void): () => void {
+    return onSnapshot(doc(db, 'sheets', sheetId), (snap) => {
+      callback(snap.exists() ? { ...snap.data(), id: snap.id } : null);
+    });
   }
 
   async findSheetsByName(projectId: string, sheetName: string): Promise<Array<{ id: string }>> {

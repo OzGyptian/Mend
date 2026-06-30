@@ -1,5 +1,5 @@
 import {
-  collection, doc, getDoc, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot, query, where,
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot, query, where, limit,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { fromDoc } from '../converters';
@@ -20,13 +20,44 @@ export class EnterpriseAdapter implements EnterpriseRepository {
   }
 
   subscribeByAdmin(adminUserEmail: string, callback: (enterprises: Enterprise[]) => void): Unsubscribe {
-    const q = query(
-      collection(db, 'enterprises'),
-      where('adminUsers', 'array-contains', adminUserEmail),
-    );
-    return onSnapshot(q, (snap) => {
-      callback(snap.docs.map((d) => fromDoc<Enterprise>(d.id, d.data())));
-    });
+    const q = query(collection(db, 'enterprises'), where('adminUsers', 'array-contains', adminUserEmail));
+    return onSnapshot(q, (snap) => { callback(snap.docs.map((d) => fromDoc<Enterprise>(d.id, d.data()))); });
+  }
+
+  subscribeByUserId(userId: string, callback: (enterprises: Enterprise[]) => void): Unsubscribe {
+    const q = query(collection(db, 'enterprises'), where('adminUsers', 'array-contains', userId));
+    return onSnapshot(q, (snap) => { callback(snap.docs.map((d) => fromDoc<Enterprise>(d.id, d.data()))); });
+  }
+
+  subscribeById(enterpriseId: string, callback: (enterprise: Enterprise | null) => void): Unsubscribe {
+    const q = query(collection(db, 'enterprises'), where('__name__', '==', enterpriseId));
+    return onSnapshot(q, (snap) => { callback(snap.empty ? null : fromDoc<Enterprise>(snap.docs[0].id, snap.docs[0].data())); });
+  }
+
+  async bootstrapIfEmpty(userId: string, name: string, role: string): Promise<void> {
+    const snap = await getDocs(collection(db, 'enterprises'));
+    if (snap.empty) {
+      await addDoc(collection(db, 'enterprises'), { name, adminUsers: [userId], settings: { theme: 'dark' }, users: { [userId]: { name, role } } });
+    }
+  }
+
+  async acceptInvitation(token: string, userId: string, userEmail: string, displayName: string): Promise<{ enterpriseName: string } | null> {
+    const q = query(collection(db, 'invitations'), where('token', '==', token), where('status', '==', 'pending'), limit(1));
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+    const inviteDoc = snap.docs[0];
+    const invite = inviteDoc.data();
+    if (invite.email && userEmail.toLowerCase() !== invite.email.toLowerCase()) throw new Error(`This invitation was sent to ${invite.email}.`);
+    if (new Date(invite.expiresAt) < new Date()) throw new Error('This invitation has expired.');
+    const enterpriseSnap = await getDoc(doc(db, 'enterprises', invite.enterpriseId));
+    if (!enterpriseSnap.exists()) return null;
+    const entData = enterpriseSnap.data();
+    if (!entData.users?.[userId]) {
+      await updateDoc(doc(db, 'enterprises', invite.enterpriseId), { [`users.${userId}`]: { name: displayName, email: userEmail, role: 'Enterprise User', joinedAt: new Date().toISOString() }, adminUsers: [...(entData.adminUsers || []), userId] });
+    }
+    await updateDoc(inviteDoc.ref, { status: 'accepted', acceptedAt: new Date().toISOString(), acceptedBy: userId });
+    window.history.replaceState({}, document.title, window.location.pathname);
+    return { enterpriseName: entData.name };
   }
 
   async update(enterpriseId: string, data: Partial<Enterprise>): Promise<void> {
