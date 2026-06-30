@@ -10,6 +10,12 @@ import { ProcurementAdapter } from './adapters/ProcurementAdapter';
 import { ScheduleAdapter } from './adapters/ScheduleAdapter';
 import { UtilityAdapter } from './adapters/UtilityAdapter';
 import { AuthAdapter } from './adapters/AuthAdapter';
+import {
+  MemoryAuthAdapter, MemoryEnterpriseAdapter, MemoryProjectAdapter,
+  MemoryCostAdapter, MemoryChangeAdapter, MemoryRiskAdapter,
+  MemorySubcontractAdapter, MemoryProgressAdapter, MemoryProcurementAdapter,
+  MemoryScheduleAdapter, MemoryUtilityAdapter,
+} from '../memory/MemoryAdapters';
 import type { EnterpriseRepository } from '../ports/enterprise.port';
 import type { ProjectRepository } from '../ports/project.port';
 import type { CostRepository } from '../ports/cost.port';
@@ -38,8 +44,22 @@ interface Platform {
 
 const PlatformContext = createContext<Platform | null>(null);
 
+const USE_MEMORY = (import.meta as any).env?.VITE_ADAPTER === 'memory';
+
 export function FirestoreProvider({ children }: { children: React.ReactNode }) {
-  const platform = useMemo<Platform>(() => ({
+  const platform = useMemo<Platform>(() => USE_MEMORY ? ({
+    enterprise: new MemoryEnterpriseAdapter(),
+    project: new MemoryProjectAdapter(),
+    cost: new MemoryCostAdapter(),
+    change: new MemoryChangeAdapter(),
+    risk: new MemoryRiskAdapter(),
+    subcontract: new MemorySubcontractAdapter(),
+    progress: new MemoryProgressAdapter(),
+    procurement: new MemoryProcurementAdapter(),
+    schedule: new MemoryScheduleAdapter(),
+    utility: new MemoryUtilityAdapter(),
+    auth: new MemoryAuthAdapter(),
+  } as unknown as Platform) : ({
     enterprise: new EnterpriseAdapter(),
     project: new ProjectAdapter(),
     cost: new CostAdapter(),
