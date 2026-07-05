@@ -2,6 +2,67 @@
 
 ---
 
+## Session 3 — 2026-07-05 — Chunk 8: UI Seam (Roles, Auth Port, DataGrid wrapper)
+
+### What we set out to do
+
+Complete Chunk 8 of the platform-seam refactor: wrap the UI layer with a typed role/auth system and create the DataGrid wrapper component.
+
+### Decisions made this session
+
+**Role hierarchy:** Chose a path-of-scopes design rather than hardcoded levels. `UserRoles` holds a `memberships: EnterpriseMembership[]` array so users can belong to multiple enterprises (consultants, cross-tenant access). Adding a Division or Business Unit level later is additive — no schema migration needed, just extend `EnterpriseMembership`.
+
+**UUID for enterpriseId** (not slugs): stable forever; the display name changes, the identity doesn't.
+
+**Roles use typed enums:** `PlatformRole`, `EnterpriseRole` (`enterprise_admin | enterprise_member`), `ProjectRole` (`project_admin | project_writer | project_reader | project_guest`). Platform admins implicitly have `enterprise_admin` in any enterprise — enforced in the hook, not stored redundantly.
+
+**Claims minimal:** only `platformAdmin: bool` and `enterpriseId` in Firebase Auth custom claims. All complex role data in Firestore `userRoles/{uid}` — avoids the 1KB claim limit and keeps claims stable as role structure evolves.
+
+**DataGrid wrapper:** created as a pattern for new components only; existing 37 AG Grid components NOT migrated. The lock-in argument is weak for AG Grid Enterprise specifically — the grids are the product. Wrapper value is consistent defaults and canonical import path.
+
+**Multi-tenancy design discussion (Chunk 8b — not built yet):** Agreed on SaaS-class isolation model: structurally enforced at DB layer (Firestore security rules now, Postgres RLS later), not navigation hiding. Salesforce/O365-class thinking: Platform Admin → Enterprise Admin → Enterprise Member → Project Admin/Writer/Reader/Guest. SSO (SAML/OIDC) per enterprise tenant via Firebase Identity Platform. CMEK per tenant as upgrade path when paying enterprise customers require it.
+
+**Agentic Autonomy Policy:** Read and noted. Policy is located at `/Users/bernardleung/Documents/Claude/Projects/Agentic_Autonomy_Deployment_Policy.md`. Dev branch = Level 3–4 autonomy (correct for this session). Merge gate = Level 1–2 (human sign-off required).
+
+### What was built (v1.0.44)
+
+- `src/domain/roles.ts` — role type hierarchy; `getProjectRole()` maps legacy `project.users` strings to typed `ProjectRole` without touching Firestore data
+- `src/platform/ports/userRole.port.ts` — `UserRoleRepository` interface
+- `src/platform/firestore/adapters/UserRoleAdapter.ts` — Firestore implementation; reads/writes `userRoles/{uid}`
+- `src/platform/memory/MemoryAdapters.ts` — `MemoryUserRoleAdapter` added
+- `src/platform/firestore/context.tsx` — `userRole` wired into `Platform` interface (both Firestore and memory paths)
+- `src/platform/firestore/hooks.ts` — `useUserRoleRepo()`; `useAuth()` stateful hook with nested auth→roles subscription chain
+- `src/components/ProgressReportingPeriod.tsx` — hardcoded email removed; replaced with `useAuth()` + `getProjectRole()`
+- `src/components/ProgressTracking.tsx` — same
+- `src/product/components/ui/DataGrid.tsx` — thin AG Grid wrapper with enforced defaults
+
+Also: cleaned up 8 `" 2"` macOS duplicate files that were causing type-check failures.
+
+### State at end of session
+
+- Branch: `refactor/platform-seam`
+- Version: v1.0.44
+- Pushed to: `github.com/OzGyptian/Mend` (`5dac359..aa5cf30`)
+- Type-check: passing, Tests: 19/19, Build: not re-run (no structural changes to app wiring)
+- Working tree: clean
+
+### What to do next
+
+**Before testing in Vercel:**
+- Seed `userRoles/{uid}` in Firestore console: `{ platformRole: "platform_admin", memberships: [{ enterpriseId: "<uuid>", role: "enterprise_admin", projectRoles: {} }] }` for your UID and Tarek's UID. Get UIDs from Firebase console → Authentication.
+
+**Chunk 8b (separate session — needs Tarek alignment):**
+- Firebase Auth custom claim: Cloud Function sets `{ platformAdmin, enterpriseId }` on login
+- Firestore security rules enforcing `enterpriseId` isolation structurally (moves from app-layer to DB-layer)
+- This is the thing that turns the multi-tenancy from "app filtering" to "structurally enforced"
+
+**Merge gate (Section 6 of runbook):**
+- Tarek reviews the full branch diff
+- Behaviour-parity check: app runs identically in Firestore mode and memory mode
+- Merge to main → Vercel deploy
+
+---
+
 ## Session 2 — 2026-06-29 — Phases 1–4: Recon, Scaffold, Calc Engine, Ports (Continued)
 
 ### Phases completed this session
