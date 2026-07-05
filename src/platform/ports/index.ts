@@ -9,5 +9,6 @@ export type { ProcurementRepository } from './procurement.port';
 export type { ScheduleRepository } from './schedule.port';
 export type { UtilityRepository } from './utility.port';
 export type { AuthRepository } from './auth.port';
+export type { UserRoleRepository } from './userRole.port';
 
 export type Unsubscribe = () => void;

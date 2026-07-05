@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Project } from '../types';
-import { useProgressRepo, useProjectRepo, useAuthRepo } from '../platform/firestore/hooks';
+import { useProgressRepo, useProjectRepo, useAuth } from '../platform/firestore/hooks';
+import { getProjectRole } from '../domain/roles';
 import { Calendar, Save, Calculator, Trash2, Lock, Unlock, Plus, AlertTriangle, RefreshCw, Eye, FileText, CheckCircle2 } from 'lucide-react';
 import { addMonths, addWeeks, subDays, format, parseISO, isWithinInterval } from 'date-fns';
 import { toast } from 'sonner';
@@ -31,7 +32,7 @@ interface Period {
 const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ project, isAdmin: isAdminProp }) => {
   const progressRepo = useProgressRepo();
   const projectRepo = useProjectRepo();
-  const authRepo = useAuthRepo();
+  const { user, isPlatformAdmin } = useAuth();
   const [baseDate, setBaseDate] = useState(project.progressPeriods?.baseDate || '');
   const [duration, setDuration] = useState<'week' | 'month'>(project.progressPeriods?.duration || 'week');
   const [numberOfPeriods, setNumberOfPeriods] = useState<number>(project.progressPeriods?.numberOfPeriods || 12);
@@ -41,8 +42,7 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [isRollOverConfirmOpen, setIsRollOverConfirmOpen] = useState(false);
 
-  const currentUser = authRepo.getCurrentUser();
-  const isAdmin = isAdminProp ?? (project.users?.[currentUser?.id || ''] === 'Project Admin' || currentUser?.email?.toLowerCase() === 'tarek.guindy@gmail.com');
+  const isAdmin = isAdminProp ?? (getProjectRole(project.users, user?.id ?? '') === 'project_admin' || isPlatformAdmin);
   const hasClosedPeriods = periods.some(p => p.status === 'closed');
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useProgressRepo, useScheduleRepo, useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
+import { useProgressRepo, useScheduleRepo, useCostRepo, useAuth } from '../platform/firestore/hooks';
+import { getProjectRole } from '../domain/roles';
 import { 
   Plus, 
   Search, 
@@ -60,7 +61,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const progressRepo = useProgressRepo();
   const scheduleRepo = useScheduleRepo();
   const costRepo = useCostRepo();
-  const authRepo = useAuthRepo();
+  const { user: authUser, isPlatformAdmin } = useAuth();
   const [packages, setPackages] = useState<ProgressPackage[]>([]);
   const [items, setItems] = useState<ProgressItem[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -86,7 +87,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const [isPackageSettingsOpen, setIsPackageSettingsOpen] = useState(false);
   const [itemBulkUpdateData, setItemBulkUpdateData] = useState({ field: '', value: '' });
   const [itemsToAddCount, setItemsToAddCount] = useState(1);
-  const isAdmin = isAdminProp !== undefined ? isAdminProp : (project.users?.[authRepo.getCurrentUser()?.id || ''] === 'Project Admin' || (authRepo.getCurrentUser()?.email?.toLowerCase() === 'tarek.guindy@gmail.com'));
+  const isAdmin = isAdminProp !== undefined ? isAdminProp : (getProjectRole(project.users, authUser?.id ?? '') === 'project_admin' || isPlatformAdmin);
 
   const gridRef = useRef<AgGridReact>(null);
   const itemsGridRef = useRef<AgGridReact>(null);

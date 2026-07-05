@@ -1,5 +1,7 @@
 import { MemoryStore, makeId, now } from './store';
 import type { AuthUser } from '../ports/auth.port';
+import type { UserRoleRepository } from '../ports/userRole.port';
+import type { UserRoles, EnterpriseRole, ProjectRole, EnterpriseMembership } from '../../domain/roles';
 import type {
   Enterprise, Project,
   CostCode, EtcDetail, ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord,
@@ -419,4 +421,51 @@ export class MemoryUtilityAdapter {
   async updateSavedView(id: string, data: Partial<SavedView>) { savedViewStore.update(id, data); }
   async deleteSavedView(id: string) { savedViewStore.delete(id); }
   async createInvitation(_data: any) { return { id: makeId() }; }
+}
+
+const EMPTY_ROLES: UserRoles = { platformRole: null, memberships: [] };
+
+export class MemoryUserRoleAdapter implements UserRoleRepository {
+  private store = new Map<string, UserRoles>();
+
+  async getUserRoles(uid: string): Promise<UserRoles> {
+    return this.store.get(uid) ?? EMPTY_ROLES;
+  }
+
+  subscribeUserRoles(uid: string, callback: (roles: UserRoles) => void): () => void {
+    callback(this.store.get(uid) ?? EMPTY_ROLES);
+    return () => {};
+  }
+
+  async setEnterpriseRole(uid: string, enterpriseId: string, role: EnterpriseRole): Promise<void> {
+    const current = this.store.get(uid) ?? EMPTY_ROLES;
+    const existing = current.memberships.find(m => m.enterpriseId === enterpriseId);
+    const memberships: EnterpriseMembership[] = existing
+      ? current.memberships.map(m => m.enterpriseId === enterpriseId ? { ...m, role } : m)
+      : [...current.memberships, { enterpriseId, role, projectRoles: {} }];
+    this.store.set(uid, { ...current, memberships });
+  }
+
+  async setProjectRole(uid: string, enterpriseId: string, projectId: string, role: ProjectRole): Promise<void> {
+    const current = this.store.get(uid) ?? EMPTY_ROLES;
+    const membership = current.memberships.find(m => m.enterpriseId === enterpriseId);
+    const memberships: EnterpriseMembership[] = membership
+      ? current.memberships.map(m =>
+          m.enterpriseId === enterpriseId
+            ? { ...m, projectRoles: { ...m.projectRoles, [projectId]: role } }
+            : m
+        )
+      : [...current.memberships, { enterpriseId, role: 'enterprise_member', projectRoles: { [projectId]: role } }];
+    this.store.set(uid, { ...current, memberships });
+  }
+
+  async removeProjectRole(uid: string, enterpriseId: string, projectId: string): Promise<void> {
+    const current = this.store.get(uid) ?? EMPTY_ROLES;
+    const memberships: EnterpriseMembership[] = current.memberships.map(m => {
+      if (m.enterpriseId !== enterpriseId) return m;
+      const { [projectId]: _removed, ...rest } = m.projectRoles;
+      return { ...m, projectRoles: rest };
+    });
+    this.store.set(uid, { ...current, memberships });
+  }
 }

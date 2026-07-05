@@ -10,11 +10,12 @@ import { ProcurementAdapter } from './adapters/ProcurementAdapter';
 import { ScheduleAdapter } from './adapters/ScheduleAdapter';
 import { UtilityAdapter } from './adapters/UtilityAdapter';
 import { AuthAdapter } from './adapters/AuthAdapter';
+import { UserRoleAdapter } from './adapters/UserRoleAdapter';
 import {
   MemoryAuthAdapter, MemoryEnterpriseAdapter, MemoryProjectAdapter,
   MemoryCostAdapter, MemoryChangeAdapter, MemoryRiskAdapter,
   MemorySubcontractAdapter, MemoryProgressAdapter, MemoryProcurementAdapter,
-  MemoryScheduleAdapter, MemoryUtilityAdapter,
+  MemoryScheduleAdapter, MemoryUtilityAdapter, MemoryUserRoleAdapter,
 } from '../memory/MemoryAdapters';
 import type { EnterpriseRepository } from '../ports/enterprise.port';
 import type { ProjectRepository } from '../ports/project.port';
@@ -27,6 +28,7 @@ import type { ProcurementRepository } from '../ports/procurement.port';
 import type { ScheduleRepository } from '../ports/schedule.port';
 import type { UtilityRepository } from '../ports/utility.port';
 import type { AuthRepository } from '../ports/auth.port';
+import type { UserRoleRepository } from '../ports/userRole.port';
 
 interface Platform {
   enterprise: EnterpriseRepository;
@@ -40,6 +42,7 @@ interface Platform {
   schedule: ScheduleRepository;
   utility: UtilityRepository;
   auth: AuthRepository;
+  userRole: UserRoleRepository;
 }
 
 const PlatformContext = createContext<Platform | null>(null);
@@ -59,6 +62,7 @@ export function FirestoreProvider({ children }: { children: React.ReactNode }) {
     schedule: new MemoryScheduleAdapter(),
     utility: new MemoryUtilityAdapter(),
     auth: new MemoryAuthAdapter(),
+    userRole: new MemoryUserRoleAdapter(),
   } as unknown as Platform) : ({
     enterprise: new EnterpriseAdapter(),
     project: new ProjectAdapter(),
@@ -71,6 +75,7 @@ export function FirestoreProvider({ children }: { children: React.ReactNode }) {
     schedule: new ScheduleAdapter(),
     utility: new UtilityAdapter(),
     auth: new AuthAdapter(),
+    userRole: new UserRoleAdapter(),
   }), []);
 
   return <PlatformContext.Provider value={platform}>{children}</PlatformContext.Provider>;
