@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.44",
+  "version": "1.0.45",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -75,6 +75,7 @@
     "@types/react-dom": "^19.0.0",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
+    "@vercel/node": "^5.8.22",
     "@vitest/ui": "^4.1.9",
     "autoprefixer": "^10.4.21",
     "eslint": "^10.6.0",
