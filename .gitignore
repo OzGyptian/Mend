@@ -7,3 +7,14 @@ coverage/
 .env*
 !.env.example
 scripts/service-account.json
+.vercel
+.env*.local
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+tests/e2e/.auth/user.json
+.env.test
