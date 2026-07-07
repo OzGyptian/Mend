@@ -3021,8 +3021,8 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                     className="space-y-6"
                   >
                     <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 rounded-2xl">
-                      <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Link Generated!</p>
-                      <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">Copy the link below and send it to your colleague.</p>
+                      <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Invitation Sent!</p>
+                      <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">An email has been sent to your colleague. If it doesn't arrive, you can also share this link directly.</p>
                     </div>
                     
                     <div className="relative">
