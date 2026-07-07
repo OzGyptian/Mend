@@ -51,6 +51,7 @@ export class UtilityAdapter implements UtilityRepository {
   }
 
   async createInvitation(data: {
+    token: string;
     email: string;
     enterpriseId: string;
     enterpriseName: string;

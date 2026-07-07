@@ -665,13 +665,14 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       
       // 2. Create invitation document
       await utilityRepo.createInvitation({
+        token,
         enterpriseId: enterprise.id,
         email: inviteEmail.toLowerCase().trim(),
         enterpriseName: enterprise.name,
         invitedBy: authRepo.getCurrentUser()?.id || '',
         status: 'pending',
         createdAt: new Date().toISOString(),
-      } as any);
+      });
 
       // 3. Generate the secure link
       const inviteLink = `${window.location.origin}?token=${token}`;

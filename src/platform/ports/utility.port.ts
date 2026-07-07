@@ -14,6 +14,7 @@ export interface UtilityRepository {
 
   // Invitations — write-only; status lifecycle managed server-side
   createInvitation(data: {
+    token: string;
     email: string;
     enterpriseId: string;
     enterpriseName: string;
