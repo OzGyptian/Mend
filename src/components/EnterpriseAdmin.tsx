@@ -679,16 +679,26 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       setGeneratedLink(inviteLink);
 
       // 4. Try to send real email via our backend
-      await fetch('/api/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: inviteEmail,
-          enterpriseName: enterprise.name,
-          inviterName: authRepo.getCurrentUser()?.displayName || authRepo.getCurrentUser()?.email || 'A colleague',
-          appUrl: inviteLink
-        })
-      }).catch(err => console.warn('Email sending failed, but link was generated:', err));
+      try {
+        const emailRes = await fetch('/api/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: inviteEmail,
+            enterpriseName: enterprise.name,
+            inviterName: authRepo.getCurrentUser()?.displayName || authRepo.getCurrentUser()?.email || 'A colleague',
+            appUrl: inviteLink
+          })
+        });
+        if (!emailRes.ok) {
+          const body = await emailRes.json().catch(() => ({}));
+          console.error('Email delivery failed:', body);
+          toast.error('Email could not be delivered — share the link below directly.');
+        }
+      } catch (emailErr) {
+        console.warn('Email request failed (network):', emailErr);
+        toast.error('Email could not be delivered — share the link below directly.');
+      }
 
       // 5. Track pending invite in Enterprise doc
       const pendingInvites = (enterprise as any).pendingInvites || [];
