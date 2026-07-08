@@ -1,3 +1,4 @@
+rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -28,7 +29,7 @@ service cloud.firestore {
 
     // Allows an invitee to join an enterprise — they can add only themselves
     // to adminUsers and the users map, nothing else.
-    function isJoiningViaInvitation(enterpriseId) {
+    function isJoiningViaInvitation() {
       let diff = request.resource.data.diff(resource.data);
       return diff.affectedKeys().hasOnly(['adminUsers', 'users', 'updatedAt']) &&
              !(request.auth.uid in resource.data.adminUsers) &&
@@ -304,7 +305,7 @@ service cloud.firestore {
       allow create: if isAuthenticated(); 
       allow update: if isAuthenticated() && (
         isAdminOfEnterprise(enterpriseId) ||
-        isJoiningViaInvitation(enterpriseId)
+        isJoiningViaInvitation()
       );
       allow delete: if isSystemAdmin();
     }
