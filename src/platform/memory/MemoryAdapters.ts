@@ -38,6 +38,11 @@ export class MemoryAuthAdapter {
   async registerWithCredentials(_e: string, _p: string) { return this.current!; }
   async signOut() { this.current = null; this.listeners.forEach(l => l(null)); }
   async sendVerificationEmail() {}
+  async updateDisplayName(name: string) {
+    if (this.current) { this.current = { ...this.current, displayName: name }; this.listeners.forEach(l => l(this.current)); }
+  }
+  async sendPasswordReset(_email: string) {}
+  async updatePassword(_currentPassword: string, _newPassword: string) {}
 }
 
 // ── Enterprise ───────────────────────────────────────────────────────────────

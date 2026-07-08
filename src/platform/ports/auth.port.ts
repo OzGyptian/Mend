@@ -14,4 +14,7 @@ export interface AuthRepository {
   sendVerificationEmail(): Promise<void>;
   signOut(): Promise<void>;
   subscribeToAuth(callback: (user: AuthUser | null) => void): () => void;
+  updateDisplayName(name: string): Promise<void>;
+  sendPasswordReset(email: string): Promise<void>;
+  updatePassword(currentPassword: string, newPassword: string): Promise<void>;
 }

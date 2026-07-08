@@ -5,6 +5,11 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
+  updateProfile,
+  updatePassword as fbUpdatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   signOut,
   onAuthStateChanged,
   type User,
@@ -56,5 +61,22 @@ export class AuthAdapter implements AuthRepository {
     return onAuthStateChanged(this.auth, (user) => {
       callback(user ? toAuthUser(user) : null);
     });
+  }
+
+  async updateDisplayName(name: string): Promise<void> {
+    if (!this.auth.currentUser) throw new Error('No authenticated user');
+    await updateProfile(this.auth.currentUser, { displayName: name });
+  }
+
+  async sendPasswordReset(email: string): Promise<void> {
+    await sendPasswordResetEmail(this.auth, email);
+  }
+
+  async updatePassword(currentPassword: string, newPassword: string): Promise<void> {
+    const user = this.auth.currentUser;
+    if (!user || !user.email) throw new Error('No authenticated user');
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+    await fbUpdatePassword(user, newPassword);
   }
 }
