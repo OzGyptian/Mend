@@ -35,7 +35,10 @@ export class ProjectAdapter implements ProjectRepository {
     userEmail: string,
     callback: (projects: Project[]) => void,
   ): Unsubscribe {
-    const q = query(collection(db, 'projects'), where('enterpriseId', '==', enterpriseId), where('members', 'array-contains', userEmail), limit(100));
+    const constraints = userEmail
+      ? [where('enterpriseId', '==', enterpriseId), where('members', 'array-contains', userEmail), limit(100)]
+      : [where('enterpriseId', '==', enterpriseId), limit(100)];
+    const q = query(collection(db, 'projects'), ...constraints);
     return onSnapshot(q, (snap) => { callback(snap.docs.map((d) => fromDoc<Project>(d.id, d.data()))); });
   }
 
