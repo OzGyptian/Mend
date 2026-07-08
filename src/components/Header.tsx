@@ -7,8 +7,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuGroup,
   DropdownMenuLabel,
+  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -67,22 +68,26 @@ export default function Header({ user, enterprise, enterprises = [], onEnterpris
               <ChevronDown className="w-3 h-3 ml-1 opacity-60" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-56">
-              <DropdownMenuLabel className="text-xs text-gray-500 font-normal">Switch Enterprise</DropdownMenuLabel>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel className="text-xs text-gray-500 font-normal">Switch Enterprise</DropdownMenuLabel>
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
-              {enterprises.map((ent) => (
-                <DropdownMenuItem
-                  key={ent.id}
-                  onClick={() => { onEnterpriseChange(ent); window.location.href = '/'; }}
-                  className={ent.id === enterprise?.id ? 'bg-gray-100 dark:bg-white/10 font-medium' : ''}
-                >
-                  {ent.logoURL ? (
-                    <img src={ent.logoURL} className="w-4 h-4 object-contain bg-white rounded-sm mr-2" alt="" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Building2 className="w-4 h-4 mr-2 opacity-50" />
-                  )}
-                  {ent.name}
-                </DropdownMenuItem>
-              ))}
+              <DropdownMenuGroup>
+                {enterprises.map((ent) => (
+                  <DropdownMenuItem
+                    key={ent.id}
+                    onClick={() => { onEnterpriseChange(ent); window.location.href = '/'; }}
+                    className={ent.id === enterprise?.id ? 'bg-gray-100 dark:bg-white/10 font-medium' : ''}
+                  >
+                    {ent.logoURL ? (
+                      <img src={ent.logoURL} className="w-4 h-4 object-contain bg-white rounded-sm mr-2" alt="" referrerPolicy="no-referrer" />
+                    ) : (
+                      <Building2 className="w-4 h-4 mr-2 opacity-50" />
+                    )}
+                    {ent.name}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
