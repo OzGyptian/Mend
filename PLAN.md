@@ -161,3 +161,75 @@ Findings captured in JOURNAL.md Session 1 and CLAUDE.md.
 | `betaPertImpactAmount` is stored as derived value | Canonical formula goes to `src/domain/risk.ts`; Tarek verifies outputs match |
 | No existing tests — calc logic could silently be wrong | Write tests against current behaviour first (Chunk 2), then refactor into domain |
 | Univerjs and AG Grid both in use — DataGrid wrapper scope unclear | Start with AG Grid only in Chunk 8; Univerjs is a separate decision |
+
+
+---
+
+# Phase 11 — Foundation Uplift (post-seam)
+
+**Basis:** SYSTEM_REVIEW.md (2026-07-09). Approach signed off: vertical slices + E2E-first;
+pragmatic strictness (extract logic + tests now; defer 800-line/`any` cosmetic cleanup).
+
+**Golden rule:** every slice ends committed, green, and shippable. E2E must stay green throughout
+(behaviour is pinned, not changed). Unit tests are written when a pure function is extracted.
+
+## Phase 11.0 — Safety net & harness (do first)
+- [ ] 11.0.1 Add `npm run dev:memory` (Vite with `VITE_ADAPTER=memory`) and a Playwright
+      `webServer` that boots it; repoint `baseURL` from the Vercel URL to `http://localhost:<port>`
+- [ ] 11.0.2 Seed deterministic fixtures in the memory store (1 enterprise, 1 project, cost codes,
+      actuals, budgets, changes) for E2E to assert against
+- [ ] 11.0.3 Characterization E2E: sign-in → enterprise select → open project → cost report shows
+      expected EAC/variance numbers (pins CURRENT behaviour, including any current quirks)
+- [ ] 11.0.4 Characterization E2E for: create/delete project, add actual cost, add change
+- [ ] 11.0.5 Widen vitest coverage `include` beyond `src/domain/**` so component→domain migration
+      shows measurable coverage gain
+- [ ] 11.0.6 GATE: `npm run test` + `npm run test:e2e` green on current code. Commit: `test: characterization safety net`
+
+## Phase 11.1 — Security rules (small, high value)
+- [ ] 11.1.1 F2: `userRoles` write → `isSystemAdmin() || request.auth.uid == userId`; forbid self-set of `platformRole`
+- [ ] 11.1.2 F3: enterprise-join rule must `get()` a matching pending `invitations` doc (email == token email), not trust diff shape
+- [ ] 11.1.3 F11: scope `procurementStepDefinitions` to enterprise/project; F12: restrict `invitations` read to invited email + enterprise admins
+- [ ] 11.1.4 Negative tests: non-invited user cannot add self to adminUsers; user cannot write another user's roles
+- [ ] 11.1.5 GATE: legit E2E green, escalation blocked. Deploy rules. Commit: `fix(security): close authz holes`
+
+## Phase 11.2 — Slice: Cost / EAC  (worst file + money-trust)
+- [ ] 11.2.1 Create `src/domain/eac.ts`: canonical EAC / ETC / cost-variance from leaf inputs, with unit tests (100%)
+- [ ] 11.2.2 Replace inline calc in CostCodes/ActualCost/BaselineBudget/dashboards with `eac.ts` calls; compute-on-read
+- [ ] 11.2.3 Retire the stored derived fields as authoritative + remove "Recalculate All" (or make it a no-op/dev tool)
+- [ ] 11.2.4 Fix F5: choose cost-code `id` as canonical FK; migration for children; delete "id OR code" matching
+- [ ] 11.2.5 Extract grid config to `<DataGrid>` where CostCodes is concerned (adopt existing wrapper)
+- [ ] 11.2.6 GATE: E2E cost report green (same numbers); unit tests green. Commit + JOURNAL.
+
+## Phase 11.3 — Slice: Change management
+- [ ] 11.3.1 Extract change roll-up (Change.budget/eac = sum of approved records) → domain, unit tests
+- [ ] 11.3.2 Compute-on-read; remove stored-drift; align FK to cost-code id
+- [ ] 11.3.3 GATE: E2E + units green. Commit + JOURNAL.
+
+## Phase 11.4 — Slice: Risk
+- [ ] 11.4.1 Wire `domain/risk.ts` betaPert at both write and read; extract exposure roll-up, unit tests
+- [ ] 11.4.2 Compute-on-read for Risk.exposure / RiskRecord.betaPertImpactAmount
+- [ ] 11.4.3 GATE. Commit + JOURNAL.
+
+## Phase 11.5 — Slice: Subcontract / Invoice
+- [ ] 11.5.1 Extract subcontract totals + invoice certification math → domain, unit tests
+- [ ] 11.5.2 GATE. Commit + JOURNAL.
+
+## Phase 11.6 — Slice: Progress
+- [ ] 11.6.1 Wire `domain/phasing.ts` (kill the 4 inline duplicate copies); extract earned-value math, unit tests
+- [ ] 11.6.2 GATE. Commit + JOURNAL.
+
+## Phase 11.7 — Slice: Procurement
+- [ ] 11.7.1 Confirm `domain/procurement.ts` is the only date engine; extract remaining inline logic, unit tests
+- [ ] 11.7.2 GATE. Commit + JOURNAL.
+
+## Phase 11.8 — Identity unification (cross-cutting)
+- [ ] 11.8.1 Adopt `userRoles`/`roles.ts` as the single model; wire App.tsx to `useAuth()`
+- [ ] 11.8.2 Rules read roles (custom claims or get()); remove hardcoded emails from client + rules
+- [ ] 11.8.3 Reconcile role vocabularies (roles.ts vs Project.users type)
+- [ ] 11.8.4 GATE: E2E for admin/non-admin flows green. Commit + JOURNAL.
+
+## Deferred (pragmatic strictness — later pass)
+- [ ] 11.9.1 Split any file still >800 lines into render-only shells
+- [ ] 11.9.2 Eliminate remaining `: any` in touched components
+- [ ] 11.9.3 Referential integrity: cascade/soft-delete for project & cost-code (fold in audit/fix scripts as a test)
+- [ ] 11.9.4 Split god-documents (Enterprise/Project config arrays; ProgressItem snapshot vs working fields)
