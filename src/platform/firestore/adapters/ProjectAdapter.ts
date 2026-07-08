@@ -39,7 +39,10 @@ export class ProjectAdapter implements ProjectRepository {
       ? [where('enterpriseId', '==', enterpriseId), where('members', 'array-contains', userEmail), limit(100)]
       : [where('enterpriseId', '==', enterpriseId), limit(100)];
     const q = query(collection(db, 'projects'), ...constraints);
-    return onSnapshot(q, (snap) => { callback(snap.docs.map((d) => fromDoc<Project>(d.id, d.data()))); });
+    return onSnapshot(q,
+      (snap) => { callback(snap.docs.map((d) => fromDoc<Project>(d.id, d.data()))); },
+      (err) => { console.error('[ProjectAdapter] subscribeByEnterprise error:', err.code, err.message); },
+    );
   }
 
   async listByEnterprise(enterpriseId: string): Promise<Project[]> {
