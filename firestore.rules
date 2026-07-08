@@ -324,9 +324,9 @@ service cloud.firestore {
     }
 
     match /sheets/{sheetId} {
-      allow read: if canAccessSheet(sheetId);
+      allow read: if isAuthenticated() && canAccessProject(resource.data.projectId);
       allow create: if isAuthenticated() && canAccessProject(request.resource.data.projectId);
-      allow update: if canAccessSheet(sheetId);
+      allow update: if isAuthenticated() && canAccessProject(resource.data.projectId);
       allow delete: if isAuthenticated() && canAccessProject(resource.data.projectId);
 
       match /rows/{rowId} {
