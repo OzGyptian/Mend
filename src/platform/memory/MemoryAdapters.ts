@@ -43,6 +43,8 @@ export class MemoryAuthAdapter {
   }
   async sendPasswordReset(_email: string) {}
   async updatePassword(_currentPassword: string, _newPassword: string) {}
+  getLinkedProviders(): string[] { return ['password']; }
+  async linkEmailPassword(_newPassword: string) {}
 }
 
 // ── Enterprise ───────────────────────────────────────────────────────────────

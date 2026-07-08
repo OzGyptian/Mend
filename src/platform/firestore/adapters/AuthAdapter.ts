@@ -9,6 +9,8 @@ import {
   updateProfile,
   updatePassword as fbUpdatePassword,
   reauthenticateWithCredential,
+  reauthenticateWithPopup,
+  linkWithCredential,
   EmailAuthProvider,
   signOut,
   onAuthStateChanged,
@@ -78,5 +80,17 @@ export class AuthAdapter implements AuthRepository {
     const credential = EmailAuthProvider.credential(user.email, currentPassword);
     await reauthenticateWithCredential(user, credential);
     await fbUpdatePassword(user, newPassword);
+  }
+
+  getLinkedProviders(): string[] {
+    return this.auth.currentUser?.providerData.map(p => p.providerId) ?? [];
+  }
+
+  async linkEmailPassword(newPassword: string): Promise<void> {
+    const user = this.auth.currentUser;
+    if (!user || !user.email) throw new Error('No authenticated user');
+    await reauthenticateWithPopup(user, new GoogleAuthProvider());
+    const credential = EmailAuthProvider.credential(user.email, newPassword);
+    await linkWithCredential(user, credential);
   }
 }

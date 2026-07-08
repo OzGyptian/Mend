@@ -17,4 +17,6 @@ export interface AuthRepository {
   updateDisplayName(name: string): Promise<void>;
   sendPasswordReset(email: string): Promise<void>;
   updatePassword(currentPassword: string, newPassword: string): Promise<void>;
+  getLinkedProviders(): string[];
+  linkEmailPassword(newPassword: string): Promise<void>;
 }
