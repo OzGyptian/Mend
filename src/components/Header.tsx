@@ -1,9 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { Enterprise, Project, Sheet } from '../types';
-import { Bell, Search, User as UserIcon, ChevronRight } from 'lucide-react';
+import { Bell, Search, User as UserIcon, ChevronRight, ChevronDown, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { useProjectRepo, useUtilityRepo } from '../platform/firestore/hooks';
 
@@ -11,9 +19,11 @@ interface HeaderProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   user: any;
   enterprise: Enterprise | null;
+  enterprises?: Enterprise[];
+  onEnterpriseChange?: (enterprise: Enterprise) => void;
 }
 
-export default function Header({ user, enterprise }: HeaderProps) {
+export default function Header({ user, enterprise, enterprises = [], onEnterpriseChange }: HeaderProps) {
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -45,17 +55,49 @@ export default function Header({ user, enterprise }: HeaderProps) {
   return (
     <header className="h-16 bg-white dark:bg-[#0A0A0A] border-b border-gray-200 dark:border-white/10 flex items-center justify-between px-6 z-10 transition-colors duration-300">
       <div className="flex items-center gap-2 text-sm">
-        <Button 
-          variant="ghost"
-          size="sm"
-          onClick={() => window.location.href = '/'}
-          className="flex items-center gap-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors px-2"
-        >
-          {enterprise?.logoURL && (
-            <img src={enterprise.logoURL} className="w-5 h-5 object-contain bg-white rounded-sm" alt="" referrerPolicy="no-referrer" />
-          )}
-          {enterprise?.name || 'Enterprise'}
-        </Button>
+        {enterprises.length > 1 && onEnterpriseChange ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors px-2 py-1 rounded-md hover:bg-gray-100 dark:hover:bg-white/10 outline-none">
+              {enterprise?.logoURL ? (
+                <img src={enterprise.logoURL} className="w-5 h-5 object-contain bg-white rounded-sm" alt="" referrerPolicy="no-referrer" />
+              ) : (
+                <Building2 className="w-4 h-4" />
+              )}
+              {enterprise?.name || 'Enterprise'}
+              <ChevronDown className="w-3 h-3 ml-1 opacity-60" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuLabel className="text-xs text-gray-500 font-normal">Switch Enterprise</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {enterprises.map((ent) => (
+                <DropdownMenuItem
+                  key={ent.id}
+                  onClick={() => { onEnterpriseChange(ent); window.location.href = '/'; }}
+                  className={ent.id === enterprise?.id ? 'bg-gray-100 dark:bg-white/10 font-medium' : ''}
+                >
+                  {ent.logoURL ? (
+                    <img src={ent.logoURL} className="w-4 h-4 object-contain bg-white rounded-sm mr-2" alt="" referrerPolicy="no-referrer" />
+                  ) : (
+                    <Building2 className="w-4 h-4 mr-2 opacity-50" />
+                  )}
+                  {ent.name}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => window.location.href = '/'}
+            className="flex items-center gap-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors px-2"
+          >
+            {enterprise?.logoURL && (
+              <img src={enterprise.logoURL} className="w-5 h-5 object-contain bg-white rounded-sm" alt="" referrerPolicy="no-referrer" />
+            )}
+            {enterprise?.name || 'Enterprise'}
+          </Button>
+        )}
         
         {isProjectView && project && (
           <>

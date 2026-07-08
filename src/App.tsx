@@ -23,7 +23,9 @@ export default function App() {
 
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
+  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(null);
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
@@ -52,6 +54,17 @@ export default function App() {
     setCurrentSheet(null);
     setView('enterprise');
   }, [systemOwnerEnterpriseId]);
+
+  const handleEnterpriseSwitch = (enterprise: Enterprise) => {
+    setCurrentProject(null);
+    setCurrentSheet(null);
+    setView('enterprise');
+    if (isSystemOwner) {
+      setSystemOwnerEnterpriseId(enterprise.id);
+    } else {
+      setSelectedEnterpriseId(enterprise.id);
+    }
+  };
 
   useEffect(() => {
     try { setIsInIframe(window.self !== window.top); } catch (e) { setIsInIframe(true); }
@@ -89,23 +102,33 @@ export default function App() {
           setCurrentEnterprise(ent);
           if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
         })
-      : enterpriseRepo.subscribeByUserId(user.id, (enterprises) => {
-          const ent = enterprises[0] ?? null;
-          setCurrentEnterprise(ent);
-          if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
+      : enterpriseRepo.subscribeByUserId(user.id, (ents) => {
+          setEnterprises(ents);
+          setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
         });
     return unsub;
   }, [user?.id, systemOwnerEnterpriseId]);
 
   useEffect(() => {
     if (!user || !isSystemOwner) return;
-    return enterpriseRepo.subscribeAll(async (enterprises) => {
-      if (enterprises.length === 0) {
+    return enterpriseRepo.subscribeAll(async (ents) => {
+      setEnterprises(ents);
+      if (ents.length === 0) {
         try { await enterpriseRepo.bootstrapIfEmpty(user.id, 'Global Construction Corp', 'Enterprise System Admin'); }
         catch (error) { console.error('Bootstrap failed', error); }
       }
     });
   }, [user?.id]);
+
+  // Subscribe to the currently-selected enterprise and load its projects
+  const activeEnterpriseId = isSystemOwner ? systemOwnerEnterpriseId : selectedEnterpriseId;
+  useEffect(() => {
+    if (!user || !activeEnterpriseId) return;
+    return enterpriseRepo.subscribeById(activeEnterpriseId, (ent) => {
+      setCurrentEnterprise(ent);
+      if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
+    });
+  }, [user?.id, activeEnterpriseId]);
 
   useEffect(() => {
     if (!user || !currentProject?.id) return;
@@ -188,6 +211,8 @@ export default function App() {
         handleEmailAuth={handleEmailAuth}
         openInNewTab={openInNewTab}
         projects={projects}
+        enterprises={enterprises}
+        onEnterpriseChange={handleEnterpriseSwitch}
       />
     </BrowserRouter>
   );
@@ -220,6 +245,8 @@ interface AuthenticatedAppProps {
   handleEmailAuth: (e: React.FormEvent) => Promise<void>;
   openInNewTab: () => void;
   projects: Project[];
+  enterprises: Enterprise[];
+  onEnterpriseChange: (enterprise: Enterprise) => void;
 }
 
 function AuthenticatedApp({
@@ -227,9 +254,9 @@ function AuthenticatedApp({
   systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
   isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
   email, setEmail, password, setPassword, isRegistering, setIsRegistering,
-  showLanding, setShowLanding, 
+  showLanding, setShowLanding,
   isInIframe, handleLogin, handleEmailAuth, openInNewTab,
-  projects
+  projects, enterprises, onEnterpriseChange
 }: AuthenticatedAppProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -505,9 +532,11 @@ function AuthenticatedApp({
         setIsCollapsed={setIsSidebarCollapsed}
       />
       <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0A0A0A] transition-colors duration-300">
-        <Header 
-          user={user} 
-          enterprise={currentEnterprise} 
+        <Header
+          user={user}
+          enterprise={currentEnterprise}
+          enterprises={enterprises}
+          onEnterpriseChange={onEnterpriseChange}
         />
         <main className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F4] dark:bg-[#0A0A0A] transition-colors duration-300">
           <Routes>
