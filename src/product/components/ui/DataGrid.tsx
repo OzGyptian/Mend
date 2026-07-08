@@ -24,6 +24,7 @@ export const DataGrid = React.forwardRef<AgGridReact, DataGridProps>(
           ...props.defaultColDef,
         }}
         {...props}
+        theme="legacy"
       />
     </div>
   )

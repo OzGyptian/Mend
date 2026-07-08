@@ -592,6 +592,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
               theme === 'dark' ? "ag-theme-quartz-dark" : ""
             )}>
               <AgGridReact
+                theme="legacy"
                 ref={gridRef}
                 rowData={selectedInvoiceId ? invoices.filter(i => i.id === selectedInvoiceId) : invoices}
                 columnDefs={invoiceColumnDefs}
@@ -688,6 +689,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
                   theme === 'dark' ? "ag-theme-quartz-dark" : ""
                 )}>
                   <AgGridReact
+                    theme="legacy"
                     ref={itemsGridRef}
                     rowData={selectedInvoice.items || []}
                     columnDefs={itemColumnDefs}

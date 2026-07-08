@@ -420,6 +420,7 @@ const AgGridSheet = forwardRef<AgGridSheetRef, AgGridSheetProps>(({
   return (
     <div className={`w-full h-full ${theme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
       <AgGridReact
+        theme="legacy"
         key={sheetId}
         ref={gridRef}
         rowData={data}

@@ -578,6 +578,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         <div className="flex-1 min-h-0 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden">
           <div className="ag-theme-quartz-dark h-full w-full">
             <AgGridReact
+              theme="legacy"
               ref={bulkRecordsGridRef}
               rowData={allChangeRecords}
               columnDefs={bulkRecordColumnDefs}

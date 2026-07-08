@@ -1013,6 +1013,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         <div className="flex-1 relative">
           <div className={cn("absolute inset-0 ag-theme-quartz", theme === 'dark' ? "ag-theme-quartz-dark" : "")}>
             <AgGridReact
+              theme="legacy"
               ref={gridRef} rowData={risks} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
               onCellValueChanged={onCellValueChanged} rowSelection="multiple" animateRows={true}
               pinnedBottomRowData={riskPinnedBottomRowData}
@@ -1069,7 +1070,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
               </div>
             </div>
             <div className="flex-1 relative ag-theme-quartz-dark">
-              <AgGridReact 
+              <AgGridReact theme="legacy"
                 ref={recordsGridRef} rowData={riskRecords} columnDefs={recordColumnDefs}
                 onCellValueChanged={onRecordCellValueChanged} quickFilterText={recordsQuickFilterText}
                 pinnedBottomRowData={recordPinnedBottomRowData}

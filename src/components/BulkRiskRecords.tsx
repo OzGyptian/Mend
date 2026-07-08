@@ -511,6 +511,7 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       <div className="flex-1 bg-white dark:bg-[#141414] border-t border-gray-200 dark:border-white/10 overflow-hidden">
         <div className="ag-theme-quartz-dark h-full w-full">
           <AgGridReact
+            theme="legacy"
             ref={bulkRecordsGridRef} rowData={allRiskRecords} columnDefs={bulkRecordColumnDefs}
             rowSelection="multiple" animateRows={true} quickFilterText={bulkRecordsQuickFilterText}
             pinnedBottomRowData={pinnedBottomRowData} statusBar={statusBar}

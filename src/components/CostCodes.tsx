@@ -4087,6 +4087,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   rowData={subcontractBreakdownRows}
                   pinnedBottomRowData={subcontractBreakdownPinnedBottomRowData}
                   getRowClass={(params) => {
@@ -4413,6 +4414,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   ref={etcGridRef}
                   rowData={etcRows}
                   columnDefs={etcColumnDefs}
@@ -4562,6 +4564,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   rowData={changeRecords.map(r => {
                     const parentChange = allChanges.find(c => c.id === r.changeId);
                     return {
@@ -4781,6 +4784,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   rowData={actualsRows}
                   columnDefs={actualsColumnDefs}
                   quickFilterText={actualsQuickFilterText}
@@ -4853,6 +4857,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   rowData={baselineRows}
                   columnDefs={baselineColumnDefs}
                   quickFilterText={baselineQuickFilterText}
@@ -5092,6 +5097,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   ref={timephasingGridRef}
                   rowData={timephasingRows}
                   isExternalFilterPresent={() => true}

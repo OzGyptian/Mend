@@ -1222,6 +1222,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             theme === 'dark' ? "ag-theme-quartz-dark" : ""
           )}>
             <AgGridReact
+              theme="legacy"
               ref={gridRef}
               rowData={changes}
               columnDefs={changeColumnDefs}
@@ -1374,6 +1375,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
                 theme === 'dark' ? "ag-theme-quartz-dark" : ""
               )}>
                 <AgGridReact
+                  theme="legacy"
                   ref={recordsGridRef}
                   rowData={changeRecords}
                   columnDefs={recordColumnDefs}

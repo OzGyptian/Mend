@@ -1915,6 +1915,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
               theme === 'dark' ? "ag-theme-quartz-dark" : ""
             )}>
                   <AgGridReact
+                    theme="legacy"
                     ref={gridRef}
                     rowData={selectedPackageId ? packages.filter(p => p.id === selectedPackageId) : packages}
                     columnDefs={packageColumnDefs}
@@ -2043,6 +2044,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
                   theme === 'dark' ? "ag-theme-quartz-dark" : ""
                 )}>
                   <AgGridReact
+                    theme="legacy"
                     ref={itemsGridRef}
                     rowData={processedItems}
                     columnDefs={itemColumnDefs}

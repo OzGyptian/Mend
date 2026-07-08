@@ -3209,6 +3209,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
               theme === 'dark' ? "ag-theme-quartz-dark" : ""
             )}>
               <AgGridReact
+                theme="legacy"
                 ref={gridRef}
                 rowData={selectedSubcontractId ? subcontracts.filter(s => s.id === selectedSubcontractId) : subcontracts}
                 columnDefs={subcontractColumnDefs}
@@ -3561,6 +3562,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                 )}>
                   {bottomPanelTab === 'lineItems' ? (
                     <AgGridReact
+                      theme="legacy"
                       key="lineItemsGrid"
                       ref={lineItemsGridRef}
                       rowData={selectedSubcontract?.lineItems || []}
@@ -3633,6 +3635,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                         </div>
                         <div className="flex-1 min-h-0">
                           <AgGridReact
+                            theme="legacy"
                             key="invoicesGrid"
                             ref={invoicesGridRef}
                             rowData={selectedSubcontractInvoices}
@@ -3723,6 +3726,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                           </div>
                           <div className="flex-1 min-h-0 ag-theme-quartz dark:ag-theme-quartz-dark">
                             <AgGridReact
+                              theme="legacy"
                               key="invoiceItemsGrid"
                               rowData={selectedInvoiceItems}
                               columnDefs={invoiceLineItemColumnDefs}
