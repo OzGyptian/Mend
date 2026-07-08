@@ -63,6 +63,7 @@ export default function App() {
     setView('enterprise');
     if (isSystemOwner) {
       setSystemOwnerEnterpriseId(enterprise.id);
+      localStorage.setItem('systemOwnerEnterpriseId', enterprise.id);
     } else {
       setSelectedEnterpriseId(enterprise.id);
       localStorage.setItem('selectedEnterpriseId', enterprise.id);
@@ -99,23 +100,23 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!user) return;
-    const unsub = isSystemOwner && systemOwnerEnterpriseId
-      ? enterpriseRepo.subscribeById(systemOwnerEnterpriseId, (ent) => {
-          setCurrentEnterprise(ent);
-          if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
-        })
-      : enterpriseRepo.subscribeByUserId(user.id, (ents) => {
-          setEnterprises(ents);
-          setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
-        });
-    return unsub;
-  }, [user?.id, systemOwnerEnterpriseId]);
+    if (!user || isSystemOwner) return;
+    return enterpriseRepo.subscribeByUserId(user.id, (ents) => {
+      setEnterprises(ents);
+      setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
+    });
+  }, [user?.id]);
 
   useEffect(() => {
     if (!user || !isSystemOwner) return;
     return enterpriseRepo.subscribeAll(async (ents) => {
       setEnterprises(ents);
+      setSystemOwnerEnterpriseId(prev => {
+        if (prev) return prev;
+        const first = ents[0]?.id ?? null;
+        if (first) localStorage.setItem('systemOwnerEnterpriseId', first);
+        return first;
+      });
       if (ents.length === 0) {
         try { await enterpriseRepo.bootstrapIfEmpty(user.id, 'Global Construction Corp', 'Enterprise System Admin'); }
         catch (error) { console.error('Bootstrap failed', error); }
