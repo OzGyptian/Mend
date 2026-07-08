@@ -134,8 +134,8 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
     try {
       await scheduleRepo.createCalendar({
         name: importedName,
-        weekends: cal.weekends,
-        holidays: cal.holidays,
+        weekends: cal.weekends ?? [0, 6],
+        holidays: cal.holidays ?? [],
         projectId: projectId || null,
         enterpriseId: null,
       } as Omit<ProjectCalendar, 'id' | 'createdAt'>);
@@ -225,7 +225,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                 <div>
                   <h4 className="font-bold dark:text-white">{cal.name}</h4>
                   <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-1">
-                    {cal.weekends.length} Weekends • {cal.holidays.length} Holidays
+                    {(cal.weekends ?? []).length} Weekends • {(cal.holidays ?? []).length} Holidays
                   </p>
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -260,7 +260,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                         key={day.id}
                         className={cn(
                           "w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold border transition-all",
-                          cal.weekends.includes(day.id)
+                          (cal.weekends ?? []).includes(day.id)
                             ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600"
                             : "bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-400"
                         )}
@@ -428,7 +428,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                       <div>
                         <h4 className="font-bold dark:text-white">{cal.name}</h4>
                         <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-1">
-                          {cal.weekends.length} Weekends • {cal.holidays.length} Holidays
+                          {(cal.weekends ?? []).length} Weekends • {(cal.holidays ?? []).length} Holidays
                         </p>
                       </div>
                       <button 

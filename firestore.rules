@@ -550,5 +550,10 @@ service cloud.firestore {
       allow update: if canAccessProject(resource.data.projectId) && isValidScheduleItem(request.resource.data);
       allow delete: if canAccessProject(resource.data.projectId);
     }
+
+    match /userRoles/{userId} {
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isSystemAdmin() || isAuthenticated();
+    }
   }
 }
