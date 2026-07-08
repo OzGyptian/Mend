@@ -76,7 +76,7 @@ export default function Header({ user, enterprise, enterprises = [], onEnterpris
                 {enterprises.map((ent) => (
                   <DropdownMenuItem
                     key={ent.id}
-                    onClick={() => { onEnterpriseChange(ent); window.location.href = '/'; }}
+                    onClick={() => { onEnterpriseChange(ent); navigate('/'); }}
                     className={ent.id === enterprise?.id ? 'bg-gray-100 dark:bg-white/10 font-medium' : ''}
                   >
                     {ent.logoURL ? (

@@ -25,7 +25,9 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
-  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(null);
+  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(
+    () => localStorage.getItem('selectedEnterpriseId')
+  );
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
@@ -63,6 +65,7 @@ export default function App() {
       setSystemOwnerEnterpriseId(enterprise.id);
     } else {
       setSelectedEnterpriseId(enterprise.id);
+      localStorage.setItem('selectedEnterpriseId', enterprise.id);
     }
   };
 
