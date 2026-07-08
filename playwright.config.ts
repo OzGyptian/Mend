@@ -6,23 +6,19 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
+  timeout: 60000,
   reporter: [['html'], ['list']],
   use: {
-    baseURL: process.env.BASE_URL ?? 'https://mend-4f4xc398x-bernardwleung-3292s-projects.vercel.app',
+    baseURL: process.env.BASE_URL ?? 'https://mend-app-tan.vercel.app',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'on-first-retry',
   },
 
   projects: [
-    { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
       name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        storageState: 'tests/e2e/.auth/user.json',
-      },
-      dependencies: ['setup'],
+      use: { ...devices['Desktop Chrome'] },
     },
   ],
 });
