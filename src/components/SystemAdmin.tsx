@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { version } from '../../package.json';
 import { useEnterpriseRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
 import { Plus, Trash2, Edit2, Building2, Shield, Search, AlertTriangle, X, Download, Upload, Filter, Eye, EyeOff, Lock, Unlock, Check, ChevronDown, CheckCircle2 } from 'lucide-react';
@@ -587,7 +588,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10">
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Application Version</p>
-            <p className="text-lg font-bold dark:text-white">v1.0.0</p>
+            <p className="text-lg font-bold dark:text-white">v{version}</p>
             <p className="text-[10px] text-gray-900 mt-2">Stable Production Release</p>
           </div>
           <div className="bg-white dark:bg-[#141414] p-6 rounded-2xl border border-gray-200 dark:border-white/10">

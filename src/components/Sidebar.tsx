@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { version } from '../../package.json';
 import { 
   Layout, 
   Briefcase, 
@@ -298,7 +299,7 @@ export default function Sidebar({
           <div className="px-3 pt-2">
             <div className="flex items-center justify-between text-[10px] font-mono text-gray-900 dark:text-white/20 uppercase tracking-widest">
               <span>Version</span>
-              <span>1.0.0</span>
+              <span>{version}</span>
             </div>
           </div>
         )}
