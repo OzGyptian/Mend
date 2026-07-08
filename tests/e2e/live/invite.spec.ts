@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect } from '../fixtures';
 
 test.describe('Invite / User Management', () => {
   test('enterprise admin page contains user management section', async ({ authPage: page }) => {

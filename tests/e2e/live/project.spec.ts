@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect } from '../fixtures';
 
 test.describe('Project Navigation', () => {
   test('project list is visible in the sidebar', async ({ authPage: page }) => {

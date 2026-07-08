@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { LoginPage } from './pages/LoginPage';
+import { LoginPage } from '../pages/LoginPage';
 
 // These tests run without stored auth state
 test.use({ storageState: { cookies: [], origins: [] } });

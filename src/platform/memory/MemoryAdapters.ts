@@ -4,7 +4,7 @@ import type { UserRoleRepository } from '../ports/userRole.port';
 import type { UserRoles, EnterpriseRole, ProjectRole, EnterpriseMembership } from '../../domain/roles';
 import type {
   Enterprise, Project,
-  CostCode, EtcDetail, ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord,
+  CostCode, Sheet, ForecastRow, EtcDetail, ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord,
   Change, ChangeRecord,
   RiskRecord,
   Subcontract, Invoice,
@@ -211,7 +211,59 @@ export class MemoryCostAdapter {
   async listAllCostPhasing(pid: string) { return phasingStore.list(r => r.projectId === pid); }
 
   async updateManyPhasing(updates: Array<{ id: string; data: any }>) { updates.forEach(u => phasingStore.update(u.id, u.data)); }
+
+  async getCostCode(id: string) { return costCodeStore.get(id) ?? null; }
+  async listCostCodes(pid: string) { return costCodeStore.list(r => r.projectId === pid); }
+
+  // ── Sheets ──
+  subscribeSheets(pid: string, cb: (s: Sheet[]) => void) {
+    return sheetStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+  async getSheet(id: string) { return sheetStore.get(id) ?? null; }
+  async createSheet(data: Omit<Sheet, 'id' | 'createdAt' | 'updatedAt'>) {
+    const id = makeId(); const s = { ...data, id, createdAt: now(), updatedAt: now() } as Sheet;
+    sheetStore.set(id, s); return s;
+  }
+  async updateSheet(id: string, data: Partial<Sheet>) { sheetStore.update(id, { ...data, updatedAt: now() }); }
+  async deleteSheet(id: string) { sheetStore.delete(id); }
+
+  // ── Forecast rows ──
+  subscribeForecastRows(sheetId: string, cb: (rows: ForecastRow[]) => void) {
+    return forecastRowStore.subscribe(rows => cb(rows.filter(r => r.sheetId === sheetId)));
+  }
+  async listForecastRows(sheetId: string) { return forecastRowStore.list(r => r.sheetId === sheetId); }
+  async createForecastRow(data: Omit<ForecastRow, 'id'>) {
+    const id = makeId(); const r = { ...data, id } as ForecastRow; forecastRowStore.set(id, r); return r;
+  }
+  async createManyForecastRows(rows: Array<Omit<ForecastRow, 'id'>>) {
+    rows.forEach(row => { const id = makeId(); forecastRowStore.set(id, { ...row, id } as ForecastRow); });
+  }
+  async updateForecastRow(_sheetId: string, rowId: string, data: Partial<ForecastRow>) { forecastRowStore.update(rowId, data); }
+  async deleteForecastRow(_sheetId: string, rowId: string) { forecastRowStore.delete(rowId); }
+  async updateManyForecastRows(_sheetId: string, updates: Array<{ id: string; data: Partial<ForecastRow> }>) {
+    updates.forEach(u => forecastRowStore.update(u.id, u.data));
+  }
+  async deleteManyForecastRows(_sheetId: string, rowIds: string[]) { rowIds.forEach(id => forecastRowStore.delete(id)); }
+
+  // ── Actuals / baseline extras ──
+  async saveManyActualCosts(records: Array<Omit<ActualCostRecord, 'id' | 'createdAt'>>) {
+    records.forEach(rec => { const id = makeId(); actualStore.set(id, { ...rec, id, createdAt: now() } as ActualCostRecord); });
+  }
+  async deleteActualCost(id: string) { actualStore.delete(id); }
+  async updateManyActualCosts(updates: Array<{ id: string; data: Partial<ActualCostRecord> }>) {
+    updates.forEach(u => actualStore.update(u.id, u.data));
+  }
+  async deleteBaselineBudget(id: string) { baselineStore.delete(id); }
+  async updateManyBaselineBudgets(updates: Array<{ id: string; data: Partial<BaselineBudgetRecord> }>) {
+    updates.forEach(u => baselineStore.update(u.id, u.data));
+  }
+  async listCostPhasing(pid: string, costCodeId?: string) {
+    return phasingStore.list(r => r.projectId === pid && (!costCodeId || (r as any).costCodeId === costCodeId));
+  }
 }
+
+const sheetStore = new MemoryStore<Sheet>();
+const forecastRowStore = new MemoryStore<ForecastRow>();
 
 // ── Change ────────────────────────────────────────────────────────────────────
 
@@ -475,4 +527,94 @@ export class MemoryUserRoleAdapter implements UserRoleRepository {
     });
     this.store.set(uid, { ...current, memberships });
   }
+}
+
+// ── Deterministic demo fixtures (memory adapter only) ─────────────────────────
+// Seeds one project under the auto-seeded `demo-enterprise`, with cost codes whose
+// STORED derived values equal what their leaves (actuals / baseline budgets /
+// approved change records) compute to. This keeps E2E characterization tests
+// stable across the Phase 11.2 "compute-on-read" refactor: whether the UI shows
+// the stored field or the recomputed value, the number is identical.
+export function seedMemory(): void {
+  if (projectStore.list(p => p.id === 'demo-project').length > 0) return;
+
+  const iso = '2026-01-01T00:00:00.000Z';
+
+  projectStore.set('demo-project', {
+    id: 'demo-project',
+    enterpriseId: 'demo-enterprise',
+    projectName: 'Demo Tower',
+    projectCode: 'DT-001',
+    status: 'Active',
+    projectBudget: 950000,
+    startDate: '2026-01-01',
+    endDate: '2026-12-31',
+    cutoffDate: '2026-06-30',
+    users: { 'memory-user': 'Project Admin' },
+    dateCreated: iso,
+    dateLastModified: iso,
+  } as Project);
+
+  // CC-100 Substructure: baseline 500k + approved change 50k = approved 550k;
+  //   actual 200k + ETC 300k = EAC 500k; variance = 550k - 500k = 50k
+  // CC-200 Superstructure: baseline 400k + 0 = approved 400k;
+  //   actual 100k + ETC 250k = EAC 350k; variance = 400k - 350k = 50k
+  const costCodes: CostCode[] = [
+    {
+      id: 'cc-100', code: '100', projectId: 'demo-project', name: 'Substructure',
+      enterpriseAttributes: {}, projectAttributes: {}, eacMethod: 'Manual', sortOrder: 1,
+      baselineBudget: 500000, budgetChanges: 50000, approvedBudget: 550000,
+      approvedBudgetPrevious: 500000, approvedBudgetMovement: 50000,
+      actualCostThisPeriod: 200000, actualCostToDate: 200000,
+      estimateToComplete: 300000, estimateAtCompletion: 500000,
+      estimateAtCompletionPrevious: 500000, estimateAtCompletionMovement: 0,
+      costVariance: 50000, costVariancePrevious: 0, costVarianceMovement: 50000,
+    },
+    {
+      id: 'cc-200', code: '200', projectId: 'demo-project', name: 'Superstructure',
+      enterpriseAttributes: {}, projectAttributes: {}, eacMethod: 'Manual', sortOrder: 2,
+      baselineBudget: 400000, budgetChanges: 0, approvedBudget: 400000,
+      approvedBudgetPrevious: 400000, approvedBudgetMovement: 0,
+      actualCostThisPeriod: 100000, actualCostToDate: 100000,
+      estimateToComplete: 250000, estimateAtCompletion: 350000,
+      estimateAtCompletionPrevious: 350000, estimateAtCompletionMovement: 0,
+      costVariance: 50000, costVariancePrevious: 0, costVarianceMovement: 50000,
+    },
+  ];
+  costCodes.forEach(cc => costCodeStore.set(cc.id, cc));
+
+  // Leaves consistent with the stored derived values above.
+  baselineStore.set('bb-100', {
+    id: 'bb-100', projectId: 'demo-project', costCodeId: 'cc-100', item: 'B100',
+    description: 'Substructure baseline', source: 'EST', amount: 500000,
+    reportingPeriodId: 'p1', createdAt: iso,
+  } as BaselineBudgetRecord);
+  baselineStore.set('bb-200', {
+    id: 'bb-200', projectId: 'demo-project', costCodeId: 'cc-200', item: 'B200',
+    description: 'Superstructure baseline', source: 'EST', amount: 400000,
+    reportingPeriodId: 'p1', createdAt: iso,
+  } as BaselineBudgetRecord);
+
+  actualStore.set('ac-100', {
+    id: 'ac-100', projectId: 'demo-project', costCodeId: 'cc-100', item: 'A100',
+    description: 'Substructure actual', source: 'ACC', cost: 200000,
+    reportingPeriodId: 'p1', createdAt: iso,
+  } as ActualCostRecord);
+  actualStore.set('ac-200', {
+    id: 'ac-200', projectId: 'demo-project', costCodeId: 'cc-200', item: 'A200',
+    description: 'Superstructure actual', source: 'ACC', cost: 100000,
+    reportingPeriodId: 'p1', createdAt: iso,
+  } as ActualCostRecord);
+
+  changeStore.set('chg-1', {
+    id: 'chg-1', projectId: 'demo-project', changeId: 'CH-001',
+    description: 'Approved variation', type: 'Variation', status: 'Approved',
+    initiator: 'PM', reference: 'REF-1', budget: 50000, eac: 50000,
+    createdAt: iso, updatedAt: iso,
+  } as Change);
+  changeRecordStore.set('chr-1', {
+    id: 'chr-1', changeId: 'chg-1', projectId: 'demo-project', costCodeId: 'cc-100',
+    scope: 'Extra piling', enterpriseAttributes: {}, projectAttributes: {},
+    budgetAmount: 50000, eacAmount: 50000, createdAt: iso, updatedAt: iso,
+  } as ChangeRecord);
 }

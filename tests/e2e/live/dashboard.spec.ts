@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures';
+import { test, expect } from '../fixtures';
 
 test.describe('Enterprise Dashboard', () => {
   test('shows enterprise sidebar after login', async ({ authPage: page }) => {

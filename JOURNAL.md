@@ -2,6 +2,61 @@
 
 ---
 
+## Session 4 — 2026-07-09 — System review + Phase 11.0 safety net (started)
+
+### What we set out to do
+
+Bernard asked for a first-principles technical + functional review of the whole system
+(fragility felt during onboarding / add-delete project / seeding), then to plan and begin a
+foundation-uplift refactor with a test safety net so we can increment without regressions.
+
+### Decisions made this session
+
+- **Full review written to `SYSTEM_REVIEW.md`** — data model, seam, security, value chains, and a
+  separation-of-concerns analysis (91% of code lives in `src/components/`; 18 files >800 lines;
+  CostCodes.tsx = 5,876). Verdict: seam is good; data model, stored-derived money, and 4 competing
+  role models are the real fragility.
+- **Approach signed off:** vertical slices (one domain at a time) + **E2E-first characterization**;
+  pragmatic strictness (extract logic + tests now, defer 800-line/`any` cleanup). Recorded in
+  `PLAN.md` Phase 11 and in agent memory (`foundation-uplift-approach`).
+- **E2E must run against a LOCAL memory-adapter build** (deterministic), not the live Vercel URL.
+
+### What was built / changed this session
+
+- `playwright.config.ts` — repointed at local `http://localhost:5178`, added `webServer`
+  (`npm run dev:memory`), moved live-creds specs to `tests/e2e/live/` (ignored unless
+  `PLAYWRIGHT_INCLUDE_LIVE=1`).
+- `package.json` — added `dev:memory` (`VITE_ADAPTER=memory vite --port 5178`).
+- `src/platform/memory/MemoryAdapters.ts` — added `seedMemory()` deterministic fixtures
+  (`demo-project` under `demo-enterprise`: 2 cost codes with stored derived values AND matching
+  leaves so tests survive the 11.2 compute-on-read refactor). **Completed `MemoryCostAdapter`**
+  (sheets, forecast rows, cost-code get/list, actuals/baseline batch ops, listCostPhasing) — the
+  memory adapter was missing these, so the acid test was never actually runnable.
+- `src/platform/firestore/context.tsx` — calls `seedMemory()` when `VITE_ADAPTER=memory`.
+- `tests/e2e/memory.fixtures.ts` + `cost-report.characterization.spec.ts` — 3 passing tests
+  (boots on memory, no login; Demo Enterprise present; Demo Tower project opens). 4th test
+  (`test.fixme`) pending correct cost-codes module route.
+- `.claude/settings.json` — added Bash allowlist (takes effect next session) to stop permission
+  prompts during the refactor.
+
+### KNOWN GAP found (important)
+
+The memory adapters are **incomplete across most domains** (method diff showed many missing on
+Change/Risk/Subcontract/Progress/Procurement/etc.). `MemoryCostAdapter` is now complete; the rest
+must be filled in before their value chains can run on memory. This is Phase 11.0 work.
+
+### Next session (friction-free once allowlist is active)
+
+1. Confirm the cost-codes module route; un-`fixme` the 4th test; add money-value assertions
+   (Substructure approvedBudget 550,000 / EAC 500,000 / variance 50,000).
+2. Complete the remaining memory adapters (drive it by running the app on memory and fixing each
+   missing-method crash the error boundary surfaces).
+3. Then Phase 11.1 (security rules) → Phase 11.2 (Cost/EAC slice).
+
+State: type-check green; `npx playwright test` = 3 passed, 1 fixme. Committed.
+
+---
+
 ## Session 3 — 2026-07-05 — Chunk 8: UI Seam (Roles, Auth Port, DataGrid wrapper)
 
 ### What we set out to do

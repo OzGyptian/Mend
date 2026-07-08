@@ -173,17 +173,20 @@ pragmatic strictness (extract logic + tests now; defer 800-line/`any` cosmetic c
 **Golden rule:** every slice ends committed, green, and shippable. E2E must stay green throughout
 (behaviour is pinned, not changed). Unit tests are written when a pure function is extracted.
 
-## Phase 11.0 — Safety net & harness (do first)
-- [ ] 11.0.1 Add `npm run dev:memory` (Vite with `VITE_ADAPTER=memory`) and a Playwright
-      `webServer` that boots it; repoint `baseURL` from the Vercel URL to `http://localhost:<port>`
-- [ ] 11.0.2 Seed deterministic fixtures in the memory store (1 enterprise, 1 project, cost codes,
-      actuals, budgets, changes) for E2E to assert against
-- [ ] 11.0.3 Characterization E2E: sign-in → enterprise select → open project → cost report shows
-      expected EAC/variance numbers (pins CURRENT behaviour, including any current quirks)
+## Phase 11.0 — Safety net & harness (do first) — IN PROGRESS
+- [x] 11.0.1 Added `npm run dev:memory` + Playwright `webServer`; baseURL → `http://localhost:5178`;
+      live-creds specs moved to `tests/e2e/live/` (ignored unless `PLAYWRIGHT_INCLUDE_LIVE=1`)
+- [x] 11.0.2 `seedMemory()` deterministic fixtures (demo-project, 2 cost codes with stored derived
+      values AND matching leaves) wired via context.tsx under `VITE_ADAPTER=memory`
+- [~] 11.0.3 Characterization E2E: boots on memory (no login) / Demo Enterprise / Demo Tower = PASS.
+      Cost-codes module test = `test.fixme` (needs correct module route + money-value assertions)
 - [ ] 11.0.4 Characterization E2E for: create/delete project, add actual cost, add change
-- [ ] 11.0.5 Widen vitest coverage `include` beyond `src/domain/**` so component→domain migration
-      shows measurable coverage gain
-- [ ] 11.0.6 GATE: `npm run test` + `npm run test:e2e` green on current code. Commit: `test: characterization safety net`
+- [ ] 11.0.5 Widen vitest coverage `include` beyond `src/domain/**`
+- [x] 11.0.a **Completed `MemoryCostAdapter`** (sheets/forecast rows/get-list/batch ops) — memory
+      adapter was missing these; acid test wasn't runnable before
+- [ ] 11.0.b **Complete remaining memory adapters** (Change/Risk/Subcontract/Progress/Procurement/
+      Schedule/Utility/UserRole have missing methods) — drive by running app on memory
+- [ ] 11.0.6 GATE: `npm run test` + `npm run test:e2e` green on current code
 
 ## Phase 11.1 — Security rules (small, high value)
 - [ ] 11.1.1 F2: `userRoles` write → `isSystemAdmin() || request.auth.uid == userId`; forbid self-set of `platformRole`

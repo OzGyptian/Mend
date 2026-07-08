@@ -16,6 +16,7 @@ import {
   MemoryCostAdapter, MemoryChangeAdapter, MemoryRiskAdapter,
   MemorySubcontractAdapter, MemoryProgressAdapter, MemoryProcurementAdapter,
   MemoryScheduleAdapter, MemoryUtilityAdapter, MemoryUserRoleAdapter,
+  seedMemory,
 } from '../memory/MemoryAdapters';
 import type { EnterpriseRepository } from '../ports/enterprise.port';
 import type { ProjectRepository } from '../ports/project.port';
@@ -48,6 +49,10 @@ interface Platform {
 const PlatformContext = createContext<Platform | null>(null);
 
 const USE_MEMORY = (import.meta as any).env?.VITE_ADAPTER === 'memory';
+
+// Populate deterministic demo fixtures once when running on the memory adapter
+// (local dev + E2E characterization tests). Idempotent.
+if (USE_MEMORY) seedMemory();
 
 export function FirestoreProvider({ children }: { children: React.ReactNode }) {
   const platform = useMemo<Platform>(() => USE_MEMORY ? ({
