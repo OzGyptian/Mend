@@ -2,6 +2,54 @@
 
 ---
 
+## Session 5 — 2026-07-09 — Phase 11.0 complete + 11.1 security + 11.2 EAC domain
+
+### What we set out to do
+
+Complete Phase 11.0 (all E2E green on memory adapter), fix Phase 11.1 security rules, and
+land Phase 11.2 (canonical EAC/cost domain).
+
+### What was built / changed this session
+
+**Phase 11.0 — complete (v1.0.66)**
+- `MemoryScheduleAdapter`: renamed `subscribeCalendars` → `subscribeProjectCalendars`; added
+  `subscribeEnterpriseCalendars`, `listEnterpriseCalendars`, `getCalendar`,
+  `createManyScheduleItems`, `updateManyScheduleItems`
+- `MemoryRiskAdapter`: added full `Risk` store + `subscribeRisks`, `listRisks`, `createRisk`,
+  `updateRisk`, `deleteRisk`, bulk methods; added `listRiskRecords`, bulk record methods
+- `MemoryProcurementAdapter`: replaced stub with full implementation (`subscribeProcurementItems`,
+  create/update/delete/createMany/updateMany; step-definition CRUD)
+- `cost-report.characterization.spec.ts`: fixed route (`/cost` not `/cost-codes`); un-fixme 4th test
+- `tests/e2e/probe-modules.spec.ts`: smoke-tests 7 project module routes on memory — all pass
+- **Result: 11/11 E2E passing (4 characterization + 7 probe)**
+
+**Phase 11.1 — security rules (v1.0.67)**
+- F11: `invitations` read restricted to enterprise admin or the invitee by email
+- F3: `procurementStepDefinitions` read/write scoped to enterprise admin or project member
+- F12: `userRoles` write restricted to `isSystemAdmin() || request.auth.uid == userId`
+  (was open to any authenticated user)
+
+**Phase 11.2 — EAC domain (v1.0.68)**
+- `src/domain/eac.ts`: `computeApprovedBudget`, `computeCostVariance`, `computeEacEtc`,
+  `computeMovement`, `computePeriodEndFields` — canonical formulas, no inline duplicates
+- `src/domain/eac.test.ts`: 12 unit tests, all green
+- `CostCodes.tsx` `onCellValueChanged`: replaced 20-line inline computation with single
+  `computePeriodEndFields()` call
+
+### State at end of session
+
+- Branch: `refactor/platform-seam`
+- Version: v1.0.68
+- Type-check: green | Unit: 31/31 | E2E: 11/11
+
+### Next session
+
+1. Phase 11.3 — Change/risk roll-up slice: extract change/risk domain calcs + compute on read
+2. Phase 11.4 — Subcontract slice
+3. Phase 11.5 — Progress/procurement slice
+
+---
+
 ## Session 4 — 2026-07-09 — System review + Phase 11.0 safety net (started)
 
 ### What we set out to do
