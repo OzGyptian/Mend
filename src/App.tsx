@@ -93,8 +93,8 @@ export default function App() {
     try {
       const result = await enterpriseRepo.acceptInvitation(token, u.id, u.email || '', u.displayName || u.email?.split('@')[0] || 'New User');
       if (result) alert(`Welcome! You've been added to ${result.enterpriseName}.`);
-    } catch (error: any) {
-      setAuthError(error.message || 'Failed to process invitation.');
+    } catch (error: unknown) {
+      setAuthError(error instanceof Error ? error.message : 'Failed to process invitation.');
       console.error('Failed to process invitation:', error);
     }
   };

@@ -18,13 +18,14 @@ import {
   Minimize2
 } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
-import { 
-  ColDef, 
+import {
+  ColDef,
   ColGroupDef,
-  GridApi, 
-  GridReadyEvent, 
+  GridApi,
+  GridReadyEvent,
   CellValueChangedEvent,
   ValueFormatterParams,
+  ICellRendererParams,
   SideBarDef,
   StatusPanelDef
 } from 'ag-grid-community';
@@ -268,8 +269,8 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
         const r = risks.find(r => r.id === p.value);
         return r ? r.riskId : p.value;
       },
-      cellRenderer: (p: any) => p.node?.rowPinned 
-        ? <span className="font-bold text-gray-500">{p.value}</span> 
+      cellRenderer: (p: ICellRendererParams) => p.node?.rowPinned
+        ? <span className="font-bold text-gray-500">{p.value}</span>
         : <span className="font-bold text-blue-600 dark:text-blue-400">{p.valueFormatted}</span>
     },
     {
