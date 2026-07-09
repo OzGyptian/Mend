@@ -3,7 +3,7 @@ import { Project, Enterprise } from '../types';
 import { RefreshCw, ClipboardList, ChevronLeft, Menu, Settings, Layout } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { useAuthRepo } from '../platform/firestore/hooks';
+import { useAuthRepo, useAuth } from '../platform/firestore/hooks';
 import ChangeManagement from './ChangeManagement';
 import BulkChangeRecords from './BulkChangeRecords';
 import ProjectChangeAttributes from './ProjectChangeAttributes';
@@ -29,8 +29,7 @@ const ChangeManagementSubPane: React.FC<ChangeManagementSubPaneProps> = ({
 
   const currentUser = useAuthRepo().getCurrentUser();
   const userId = currentUser?.id;
-  const userEmail = currentUser?.email;
-  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemAdmin } = useAuth();
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Navigate, useLocation } from 'react-router-dom';
-import { useAuthRepo, useEnterpriseRepo, useProjectRepo } from './platform/firestore/hooks';
+import { useAuthRepo, useEnterpriseRepo, useProjectRepo, useAuth } from './platform/firestore/hooks';
 import type { AuthUser } from './platform/ports/auth.port';
 import { Enterprise, Project, Sheet } from './types';
 import Sidebar from './components/Sidebar';
@@ -45,7 +45,7 @@ export default function App() {
     try { return localStorage.getItem('systemOwnerEnterpriseId'); } catch (e) { return null; }
   });
 
-  const isSystemOwner = user?.email?.toLowerCase() === 'tarek.guindy@gmail.com' || user?.email?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemOwner } = useAuth();
 
   useEffect(() => {
     try {

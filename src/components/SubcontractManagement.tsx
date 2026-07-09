@@ -3,7 +3,7 @@ import { Project, Enterprise } from '../types';
 import { Briefcase, Receipt, ChevronLeft, Menu, Settings, List } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { useAuthRepo } from '../platform/firestore/hooks';
+import { useAuthRepo, useAuth } from '../platform/firestore/hooks';
 import Subcontracts from './Subcontracts';
 import Invoicing from './Invoicing';
 import BulkSubcontractInvoices from './BulkSubcontractInvoices';
@@ -35,8 +35,7 @@ const SubcontractManagement: React.FC<SubcontractManagementProps> = ({
 
   const currentUser = useAuthRepo().getCurrentUser();
   const userId = currentUser?.id;
-  const userEmail = currentUser?.email;
-  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemAdmin } = useAuth();
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);
 

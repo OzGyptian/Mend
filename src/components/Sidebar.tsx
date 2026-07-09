@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
-import { useProjectRepo, useAuthRepo, useUtilityRepo } from '../platform/firestore/hooks';
+import { useProjectRepo, useAuthRepo, useUtilityRepo, useAuth } from '../platform/firestore/hooks';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -81,7 +81,7 @@ export default function Sidebar({
     return utilityRepo.subscribeSheet(sheetId, setSheet);
   }, [sheetId]);
 
-  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemAdmin } = useAuth();
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
