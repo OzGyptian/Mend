@@ -307,6 +307,7 @@ export class MemoryChangeAdapter {
 
   async updateChangeRecord(id: string, data: Partial<ChangeRecord>) { changeRecordStore.update(id, data); }
   async deleteChangeRecord(id: string) { changeRecordStore.delete(id); }
+  async deleteManyChangeRecords(ids: string[]) { ids.forEach(id => changeRecordStore.delete(id)); }
 }
 
 // ── Risk ──────────────────────────────────────────────────────────────────────
@@ -417,8 +418,24 @@ export class MemorySubcontractAdapter {
     return inv;
   }
 
+  async getInvoice(id: string) { return invoiceStore.get(id) ?? null; }
+  async listInvoices(pid: string, subcontractId?: string) {
+    return invoiceStore.list(r => r.projectId === pid && (!subcontractId || r.subcontractId === subcontractId));
+  }
   async updateInvoice(id: string, data: Partial<Invoice>) { invoiceStore.update(id, data); }
+  async updateManyInvoices(updates: Array<{ id: string; data: Partial<Invoice> }>) {
+    updates.forEach(u => invoiceStore.update(u.id, u.data));
+  }
   async deleteInvoice(id: string) { invoiceStore.delete(id); }
+  async deleteManyInvoices(ids: string[]) { ids.forEach(id => invoiceStore.delete(id)); }
+  async createManyInvoices(invoices: Array<Omit<Invoice, 'id'>>) {
+    return invoices.map(data => {
+      const id = makeId();
+      const inv = { ...data, id, createdAt: now() } as Invoice;
+      invoiceStore.set(id, inv);
+      return inv;
+    });
+  }
 }
 
 // ── Progress ──────────────────────────────────────────────────────────────────
@@ -747,4 +764,30 @@ export function seedMemory(): void {
     scope: 'Extra piling', enterpriseAttributes: {}, projectAttributes: {},
     budgetAmount: 50000, eacAmount: 50000, createdAt: iso, updatedAt: iso,
   } as ChangeRecord);
+}
+
+export function resetAllStores(): void {
+  enterpriseStore.clear();
+  projectStore.clear();
+  costCodeStore.clear();
+  etcStore.clear();
+  actualStore.clear();
+  baselineStore.clear();
+  phasingStore.clear();
+  sheetStore.clear();
+  forecastRowStore.clear();
+  changeStore.clear();
+  changeRecordStore.clear();
+  riskStore.clear();
+  riskRecordStore.clear();
+  subcontractStore.clear();
+  invoiceStore.clear();
+  progressPackageStore.clear();
+  progressItemStore.clear();
+  rocStore.clear();
+  procurementItemStore.clear();
+  stepDefinitionStore.clear();
+  scheduleItemStore.clear();
+  calendarStore.clear();
+  savedViewStore.clear();
 }
