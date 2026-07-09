@@ -27,19 +27,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc,
-  serverTimestamp,
-  writeBatch
-} from 'firebase/firestore';
-import { db } from '../firebase';
+import { useSubcontractRepo } from '../platform/firestore/hooks';
 import { Enterprise, Project, Subcontract, Invoice, InvoiceItem, SubcontractLineItem } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -66,6 +54,7 @@ interface InvoicingProps {
 export default function Invoicing({ enterprise, project, user, theme = 'light' }: InvoicingProps) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
+  const subcontractRepo = useSubcontractRepo();
   const [loading, setLoading] = useState(true);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(null);
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
@@ -136,51 +125,33 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
     const toastId = toast.loading('Importing invoices...');
     
     try {
-      const batch = writeBatch(db);
       const subcontractsMap = new Map(subcontracts.map(s => [s.orderId.toLowerCase(), s]));
+      const toUpdate: Array<{ id: string; data: Partial<Invoice> }> = [];
+      const toCreate: Array<Omit<Invoice, 'id' | 'createdAt' | 'updatedAt'>> = [];
 
       for (const row of data) {
         const orderId = String(row['Order ID'] || row.orderId || '').trim();
         const invoiceNo = String(row['Invoice No.'] || row.invoiceId || row.ID || row.id || '').trim();
-        
         if (!orderId || !invoiceNo) continue;
-
         const targetSub = subcontractsMap.get(orderId.toLowerCase());
         if (!targetSub) continue;
-
         const existingInvoice = invoices.find(i => i.subcontractId === targetSub.id && i.invoiceId === invoiceNo);
-        
         const invoiceData: any = {
           description: String(row['Invoice Name'] || row.description || row.Description || 'Imported Invoice'),
           status: (row['Status'] || row.status || 'Draft') as any,
           submittedDate: row['Submit Date'] ? dateToISO(new Date(row['Submit Date'])) : '',
           certifiedDate: row['Approve Date'] ? dateToISO(new Date(row['Approve Date'])) : '',
           paymentDate: row['Payment Date'] ? dateToISO(new Date(row['Payment Date'])) : '',
-          updatedAt: new Date().toISOString()
         };
-
         if (existingInvoice) {
-          batch.update(doc(db, 'invoices', existingInvoice.id), invoiceData);
+          toUpdate.push({ id: existingInvoice.id, data: invoiceData });
         } else {
-          const newRef = doc(collection(db, 'invoices'));
-          batch.set(newRef, {
-            ...invoiceData,
-            id: newRef.id,
-            invoiceId: invoiceNo,
-            subcontractId: targetSub.id,
-            projectId: project.id,
-            enterpriseId: enterprise.id,
-            vendorId: targetSub.vendorId,
-            vendorName: targetSub.vendorName,
-            totalAmount: 0,
-            certifiedAmount: 0,
-            items: [],
-            createdAt: new Date().toISOString()
-          });
+          toCreate.push({ ...invoiceData, invoiceId: invoiceNo, subcontractId: targetSub.id, projectId: project.id, enterpriseId: enterprise.id, vendorId: targetSub.vendorId, vendorName: targetSub.vendorName, totalAmount: 0, certifiedAmount: 0, items: [] });
         }
       }
 
-      await batch.commit();
+      if (toUpdate.length) await subcontractRepo.updateManyInvoices(toUpdate);
+      if (toCreate.length) await subcontractRepo.createManyInvoices(toCreate);
       toast.success('Successfully imported invoices.', { id: toastId });
     } catch (error) {
       console.error('Error committing import:', error);
@@ -214,23 +185,9 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
   useEffect(() => {
     if (!project.id) return;
 
-    const qInvoices = query(collection(db, 'invoices'), where('projectId', '==', project.id));
-    const unsubscribeInvoices = onSnapshot(qInvoices, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Invoice));
-      setInvoices(data);
-      setLoading(false);
-    });
-
-    const qSubcontracts = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
-    const unsubscribeSubcontracts = onSnapshot(qSubcontracts, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract));
-      setSubcontracts(data);
-    });
-
-    return () => {
-      unsubscribeInvoices();
-      unsubscribeSubcontracts();
-    };
+    const unsubInvoices = subcontractRepo.subscribeInvoices(project.id, (data) => { setInvoices(data); setLoading(false); });
+    const unsubSubs = subcontractRepo.subscribeSubcontracts(project.id, setSubcontracts);
+    return () => { unsubInvoices(); unsubSubs(); };
   }, [project.id]);
 
   const selectedInvoice = useMemo(() => 
@@ -285,7 +242,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
         certifiedAmount: 0
       };
 
-      const docRef = await addDoc(collection(db, 'invoices'), newInvoice);
+      const docRef = await subcontractRepo.createInvoice(newInvoice as any);
       setIsAddingInvoice(false);
       setSelectedInvoiceId(docRef.id);
     } catch (error) {
@@ -325,11 +282,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
     const totalAmount = updatedItems.reduce((sum, i) => sum + (i.claimValue || 0), 0);
     const certifiedAmount = updatedItems.reduce((sum, i) => sum + (i.certifiedValue || 0), 0);
 
-    await updateDoc(doc(db, 'invoices', selectedInvoiceId), {
-      items: updatedItems,
-      totalAmount,
-      certifiedAmount
-    });
+    await subcontractRepo.updateInvoice(selectedInvoiceId, { items: updatedItems, totalAmount, certifiedAmount });
   };
 
   const updateInvoiceStatus = async (status: Invoice['status']) => {
@@ -337,8 +290,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
     const updates: any = { status };
     if (status === 'Submitted') updates.submittedDate = new Date().toISOString();
     if (status === 'Certified') updates.certifiedDate = new Date().toISOString();
-    
-    await updateDoc(doc(db, 'invoices', selectedInvoiceId), updates);
+    await subcontractRepo.updateInvoice(selectedInvoiceId, updates);
   };
 
   const invoiceColumnDefs = useMemo<ColDef[]>(() => [
@@ -640,6 +592,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
               theme === 'dark' ? "ag-theme-quartz-dark" : ""
             )}>
               <AgGridReact
+                theme="legacy"
                 ref={gridRef}
                 rowData={selectedInvoiceId ? invoices.filter(i => i.id === selectedInvoiceId) : invoices}
                 columnDefs={invoiceColumnDefs}
@@ -736,6 +689,7 @@ export default function Invoicing({ enterprise, project, user, theme = 'light' }
                   theme === 'dark' ? "ag-theme-quartz-dark" : ""
                 )}>
                   <AgGridReact
+                    theme="legacy"
                     ref={itemsGridRef}
                     rowData={selectedInvoice.items || []}
                     columnDefs={itemColumnDefs}

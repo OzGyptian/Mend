@@ -1,18 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Project, Enterprise, Change, ChangeRecord, CostCode } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDocs,
-  writeBatch,
-  doc,
-  updateDoc,
-  addDoc,
-  deleteDoc
-} from 'firebase/firestore';
+import { useChangeRepo, useCostRepo } from '../platform/firestore/hooks';
 import { 
   Search, 
   Trash2, 
@@ -65,57 +53,6 @@ import {
   SelectValue 
 } from '@/components/ui/select';
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  toast.error(`Database Error: ${errInfo.error}`);
-  throw new Error(JSON.stringify(errInfo));
-}
 
 interface BulkChangeRecordsProps {
   project: Project;
@@ -123,6 +60,8 @@ interface BulkChangeRecordsProps {
 }
 
 export default function BulkChangeRecords({ project, enterprise }: BulkChangeRecordsProps) {
+  const changeRepo = useChangeRepo();
+  const costRepo = useCostRepo();
   const [changes, setChanges] = useState<Change[]>([]);
   const [allChangeRecords, setAllChangeRecords] = useState<ChangeRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -190,43 +129,22 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
 
   // Fetch Changes
   useEffect(() => {
-    const q = query(collection(db, 'changes'), where('projectId', '==', project.id));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Change));
-      setChanges(data);
-    }, (error) => {
-      console.error("BulkChangeRecords: changes fetch error:", error);
-      toast.error("Failed to load changes: " + error.message);
-    });
-    return () => unsub();
+    return changeRepo.subscribeChanges(project.id, setChanges);
   }, [project.id]);
 
   // Fetch All Change Records for project
   useEffect(() => {
-    const q = query(collection(db, 'changeRecords'), where('projectId', '==', project.id));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChangeRecord));
+    return changeRepo.subscribeChangeRecords(project.id, (data) => {
       setAllChangeRecords(data);
       setIsLoading(false);
-    }, (error) => {
-      console.error("BulkChangeRecords: change records fetch error:", error);
-      toast.error("Failed to load change records: " + error.message);
-      setIsLoading(false);
     });
-    return () => unsub();
   }, [project.id]);
 
   // Fetch Cost Codes for dropdown
   useEffect(() => {
-    const q = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
+    return costRepo.subscribeCostCodes(project.id, (data) => {
       setCostCodes(data.sort((a, b) => a.sortOrder - b.sortOrder));
-    }, (error) => {
-      console.error("BulkChangeRecords: cost codes fetch error:", error);
-      toast.error("Failed to load cost codes: " + error.message);
     });
-    return () => unsub();
   }, [project.id]);
 
   const allRecordPinnedBottomRowData = useMemo(() => {
@@ -298,8 +216,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
           }
         }
 
-        const batch = writeBatch(db);
-        let addedCount = 0;
+        const toCreate: Array<Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>> = [];
         const affectedChangeIds = new Set<string>();
 
         for (const row of data) {
@@ -307,19 +224,15 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
           const foundChange = changes.find(c => c.changeId === changeIdStr)!;
           const targetChangeId = foundChange.id;
           const costCode = String(row['Cost Code'] || '').trim();
-
           const entAttrs: Record<string, string> = {};
           enterprise.lineItemAttributes?.forEach(a => {
             if (row[a.title]) entAttrs[a.id] = String(row[a.title]);
           });
-
           const prjAttrs: Record<string, string> = {};
           project.lineItemAttributes?.forEach(a => {
             if (row[a.title]) prjAttrs[a.id] = String(row[a.title]);
           });
-
-          const newRecordRef = doc(collection(db, 'changeRecords'));
-          batch.set(newRecordRef, {
+          toCreate.push({
             changeId: targetChangeId,
             projectId: project.id,
             costCodeId: costCode,
@@ -328,19 +241,16 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
             projectAttributes: prjAttrs,
             budgetAmount: Number(row['Budget Amount']) || 0,
             eacAmount: Number(row['EAC Amount']) || 0,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-          addedCount++;
+          } as Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>);
           affectedChangeIds.add(targetChangeId);
         }
 
-        if (addedCount > 0) {
-          await batch.commit();
+        if (toCreate.length > 0) {
+          await changeRepo.createManyChangeRecords(toCreate);
           for (const cid of affectedChangeIds) {
             await updateParentTotals(cid);
           }
-          toast.success(`Imported ${addedCount} records`);
+          toast.success(`Imported ${toCreate.length} records`);
         }
       } catch (error) {
         toast.error("Failed to import Excel file");
@@ -354,103 +264,61 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
     if (selectedBulkRecordIds.size === 0) return;
 
     try {
-      const batch = writeBatch(db);
-      const updates: any = {
-        updatedAt: new Date().toISOString()
-      };
-
+      const updates: any = {};
       if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
       if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope.slice(0, 100);
       if (bulkRecordUpdateData.budgetAmount !== '') updates.budgetAmount = Number(bulkRecordUpdateData.budgetAmount);
       if (bulkRecordUpdateData.eacAmount !== '') updates.eacAmount = Number(bulkRecordUpdateData.eacAmount);
-
-      // Add attributes to updates
       Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => {
-        if (val !== undefined && val !== '') {
-          updates[`enterpriseAttributes.${id}`] = val;
-        }
+        if (val !== undefined && val !== '') updates[`enterpriseAttributes.${id}`] = val;
       });
       Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => {
-        if (val !== undefined && val !== '') {
-          updates[`projectAttributes.${id}`] = val;
-        }
+        if (val !== undefined && val !== '') updates[`projectAttributes.${id}`] = val;
       });
-
-      selectedBulkRecordIds.forEach(id => {
-        batch.update(doc(db, 'changeRecords', id), updates);
-      });
-
-      await batch.commit();
-      
+      await changeRepo.updateManyChangeRecords([...selectedBulkRecordIds].map(id => ({ id, data: updates })));
       const affectedChangeIds = new Set<string>();
       selectedBulkRecordIds.forEach(id => {
         const record = allChangeRecords.find(r => r.id === id);
         if (record) affectedChangeIds.add(record.changeId);
       });
-
-      for (const changeId of affectedChangeIds) {
-        await updateParentTotals(changeId);
-      }
-
+      for (const changeId of affectedChangeIds) await updateParentTotals(changeId);
       toast.success(`Updated ${selectedBulkRecordIds.size} records`);
       setIsBulkRecordUpdateOpen(false);
-      setBulkRecordUpdateData({ 
-        costCodeId: '', 
-        scope: '', 
-        budgetAmount: '', 
-        eacAmount: '',
-        enterpriseAttributes: {},
-        projectAttributes: {}
-      });
+      setBulkRecordUpdateData({ costCodeId: '', scope: '', budgetAmount: '', eacAmount: '', enterpriseAttributes: {}, projectAttributes: {} });
       setSelectedBulkRecordIds(new Set());
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'changeRecords');
+      console.error('Bulk update error:', error);
+      toast.error('Failed to update records.');
     }
   };
 
   const handleBulkDeleteRecords = async () => {
     if (selectedBulkRecordIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
       const affectedChangeIds = new Set<string>();
-      
       selectedBulkRecordIds.forEach(id => {
         const record = allChangeRecords.find(r => r.id === id);
-        if (record) {
-          affectedChangeIds.add(record.changeId);
-          batch.delete(doc(db, 'changeRecords', id));
-        }
+        if (record) affectedChangeIds.add(record.changeId);
       });
-      
-      await batch.commit();
-      
-      for (const cid of affectedChangeIds) {
-        await updateParentTotals(cid);
-      }
-      
+      await changeRepo.deleteManyChangeRecords([...selectedBulkRecordIds]);
+      for (const cid of affectedChangeIds) await updateParentTotals(cid);
       toast.success(`Deleted ${selectedBulkRecordIds.size} records`);
       setSelectedBulkRecordIds(new Set());
       setIsBulkDeleteOpen(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'changeRecords/bulk');
+      console.error('Bulk delete error:', error);
+      toast.error('Failed to delete records.');
     }
   };
 
   const updateParentTotals = async (changeId: string) => {
     try {
-      const recordsSnap = await getDocs(query(collection(db, 'changeRecords'), where('changeId', '==', changeId)));
-      const records = recordsSnap.docs.map(d => d.data() as ChangeRecord);
-      
+      const records = await changeRepo.listChangeRecords(project.id, changeId);
       const totalBudget = records.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
       const totalEac = records.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-      
-      await updateDoc(doc(db, 'changes', changeId), {
-        budget: totalBudget,
-        eac: totalEac,
-        updatedAt: new Date().toISOString()
-      });
+      await changeRepo.updateChange(changeId, { budget: totalBudget, eac: totalEac });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `changes/${changeId}/totals`);
+      console.error(`Error updating totals for change ${changeId}:`, error);
     }
   };
 
@@ -479,13 +347,13 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         updates.scope = String(params.newValue).slice(0, 100);
       }
 
-      await updateDoc(doc(db, 'changeRecords', data.id), updates);
-      
+      await changeRepo.updateChangeRecord(data.id, updates);
       if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') {
         updateParentTotals(data.changeId);
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `changeRecords/${data.id}`);
+      console.error(`Error updating change record ${data.id}:`, error);
+      toast.error('Failed to update record.');
     }
   };
 
@@ -710,6 +578,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         <div className="flex-1 min-h-0 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden">
           <div className="ag-theme-quartz-dark h-full w-full">
             <AgGridReact
+              theme="legacy"
               ref={bulkRecordsGridRef}
               rowData={allChangeRecords}
               columnDefs={bulkRecordColumnDefs}

@@ -2,6 +2,7 @@ import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import ErrorBoundary from './components/ErrorBoundary';
+import { FirestoreProvider } from './platform/firestore/hooks';
 import './index.css';
 
 import { ModuleRegistry, AllCommunityModule } from 'ag-grid-community';
@@ -12,7 +13,9 @@ ModuleRegistry.registerModules([ AllCommunityModule, AllEnterpriseModule ]);
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <FirestoreProvider>
+        <App />
+      </FirestoreProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

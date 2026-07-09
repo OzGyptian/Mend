@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Project, Enterprise, ProjectCostElement, SavedView } from '../types';
-import { db, auth } from '../firebase';
-import { doc, updateDoc, onSnapshot, collection, query, where, addDoc, deleteDoc } from 'firebase/firestore';
+import { useEnterpriseRepo, useProjectRepo, useUtilityRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { 
   Search, 
   Plus, 
@@ -32,6 +31,10 @@ interface ProjectCostElementsProps {
 }
 
 export default function ProjectCostElements({ project }: ProjectCostElementsProps) {
+  const enterpriseRepo = useEnterpriseRepo();
+  const projectRepo = useProjectRepo();
+  const utilityRepo = useUtilityRepo();
+  const authRepo = useAuthRepo();
   const [enterprise, setEnterprise] = useState<Enterprise | null>(null);
   const [elements, setElements] = useState<ProjectCostElement[]>(project.costElements || []);
   
@@ -59,12 +62,9 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
   // Load Enterprise Data
   useEffect(() => {
     if (!project.enterpriseId) return;
-    const unsub = onSnapshot(doc(db, 'enterprises', project.enterpriseId), (doc) => {
-      if (doc.exists()) {
-        setEnterprise({ id: doc.id, ...doc.data() } as Enterprise);
-      }
+    return enterpriseRepo.subscribe(project.enterpriseId, (ent) => {
+      if (ent) setEnterprise(ent);
     });
-    return () => unsub();
   }, [project.enterpriseId]);
 
   // Sync with project prop
@@ -72,32 +72,23 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
     setElements(project.costElements || []);
   }, [project.costElements]);
 
-  // Load Saved Views from Firestore
+  // Load Saved Views
   useEffect(() => {
-    if (!auth.currentUser) return;
-    const q = query(
-      collection(db, 'savedViews'), 
-      where('userId', '==', auth.currentUser.uid),
-      where('tableId', '==', `projectCostElements_${project.id}`)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const views = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as SavedView));
-      setSavedViews(views);
-    });
-    return () => unsub();
-  }, [project.id, auth.currentUser?.uid]);
+    const currentUser = authRepo.getCurrentUser();
+    if (!currentUser) return;
+    return utilityRepo.subscribeSavedViews(currentUser.id, `projectCostElements_${project.id}`, setSavedViews);
+  }, [project.id]);
 
   const saveView = async (name: string) => {
-    if (!name.trim() || !auth.currentUser) return;
+    const currentUser = authRepo.getCurrentUser();
+    if (!name.trim() || !currentUser) return;
     try {
-      const newView: Omit<SavedView, 'id'> = {
+      await utilityRepo.createSavedView({
         name,
         tableId: `projectCostElements_${project.id}`,
         columns: visibleColumns,
-        userId: auth.currentUser.uid,
-        createdAt: new Date().toISOString()
-      };
-      await addDoc(collection(db, 'savedViews'), newView);
+        userId: currentUser.id,
+      });
       setNewViewName('');
       setIsSavedViewMenuOpen(false);
       toast.success('View saved successfully.');
@@ -114,7 +105,7 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
 
   const deleteView = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'savedViews', id));
+      await utilityRepo.deleteSavedView(id);
       toast.success('View deleted.');
     } catch (error) {
       console.error('Error deleting view:', error);
@@ -130,7 +121,7 @@ export default function ProjectCostElements({ project }: ProjectCostElementsProp
 
   const handleGlobalSave = async (updatedElements: ProjectCostElement[]) => {
     try {
-      await updateDoc(doc(db, 'projects', project.id), { 
+      await projectRepo.update(project.id, {
         costElements: updatedElements,
         dateLastModified: new Date().toISOString()
       });

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useSubcontractRepo, useCostRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Search, 
@@ -33,19 +34,6 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc,
-  writeBatch,
-  serverTimestamp 
-} from 'firebase/firestore';
-import { db } from '../firebase';
 import { Enterprise, Project, Subcontract, SubcontractLineItem, Vendor, Invoice, CostCode } from '../types';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -303,6 +291,8 @@ const InvoiceActionsCellRenderer = (params: ICellRendererParams) => {
 };
 
 export default function SubcontractManagement({ enterprise, project, user, theme = 'light' }: SubcontractManagementProps) {
+  const subcontractRepo = useSubcontractRepo();
+  const costRepo = useCostRepo();
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -401,31 +391,10 @@ export default function SubcontractManagement({ enterprise, project, user, theme
 
   useEffect(() => {
     if (!project.id) return;
-
-    const qSub = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
-    const unsubscribeSub = onSnapshot(qSub, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract));
-      setSubcontracts(data);
-      setLoading(false);
-    });
-
-    const qInv = query(collection(db, 'invoices'), where('projectId', '==', project.id));
-    const unsubscribeInv = onSnapshot(qInv, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Invoice));
-      setInvoices(data);
-    });
-
-    const qCost = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribeCost = onSnapshot(qCost, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
-      setCostCodes(data);
-    });
-
-    return () => {
-      unsubscribeSub();
-      unsubscribeInv();
-      unsubscribeCost();
-    };
+    const unsubSub = subcontractRepo.subscribeSubcontracts(project.id, (data) => { setSubcontracts(data); setLoading(false); });
+    const unsubInv = subcontractRepo.subscribeInvoices(project.id, setInvoices);
+    const unsubCost = costRepo.subscribeCostCodes(project.id, setCostCodes);
+    return () => { unsubSub(); unsubInv(); unsubCost(); };
   }, [project.id]);
 
   // Clear selected invoice when subcontract changes
@@ -643,8 +612,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     }
 
     try {
-      const docRef = doc(db, 'subcontracts', data.id);
-      await updateDoc(docRef, updateData);
+      await subcontractRepo.updateSubcontract(data.id, updateData);
       toast.success('Updated successfully.');
     } catch (error) {
       console.error('Error updating subcontract:', error);
@@ -1094,11 +1062,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     if (editingSubcontractId) {
       // Update existing
       try {
-        const docRef = doc(db, 'subcontracts', editingSubcontractId);
-        await updateDoc(docRef, {
-          ...subcontractFormData,
-          updatedAt: new Date().toISOString()
-        });
+        await subcontractRepo.updateSubcontract(editingSubcontractId, { ...subcontractFormData });
         setIsAddingSubcontract(false);
         setEditingSubcontractId(null);
         setSubcontractFormData({
@@ -1142,7 +1106,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         createdBy: user.uid
       };
 
-      await addDoc(collection(db, 'subcontracts'), newSubcontract);
+      await subcontractRepo.createSubcontract(newSubcontract as any);
       setIsAddingSubcontract(false);
       setSubcontractFormData({
         orderId: '',
@@ -1169,22 +1133,16 @@ export default function SubcontractManagement({ enterprise, project, user, theme
   const handleBulkUpdate = async () => {
     if (selectedIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
+      const bulkUpdates: Array<{ id: string; data: any }> = [];
       selectedIds.forEach(id => {
-        const updateObj: any = {
-          updatedAt: new Date().toISOString()
-        };
+        const updateObj: any = {};
         if (bulkUpdateData.status) updateObj.status = bulkUpdateData.status;
         if (bulkUpdateData.paymentType) updateObj.paymentType = bulkUpdateData.paymentType;
         if (bulkUpdateData.awardDate) updateObj.awardDate = bulkUpdateData.awardDate;
-        if (bulkUpdateData.vendorId) {
-          updateObj.vendorId = bulkUpdateData.vendorId;
-          updateObj.vendorName = bulkUpdateData.vendorName;
-        }
-
-        batch.update(doc(db, 'subcontracts', id), updateObj);
+        if (bulkUpdateData.vendorId) { updateObj.vendorId = bulkUpdateData.vendorId; updateObj.vendorName = bulkUpdateData.vendorName; }
+        bulkUpdates.push({ id, data: updateObj });
       });
-      await batch.commit();
+      await subcontractRepo.updateManySubcontracts(bulkUpdates);
       toast.success(`Updated ${selectedIds.size} subcontracts successfully.`);
       setIsBulkUpdating(false);
       setSelectedIds(new Set());
@@ -1229,7 +1187,8 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     
     if (type === 'subcontracts') {
       try {
-        const batch = writeBatch(db);
+        const importUpdates: Array<{ id: string; data: any }> = [];
+        const importCreates: any[] = [];
         data.forEach(row => {
           const orderId = row['Order ID'] || row.orderId || row.ID || row.id;
           const orderName = row['Order Name'] || row.orderName || row.Name || row.name || '';
@@ -1253,21 +1212,16 @@ export default function SubcontractManagement({ enterprise, project, user, theme
             };
             
             if (existing) {
-              batch.update(doc(db, 'subcontracts', existing.id), subcontractData);
+              importUpdates.push({ id: existing.id, data: subcontractData });
             } else {
-              const newRef = doc(collection(db, 'subcontracts'));
-              batch.set(newRef, { 
-                ...subcontractData, 
-                vendorId: '',
-                totalAmount: 0,
-                lineItems: [],
-                createdAt: new Date().toISOString(),
-                createdBy: user.uid
-              });
+              importCreates.push({ ...subcontractData, vendorId: '', totalAmount: 0, lineItems: [], createdBy: (user as any).uid });
             }
           }
         });
-        await batch.commit();
+        await Promise.all([
+          ...importUpdates.map(u => subcontractRepo.updateSubcontract(u.id, u.data)),
+          ...importCreates.map(c => subcontractRepo.createSubcontract(c as any)),
+        ]);
         toast.success('Import successful.');
       } catch (error) {
         console.error('Error committing import:', error);
@@ -1288,11 +1242,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
-      selectedIds.forEach(id => {
-        batch.delete(doc(db, 'subcontracts', id));
-      });
-      await batch.commit();
+      await Promise.all([...selectedIds].map(id => subcontractRepo.deleteSubcontract(id)));
       setSelectedIds(new Set());
       setDeleteConfirm(null);
       toast.success(`Deleted ${selectedIds.size} subcontracts.`);
@@ -1304,7 +1254,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
 
   const handleDeleteSubcontract = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'subcontracts', id));
+      await subcontractRepo.deleteSubcontract(id);
       if (selectedSubcontractId === id) setSelectedSubcontractId(null);
       setDeleteConfirm(null);
       toast.success('Subcontract deleted.');
@@ -1360,7 +1310,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
       const updatedLineItems = [...currentLineItems, newLineItem];
       const totalAmount = updatedLineItems.reduce((sum, li) => sum + li.total, 0);
 
-      await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+      await subcontractRepo.updateSubcontract(selectedSubcontractId, {
         lineItems: updatedLineItems,
         totalAmount,
         updatedAt: new Date().toISOString()
@@ -1381,7 +1331,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
       const updatedItems = (selectedSubcontract?.lineItems || []).filter(li => !selectedLineItemIds.has(li.id));
       const newTotal = updatedItems.reduce((sum, li) => sum + (li.total || 0), 0);
       
-      await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+      await subcontractRepo.updateSubcontract(selectedSubcontractId, {
         lineItems: updatedItems,
         totalAmount: newTotal,
         updatedAt: new Date().toISOString()
@@ -1453,7 +1403,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
 
       const newTotal = updatedItems.reduce((sum, li) => sum + (li.total || 0), 0);
       
-      await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+      await subcontractRepo.updateSubcontract(selectedSubcontractId, {
         lineItems: updatedItems,
         totalAmount: newTotal,
         updatedAt: new Date().toISOString()
@@ -1567,7 +1517,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
           return acc;
         }, { total: 0, forecast: 0 });
 
-        await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+        await subcontractRepo.updateSubcontract(selectedSubcontractId, {
           lineItems: currentItems,
           totalAmount: totals.total,
           forecastChanges: totals.forecast,
@@ -1634,7 +1584,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         return acc;
       }, { total: 0, forecast: 0 });
 
-      await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+      await subcontractRepo.updateSubcontract(selectedSubcontractId, {
         lineItems: updatedItems,
         totalAmount: totals.total,
         forecastChanges: totals.forecast,
@@ -1720,7 +1670,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         createdBy: user.uid
       };
 
-      await addDoc(collection(db, 'invoices'), newInvoice);
+      await subcontractRepo.createInvoice(newInvoice as any);
       toast.success('Invoice created.');
     } catch (error) {
       console.error('Error adding invoice:', error);
@@ -1732,7 +1682,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     e.preventDefault();
     if (!editingInvoiceId) return;
     try {
-      await updateDoc(doc(db, 'invoices', editingInvoiceId), {
+      await subcontractRepo.updateInvoice(editingInvoiceId, {
         ...invoiceFormData,
         updatedAt: new Date().toISOString()
       });
@@ -1748,7 +1698,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
   const handleDeleteInvoice = async () => {
     if (!invoiceDeleteConfirm) return;
     try {
-      await deleteDoc(doc(db, 'invoices', invoiceDeleteConfirm));
+      await subcontractRepo.deleteInvoice(invoiceDeleteConfirm);
       toast.success('Invoice deleted.');
       setInvoiceDeleteConfirm(null);
       if (selectedInvoiceId === invoiceDeleteConfirm) {
@@ -1771,10 +1721,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         valueToSave = dateToISO(newValue);
       }
 
-      await updateDoc(doc(db, 'invoices', data.id), {
-        [colDef.field]: valueToSave,
-        updatedAt: new Date().toISOString()
-      });
+      await subcontractRepo.updateInvoice(data.id, { [colDef.field]: valueToSave });
     } catch (error) {
       console.error('Error updating invoice:', error);
       toast.error('Failed to update invoice.');
@@ -1939,7 +1886,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
     const newCertifiedTotal = updatedItems.reduce((sum, item) => sum + (item.certifiedValue || 0), 0);
 
     try {
-      await updateDoc(doc(db, 'invoices', selectedInvoiceId), {
+      await subcontractRepo.updateInvoice(selectedInvoiceId, {
         items: updatedItems,
         totalAmount: newTotal,
         certifiedAmount: newCertifiedTotal,
@@ -2517,7 +2464,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
         return li;
       });
 
-      await updateDoc(doc(db, 'subcontracts', selectedSubcontractId), {
+      await subcontractRepo.updateSubcontract(selectedSubcontractId, {
         lineItems: updatedLineItems,
         updatedAt: new Date().toISOString()
       });
@@ -3066,11 +3013,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
               if (!window.confirm('Delete this line item?')) return;
               const updatedItems = (selectedSubcontract?.lineItems || []).filter(i => i.id !== params.data.id);
               const newTotal = updatedItems.reduce((sum, i) => sum + (i.total || 0), 0);
-              await updateDoc(doc(db, 'subcontracts', selectedSubcontractId!), {
-                lineItems: updatedItems,
-                totalAmount: newTotal,
-                updatedAt: new Date().toISOString()
-              });
+              await subcontractRepo.updateSubcontract(selectedSubcontractId!, { lineItems: updatedItems, totalAmount: newTotal });
               toast.success('Line item deleted.');
             }}
             className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
@@ -3266,6 +3209,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
               theme === 'dark' ? "ag-theme-quartz-dark" : ""
             )}>
               <AgGridReact
+                theme="legacy"
                 ref={gridRef}
                 rowData={selectedSubcontractId ? subcontracts.filter(s => s.id === selectedSubcontractId) : subcontracts}
                 columnDefs={subcontractColumnDefs}
@@ -3618,6 +3562,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                 )}>
                   {bottomPanelTab === 'lineItems' ? (
                     <AgGridReact
+                      theme="legacy"
                       key="lineItemsGrid"
                       ref={lineItemsGridRef}
                       rowData={selectedSubcontract?.lineItems || []}
@@ -3690,6 +3635,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                         </div>
                         <div className="flex-1 min-h-0">
                           <AgGridReact
+                            theme="legacy"
                             key="invoicesGrid"
                             ref={invoicesGridRef}
                             rowData={selectedSubcontractInvoices}
@@ -3780,6 +3726,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                           </div>
                           <div className="flex-1 min-h-0 ag-theme-quartz dark:ag-theme-quartz-dark">
                             <AgGridReact
+                              theme="legacy"
                               key="invoiceItemsGrid"
                               rowData={selectedInvoiceItems}
                               columnDefs={invoiceLineItemColumnDefs}

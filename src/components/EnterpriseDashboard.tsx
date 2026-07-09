@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, addDoc, deleteDoc, doc, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
+import { useProjectRepo, useCostRepo } from '../platform/firestore/hooks';
 import { Enterprise, Project } from '../types';
 import { Plus, Briefcase, AlertTriangle, ArrowUpRight, Trash2, ArrowUp, ArrowDown, Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,6 +27,8 @@ interface EnterpriseDashboardProps {
 
 export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner }: EnterpriseDashboardProps) {
   const navigate = useNavigate();
+  const projectRepo = useProjectRepo();
+  const costRepo = useCostRepo();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newProject, setNewProject] = useState({ name: '', code: '' });
@@ -65,20 +66,10 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
   useEffect(() => {
     if (!enterprise) return;
 
-    const q = query(collection(db, 'projects'), where('enterpriseId', '==', enterprise.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allProjects = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Project));
-      
-      // Filter projects if not enterprise admin
-      const filtered = isEnterpriseAdmin 
-        ? allProjects 
-        : allProjects.filter(p => p.users && p.users[userId]);
-        
+    return projectRepo.subscribeByEnterprise(enterprise.id, '', (allProjects) => {
+      const filtered = isEnterpriseAdmin ? allProjects : allProjects.filter(p => p.users && p.users[userId]);
       setProjects(filtered);
-    }, (error) => {
-      console.error("Projects fetch error:", error);
     });
-    return () => unsubscribe();
   }, [enterprise, isEnterpriseAdmin, userId]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -94,21 +85,11 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
       setIsSubmitting(true);
       const now = new Date().toISOString();
       const finalName = newProject.name.trim() || 'Project Name';
-      await addDoc(collection(db, 'projects'), {
-        enterpriseId: enterprise.id,
-        projectName: finalName,
-        projectCode: newProject.code,
-        projectBudget: 0,
-        startDate: now.split('T')[0],
-        endDate: now.split('T')[0],
-        cutoffDate: now.split('T')[0],
-        users: { [userId]: 'Project Admin' },
-        dateCreated: now,
-        dateLastModified: now,
-        firstCostReportingMonth: '',
-        currentReportingMonth: '',
-        lastReportingMonth: ''
-      });
+      await projectRepo.create({
+        enterpriseId: enterprise.id, projectName: finalName, projectCode: newProject.code, projectBudget: 0,
+        startDate: now.split('T')[0], endDate: now.split('T')[0], cutoffDate: now.split('T')[0],
+        users: { [userId]: 'Project Admin' }, dateCreated: now, firstCostReportingMonth: '', currentReportingMonth: '', lastReportingMonth: '',
+      } as any);
       setIsModalOpen(false);
       setNewProject({ name: '', code: '' });
     } catch (error) {
@@ -122,27 +103,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
     if (!projectToDelete) return;
     setIsDeleting(true);
     try {
-      const batch = writeBatch(db);
-      
-      // 1. Find all sheets for this project
-      const sheetsQuery = query(collection(db, 'sheets'), where('projectId', '==', projectToDelete.id));
-      const sheetsSnapshot = await getDocs(sheetsQuery);
-      
-      for (const sheetDoc of sheetsSnapshot.docs) {
-        // 2. Find all rows for each sheet
-        const rowsQuery = query(collection(db, `sheets/${sheetDoc.id}/rows`));
-        const rowsSnapshot = await getDocs(rowsQuery);
-        rowsSnapshot.docs.forEach(rowDoc => {
-          batch.delete(rowDoc.ref);
-        });
-        // 3. Delete the sheet
-        batch.delete(sheetDoc.ref);
-      }
-      
-      // 4. Delete the project
-      batch.delete(doc(db, 'projects', projectToDelete.id));
-      
-      await batch.commit();
+      await projectRepo.deleteProjectWithSheets(projectToDelete.id);
       setProjectToDelete(null);
     } catch (error) {
       console.error('Failed to delete project', error);
@@ -156,11 +117,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
     if (!deleteConfirm) return;
     try {
       if (deleteConfirm.type === 'bulk') {
-        const batch = writeBatch(db);
-        selectedIds.forEach(id => {
-          batch.delete(doc(db, 'projects', id));
-        });
-        await batch.commit();
+        await Promise.all([...selectedIds].map(id => projectRepo.delete(id)));
         toast.success(`Deleted ${selectedIds.size} projects.`);
       }
       setSelectedIds(new Set());
@@ -173,16 +130,10 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
 
   const handleBulkUpdate = async () => {
     try {
-      const batch = writeBatch(db);
-      selectedIds.forEach(id => {
-        const updateObj: any = { dateLastModified: new Date().toISOString() };
-        const p = projects.find(p => p.id === id);
-        if (p) {
-          updateObj.attributes = { ...(p.attributes || {}), ...bulkUpdateData.attributes };
-        }
-        batch.update(doc(db, 'projects', id), updateObj);
-      });
-      await batch.commit();
+      await Promise.all([...selectedIds].map(id => {
+        const p = projects.find(proj => proj.id === id);
+        return projectRepo.update(id, { attributes: { ...(p?.attributes || {}), ...bulkUpdateData.attributes } });
+      }));
       toast.success(`Updated ${selectedIds.size} projects.`);
       setIsBulkUpdating(false);
       setSelectedIds(new Set());
@@ -259,71 +210,36 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
 
           let duplicateCount = 0;
           let addedCount = 0;
-          const batch = writeBatch(db);
 
           const enterpriseAttributesMap = new Map();
           (enterprise?.projectAttributes || []).forEach(attr => {
-             if (attr.title) {
-               enterpriseAttributesMap.set(attr.title.toLowerCase(), attr);
-             }
+            if (attr.title) enterpriseAttributesMap.set(attr.title.toLowerCase(), attr);
           });
 
-          rows.forEach((row: any) => {
+          for (const row of rows) {
             const projectCode = row['Project ID'] || row['projectCode'];
             const projectName = row['Project Name'] || row['projectName'];
-
-            if (!projectCode || !projectName) return;
-
+            if (!projectCode || !projectName) continue;
             const attributes: Record<string, string> = {};
             Object.keys(row).forEach(key => {
-               const attr = enterpriseAttributesMap.get(key.toLowerCase());
-               if (attr) {
-                 const rawVal = String(row[key]);
-                 let finalVal = rawVal;
-                 if (rawVal.includes(' | ')) {
-                   finalVal = rawVal.split(' | ')[0].trim();
-                 }
-                 attributes[attr.id] = finalVal;
-               }
+              const attr = enterpriseAttributesMap.get(key.toLowerCase());
+              if (attr) {
+                const rawVal = String(row[key]);
+                attributes[attr.id] = rawVal.includes(' | ') ? rawVal.split(' | ')[0].trim() : rawVal;
+              }
             });
-
-            // If it exists, only update Name and attributes
             const existingProject = projects.find(p => p.projectCode === projectCode);
             if (existingProject) {
-              const ref = doc(db, 'projects', existingProject.id);
-              batch.update(ref, {
-                projectName: String(projectName),
-                attributes: { ...(existingProject.attributes || {}), ...attributes },
-                dateLastModified: new Date().toISOString()
-              });
-              duplicateCount++; // Tracking as updated duplicate
-              return;
+              await projectRepo.update(existingProject.id, { projectName: String(projectName), attributes: { ...(existingProject.attributes || {}), ...attributes } });
+              duplicateCount++;
+            } else {
+              await projectRepo.create({ enterpriseId: enterprise?.id || '', projectCode: String(projectCode), projectName: String(projectName), projectBudget: 0, startDate: new Date().toISOString(), endDate: new Date().toISOString(), cutoffDate: new Date().toISOString(), users: {}, attributes, dateCreated: new Date().toISOString() } as any);
+              addedCount++;
             }
-
-            const newProjectData: any = {
-              enterpriseId: enterprise?.id || '',
-              projectCode: String(projectCode),
-              projectName: String(projectName),
-              projectBudget: 0,
-              startDate: new Date().toISOString(),
-              endDate: new Date().toISOString(),
-              cutoffDate: new Date().toISOString(),
-              users: {},
-              attributes,
-              dateCreated: new Date().toISOString(),
-              dateLastModified: new Date().toISOString()
-            };
-
-            const ref = doc(collection(db, 'projects'));
-            batch.set(ref, newProjectData);
-            addedCount++;
-          });
-
-          if (addedCount > 0 || duplicateCount > 0) {
-            await batch.commit();
-            if (addedCount > 0) toast.success(`Imported ${addedCount} new projects.`);
-            if (duplicateCount > 0) toast.success(`Updated ${duplicateCount} existing projects.`);
           }
+
+          if (addedCount > 0) toast.success(`Imported ${addedCount} new projects.`);
+          if (duplicateCount > 0) toast.success(`Updated ${duplicateCount} existing projects.`);
         } catch (err) {
           console.error("Import error:", err);
           toast.error("Failed to import file.");
@@ -336,10 +252,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
 
   const handleUpdateField = async (id: string, field: string, value: any) => {
     try {
-      await updateDoc(doc(db, 'projects', id), {
-        [field]: value,
-        dateLastModified: new Date().toISOString()
-      });
+      await projectRepo.update(id, { [field]: value } as any);
     } catch (e) {
       console.error(e);
     }
@@ -353,48 +266,27 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
       return;
     }
 
-    const unsubscribes: (() => void)[] = [];
-    
-    // Firestore 'in' query supports max 10 values
-    const chunkArray = (arr: any[], size: number) => 
-      Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
-      
-    const projectChunks = chunkArray(projects.map(p => p.id), 10);
-
-    projectChunks.forEach(chunk => {
-      const q = query(collection(db, 'costCodes'), where('projectId', 'in', chunk));
-      const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = costRepo.subscribeCostCodesByProjectIds(projects.map(p => p.id), (allCostCodes) => {
         const aggs: Record<string, any> = {};
-        chunk.forEach(id => {
-          aggs[id] = {
-            baselineBudget: 0,
-            budgetChanges: 0,
-            approvedBudget: 0,
-            actualCost: 0,
-            etc: 0,
-            eac: 0
-          };
+        projects.forEach(p => {
+          aggs[p.id] = { baselineBudget: 0, budgetChanges: 0, approvedBudget: 0, actualCost: 0, etc: 0, eac: 0 };
         });
 
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          const pId = data.projectId;
+        allCostCodes.forEach(cc => {
+          const pId = cc.projectId;
           if (pId && aggs[pId]) {
-            aggs[pId].baselineBudget += (data.baselineBudget || 0);
-            aggs[pId].budgetChanges += (data.budgetChanges || 0);
-            aggs[pId].approvedBudget += (data.approvedBudget || 0);
-            aggs[pId].actualCost += (data.actualCostToDate || 0);
-            aggs[pId].etc += (data.estimateToComplete || 0);
-            aggs[pId].eac += (data.estimateAtCompletion || 0);
+            aggs[pId].baselineBudget += (cc.baselineBudget || 0);
+            aggs[pId].budgetChanges += ((cc as any).budgetChanges || 0);
+            aggs[pId].approvedBudget += ((cc as any).approvedBudget || 0);
+            aggs[pId].actualCost += ((cc as any).actualCostToDate || 0);
+            aggs[pId].etc += ((cc as any).estimateToComplete || 0);
+            aggs[pId].eac += ((cc as any).estimateAtCompletion || 0);
           }
         });
-
         setCostAggregations(prev => ({ ...prev, ...aggs }));
       });
-      unsubscribes.push(unsubscribe);
-    });
 
-    return () => unsubscribes.forEach(unsub => unsub());
+    return () => unsubscribe();
   }, [projects]);
 
   const projectColumnDefs = useMemo(() => {

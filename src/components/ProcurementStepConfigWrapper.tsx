@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, orderBy } from 'firebase/firestore';
 import { Project, Enterprise, ProcurementStepDefinition } from '../types';
 import ProcurementStepConfig from './ProcurementStepConfig';
+import { useProcurementRepo } from '../platform/firestore/hooks';
 
 interface ProcurementStepConfigWrapperProps {
   project: Project;
@@ -10,30 +9,19 @@ interface ProcurementStepConfigWrapperProps {
 }
 
 export default function ProcurementStepConfigWrapper({ project, enterprise }: ProcurementStepConfigWrapperProps) {
+  const repo = useProcurementRepo();
   const [currentSteps, setCurrentSteps] = useState<ProcurementStepDefinition[]>([]);
   const [enterpriseSteps, setEnterpriseSteps] = useState<ProcurementStepDefinition[]>([]);
 
   useEffect(() => {
     if (!project.id) return;
-    
-    // Fetch Project Steps
-    const stepsQuery = query(
-      collection(db, 'procurementStepDefinitions'), 
-      where('projectId', '==', project.id),
-      orderBy('order', 'asc')
-    );
-    const unsubSteps = onSnapshot(stepsQuery, (snapshot) => {
-      setCurrentSteps(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProcurementStepDefinition)));
+
+    const unsubSteps = repo.subscribeProjectStepDefinitions(project.id, (steps) => {
+      setCurrentSteps([...steps].sort((a, b) => (a.order || 0) - (b.order || 0)));
     });
 
-    // Fetch Enterprise Steps
-    const entStepsQuery = query(
-      collection(db, 'procurementStepDefinitions'), 
-      where('enterpriseId', '==', project.enterpriseId),
-      orderBy('order', 'asc')
-    );
-    const unsubEntSteps = onSnapshot(entStepsQuery, (snapshot) => {
-      setEnterpriseSteps(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProcurementStepDefinition)));
+    const unsubEntSteps = repo.subscribeEnterpriseStepDefinitions(project.enterpriseId, (steps) => {
+      setEnterpriseSteps([...steps].sort((a, b) => (a.order || 0) - (b.order || 0)));
     });
 
     return () => {
@@ -43,11 +31,11 @@ export default function ProcurementStepConfigWrapper({ project, enterprise }: Pr
   }, [project.id, project.enterpriseId]);
 
   return (
-    <ProcurementStepConfig 
-      project={project} 
-      enterprise={enterprise} 
-      currentSteps={currentSteps} 
-      enterpriseSteps={enterpriseSteps} 
+    <ProcurementStepConfig
+      project={project}
+      enterprise={enterprise}
+      currentSteps={currentSteps}
+      enterpriseSteps={enterpriseSteps}
     />
   );
 }

@@ -93,6 +93,7 @@ export default function AgGridMasterListEditor({
 
       <div className={`flex-1 min-h-[150px] ${theme === 'dark' ? 'ag-theme-quartz-dark' : 'ag-theme-quartz'}`}>
         <AgGridReact
+          theme="legacy"
           ref={gridRef}
           rowData={rowData}
           columnDefs={columnDefs}

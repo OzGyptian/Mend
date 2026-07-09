@@ -1,15 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Project } from '../types';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { 
-  doc, 
-  updateDoc, 
-  collection, 
-  query, 
-  where, 
-  getDocs,
-  writeBatch
-} from 'firebase/firestore';
+import { useProgressRepo, useProjectRepo, useAuth } from '../platform/firestore/hooks';
+import { getProjectRole } from '../domain/roles';
 import { Calendar, Save, Calculator, Trash2, Lock, Unlock, Plus, AlertTriangle, RefreshCw, Eye, FileText, CheckCircle2 } from 'lucide-react';
 import { addMonths, addWeeks, subDays, format, parseISO, isWithinInterval } from 'date-fns';
 import { toast } from 'sonner';
@@ -23,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { rocPercentComplete, earnedQty } from '../domain/progress';
 
 interface ProgressReportingPeriodProps {
   project: Project;
@@ -38,6 +31,9 @@ interface Period {
 }
 
 const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ project, isAdmin: isAdminProp }) => {
+  const progressRepo = useProgressRepo();
+  const projectRepo = useProjectRepo();
+  const { user, isPlatformAdmin } = useAuth();
   const [baseDate, setBaseDate] = useState(project.progressPeriods?.baseDate || '');
   const [duration, setDuration] = useState<'week' | 'month'>(project.progressPeriods?.duration || 'week');
   const [numberOfPeriods, setNumberOfPeriods] = useState<number>(project.progressPeriods?.numberOfPeriods || 12);
@@ -47,7 +43,7 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [isRollOverConfirmOpen, setIsRollOverConfirmOpen] = useState(false);
 
-  const isAdmin = isAdminProp ?? (project.users?.[auth.currentUser?.uid || ''] === 'Project Admin' || (auth.currentUser?.email?.toLowerCase() === 'tarek.guindy@gmail.com'));
+  const isAdmin = isAdminProp ?? (getProjectRole(project.users, user?.id ?? '') === 'project_admin' || isPlatformAdmin);
   const hasClosedPeriods = periods.some(p => p.status === 'closed');
 
   useEffect(() => {
@@ -68,24 +64,18 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
     const migrateLegacyPeriods = async () => {
       if (!project.progressPeriods?.periods || project.progressPeriods.periods.length === 0) {
         try {
-          const q = query(collection(db, 'progressReportingPeriods'), where('projectId', '==', project.id));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            const legacyPeriods = snap.docs.map(docSnap => {
-              const data = docSnap.data();
-              return {
-                id: docSnap.id,
-                name: data.periodName || data.name,
-                startDate: data.startDate,
-                endDate: data.endDate,
-                status: data.status || 'open'
-              } as Period;
-            }).sort((a, b) => a.startDate.localeCompare(b.startDate));
+          const legacyDocs = await progressRepo.listReportingPeriods(project.id);
+          if (legacyDocs.length > 0) {
+            const legacyPeriods = legacyDocs.map(d => ({
+              id: d.id,
+              name: d.periodName || d.id,
+              startDate: d.startDate,
+              endDate: d.endDate,
+              status: (d.status || 'open') as 'open' | 'closed',
+            })).sort((a, b) => a.startDate.localeCompare(b.startDate));
             
-            if (legacyPeriods.length > 0) {
-              const first = legacyPeriods[0];
-              await handleSave(legacyPeriods, first.startDate, 'week', legacyPeriods.length, first.id);
-            }
+            const first = legacyPeriods[0];
+            await handleSave(legacyPeriods, first.startDate, 'week', legacyPeriods.length, first.id);
           }
         } catch (error) {
           console.error("Migration error:", error);
@@ -209,57 +199,32 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
     try {
       const firstOpenPeriod = openPeriods[0];
       
-      // Store actuals for all progress items before closing the period
-      // Note: the app uses 'progressItems' collection for commodities
-      const itemsSnap = await getDocs(query(collection(db, 'progressItems'), where('projectId', '==', project.id)));
-      
-      if (itemsSnap.empty) {
+      const progressItems = await progressRepo.listProgressItems(project.id);
+      const rocs = await progressRepo.listRulesOfCredit(project.id);
+
+      if (progressItems.length === 0) {
         toast.loading('No progress items to process. Proceeding with period update...', { id: toastId });
       } else {
-        toast.loading(`Processing ${itemsSnap.size} items...`, { id: toastId });
+        toast.loading(`Processing ${progressItems.length} items...`, { id: toastId });
       }
-      
-      const rocSnap = await getDocs(query(collection(db, 'rulesOfCredit'), where('projectId', '==', project.id)));
-      const rocs = rocSnap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
 
-      let batch = writeBatch(db);
-      let opCount = 0;
-
-      if (!itemsSnap.empty) {
-        for (const docSnap of itemsSnap.docs) {
-          const item = docSnap.data();
-          const roc = rocs.find(r => r.id === item.ruleOfCreditId || r.ruleId === item.ruleOfCreditId);
-          
-          let earned = 0;
-          if (roc?.steps) {
-            const progress = item.ruleOfCreditProgress || {};
-            const percent = roc.steps.reduce((sum: number, step: any) => {
-              const stepProgress = progress[step.id] || 0;
-              return sum + (stepProgress * step.weight / 100);
-            }, 0);
-            earned = (percent / 100) * (item.totalQty || 0);
-          }
-
-          const prevEarned = item.earnedQtyPrevious || 0;
-          const currentActual = Math.max(0, earned - prevEarned);
-
-          const actualPeriodValues = { ...(item.actualPeriodValues || {}) };
-          actualPeriodValues[firstOpenPeriod.id] = currentActual;
-
-          batch.update(docSnap.ref, {
-            actualPeriodValues,
-            earnedQtyPrevious: earned,
-            updatedAt: new Date().toISOString()
-          });
-          
-          opCount++;
-          if (opCount >= 400) {
-            await batch.commit();
-            batch = writeBatch(db);
-            opCount = 0;
-          }
+      const itemUpdates = progressItems.map(item => {
+        const roc = rocs.find(r => r.id === (item as any).ruleOfCreditId || r.ruleId === (item as any).ruleOfCreditId);
+        let earned = 0;
+        if (roc?.steps) {
+          const progress = (item as any).ruleOfCreditProgress || {};
+          const percent = rocPercentComplete(roc.steps, progress);
+          earned = earnedQty(percent, (item as any).totalQty || 0);
         }
-        await batch.commit();
+        const prevEarned = (item as any).earnedQtyPrevious || 0;
+        const currentActual = Math.max(0, earned - prevEarned);
+        const actualPeriodValues = { ...((item as any).actualPeriodValues || {}), [firstOpenPeriod.id]: currentActual };
+        return { id: item.id, data: { actualPeriodValues, earnedQtyPrevious: earned, updatedAt: new Date().toISOString() } };
+      });
+
+      const chunkSize = 400;
+      for (let i = 0; i < Math.ceil(itemUpdates.length / chunkSize); i++) {
+        await progressRepo.updateManyProgressItems(itemUpdates.slice(i * chunkSize, (i + 1) * chunkSize));
       }
 
       const nextOpenPeriod = openPeriods[1];
@@ -277,14 +242,14 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
 
       // Update project document
       toast.loading('Saving period updates to project...', { id: toastId });
-      await updateDoc(doc(db, 'projects', project.id), {
+      await projectRepo.update(project.id, {
         progressPeriods: {
           baseDate: baseDate,
           duration: duration,
           numberOfPeriods: numberOfPeriods,
           periods: newPeriods,
-          currentPeriodId: newCurrentId || null
-        }
+          currentPeriodId: newCurrentId || null,
+        },
       });
       
       setPeriods(newPeriods);
@@ -303,11 +268,7 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
                         error.code === 'resource-exhausted' ||
                         (error.message && error.message.includes('permissions'));
       if (shouldLog) {
-        try {
-          handleFirestoreError(error, OperationType.WRITE, 'progress_roll_over');
-        } catch (e) {
-          // ensure we still show the toast
-        }
+        console.error('Progress rollover write error:', JSON.stringify({ code: (error as any).code, message: error.message }));
       }
       toast.error(`Failed to roll over period: ${error.message || 'Unknown error'}`, { id: toastId });
     } finally {
@@ -325,14 +286,14 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
     if (!project.id) return;
     setSaving(true);
     try {
-      await updateDoc(doc(db, 'projects', project.id), {
+      await projectRepo.update(project.id, {
         progressPeriods: {
           baseDate: updatedBaseDate,
           duration: updatedDuration,
           numberOfPeriods: updatedNum,
           periods: updatedPeriods,
-          currentPeriodId: updatedCurrent || null
-        }
+          currentPeriodId: updatedCurrent || null,
+        },
       });
     } catch (error) {
       console.error('Error saving progress periods:', error);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Project, ProjectAttribute, ProjectAttributeValue } from '../types';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+
+import { useProjectRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Trash2, 
@@ -52,6 +52,7 @@ interface ProgressAttributesProps {
 }
 
 const ProgressAttributes: React.FC<ProgressAttributesProps> = ({ project }) => {
+  const projectRepo = useProjectRepo();
   const [attributes, setAttributes] = useState<ProjectAttribute[]>([]);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>('01');
   const [attrSearch, setAttrSearch] = useState('');
@@ -73,7 +74,7 @@ const ProgressAttributes: React.FC<ProgressAttributesProps> = ({ project }) => {
 
   const handleGlobalSave = async (updatedAttrs: ProjectAttribute[]) => {
     try {
-      await updateDoc(doc(db, 'projects', project.id), { progressAttributes: updatedAttrs });
+      await projectRepo.update(project.id, { progressAttributes: updatedAttrs });
     } catch (error) {
       console.error('Error saving progress attributes:', error);
       toast.error('Failed to save changes.');

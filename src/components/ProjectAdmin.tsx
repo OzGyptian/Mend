@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { db } from '../firebase';
-import { doc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { useProjectRepo } from '../platform/firestore/hooks';
 import { Project, Enterprise } from '../types';
 import { 
   Calendar as CalendarIcon, 
@@ -85,6 +84,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
   const [newProjectCode, setNewProjectCode] = useState('');
   const [isReplacing, setIsReplacing] = useState(false);
   const [replaceError, setReplaceError] = useState('');
+  const projectRepo = useProjectRepo();
   const [isDuplicate, setIsDuplicate] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -120,13 +120,8 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
       }
       
       try {
-        const q = query(
-          collection(db, 'projects'),
-          where('enterpriseId', '==', project.enterpriseId),
-          where('projectCode', '==', newProjectCode.trim())
-        );
-        const querySnapshot = await getDocs(q);
-        setIsDuplicate(!querySnapshot.empty);
+        const exists = await projectRepo.checkProjectCodeExists(project.enterpriseId, newProjectCode.trim());
+        setIsDuplicate(exists);
       } catch (error) {
         console.error('Error checking duplicate ID:', error);
       }
@@ -176,11 +171,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
     try {
       if (!project.id) throw new Error('Project ID is missing');
 
-      const projectRef = doc(db, 'projects', project.id);
-      await updateDoc(projectRef, {
-        ...dataToSave,
-        dateLastModified: new Date().toISOString()
-      });
+      await projectRepo.update(project.id, { ...dataToSave });
       setLastSaved(new Date().toLocaleTimeString());
     } catch (error) {
       console.error('Update failed', error);
@@ -226,25 +217,13 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
     setReplaceError('');
 
     try {
-      // Check for duplicates
-      const q = query(
-        collection(db, 'projects'),
-        where('enterpriseId', '==', project.enterpriseId),
-        where('projectCode', '==', newProjectCode.trim())
-      );
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
+      const exists = await projectRepo.checkProjectCodeExists(project.enterpriseId, newProjectCode.trim());
+      if (exists) {
         setReplaceError('This Project ID already exists in the enterprise.');
         setIsReplacing(false);
         return;
       }
-
-      const projectRef = doc(db, 'projects', project.id);
-      await updateDoc(projectRef, {
-        projectCode: newProjectCode.trim(),
-        dateLastModified: new Date().toISOString()
-      });
+      await projectRepo.update(project.id, { projectCode: newProjectCode.trim() });
 
       setIsReplaceIdModalOpen(false);
       setNewProjectCode('');
@@ -264,7 +243,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
     } else {
       newUsers[uid] = 'Project User';
     }
-    await updateDoc(doc(db, 'projects', project.id), { users: newUsers });
+    await projectRepo.update(project.id, { users: newUsers });
   };
 
   const adminItems = [
@@ -578,7 +557,7 @@ export default function ProjectAdmin({ project, enterprise }: ProjectAdminProps)
                           value={project.users[uid]}
                           onChange={async (e) => {
                             const newUsers = { ...project.users, [uid]: e.target.value as any };
-                            await updateDoc(doc(db, 'projects', project.id), { users: newUsers });
+                            await projectRepo.update(project.id, { users: newUsers });
                           }}
                           className="text-xs bg-gray-100 dark:bg-white/5 border-none rounded-lg px-3 py-1.5 font-bold uppercase tracking-widest text-gray-900 dark:text-gray-400 outline-none focus:ring-2 focus:ring-blue-500"
                         >

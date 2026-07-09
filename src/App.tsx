@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Navigate, useLocation } from 'react-router-dom';
-import { auth, db } from './firebase';
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
-import { collection, query, where, onSnapshot, addDoc, doc, updateDoc, getDoc, getDocs, limit } from 'firebase/firestore';
+import { useAuthRepo, useEnterpriseRepo, useProjectRepo, useAuth } from './platform/firestore/hooks';
+import type { AuthUser } from './platform/ports/auth.port';
 import { Enterprise, Project, Sheet } from './types';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
@@ -14,13 +13,21 @@ import EnterpriseAdmin from './components/EnterpriseAdmin';
 import ProjectAdmin from './components/ProjectAdmin';
 import UserProfile from './components/UserProfile';
 import LandingPage from './components/LandingPage';
-import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2 } from 'lucide-react';
+import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2, Eye, EyeOff } from 'lucide-react';
 import { Toaster } from 'sonner';
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
+  const authRepo = useAuthRepo();
+  const enterpriseRepo = useEnterpriseRepo();
+  const projectRepo = useProjectRepo();
+
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
+  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(
+    () => localStorage.getItem('selectedEnterpriseId')
+  );
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [currentSheet, setCurrentSheet] = useState<Sheet | null>(null);
@@ -35,201 +42,107 @@ export default function App() {
   const [showLanding, setShowLanding] = useState(true);
   const [isInIframe, setIsInIframe] = useState(false);
   const [systemOwnerEnterpriseId, setSystemOwnerEnterpriseId] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('systemOwnerEnterpriseId');
-    } catch (e) {
-      return null;
-    }
+    try { return localStorage.getItem('systemOwnerEnterpriseId'); } catch (e) { return null; }
   });
 
-  const isSystemOwner = user?.email?.toLowerCase() === 'tarek.guindy@gmail.com' || user?.email?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemOwner } = useAuth();
 
   useEffect(() => {
     try {
-      if (systemOwnerEnterpriseId) {
-        localStorage.setItem('systemOwnerEnterpriseId', systemOwnerEnterpriseId);
-      } else {
-        localStorage.removeItem('systemOwnerEnterpriseId');
-      }
-    } catch (e) {
-      console.warn('LocalStorage access failed', e);
-    }
-    // Reset current project and sheet when switching enterprises
+      if (systemOwnerEnterpriseId) { localStorage.setItem('systemOwnerEnterpriseId', systemOwnerEnterpriseId); }
+      else { localStorage.removeItem('systemOwnerEnterpriseId'); }
+    } catch (e) { console.warn('LocalStorage access failed', e); }
     setCurrentProject(null);
     setCurrentSheet(null);
     setView('enterprise');
   }, [systemOwnerEnterpriseId]);
-  useEffect(() => {
-    // Check if the app is running in an iframe
-    try {
-      setIsInIframe(window.self !== window.top);
-    } catch (e) {
-      setIsInIframe(true);
-    }
-  }, []);
 
-  useEffect(() => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
+  const handleEnterpriseSwitch = (enterprise: Enterprise) => {
+    setCurrentProject(null);
+    setCurrentSheet(null);
+    setView('enterprise');
+    if (isSystemOwner) {
+      setSystemOwnerEnterpriseId(enterprise.id);
+      localStorage.setItem('systemOwnerEnterpriseId', enterprise.id);
     } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
-      
-      // Handle invitation if present in URL
-      if (u) {
-        handlePendingInvitation(u);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handlePendingInvitation = async (u: User) => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('token');
-
-    if (token) {
-      try {
-        // 1. Find the invitation by token
-        const q = query(collection(db, 'invitations'), where('token', '==', token), where('status', '==', 'pending'), limit(1));
-        const snapshot = await getDocs(q);
-        
-        if (!snapshot.empty) {
-          const inviteDoc = snapshot.docs[0];
-          const inviteData = inviteDoc.data();
-          
-          // 2. Security Check: Email must match (if provided in invite)
-          if (inviteData.email && u.email?.toLowerCase() !== inviteData.email.toLowerCase()) {
-            setAuthError(`This invitation was sent to ${inviteData.email}. Please sign in with that account.`);
-            return;
-          }
-
-          // 3. Security Check: Token expiration
-          if (new Date(inviteData.expiresAt) < new Date()) {
-            setAuthError('This invitation has expired. Please ask for a new one.');
-            return;
-          }
-
-          // 4. Add user to Enterprise
-          const enterpriseRef = doc(db, 'enterprises', inviteData.enterpriseId);
-          const enterpriseSnap = await getDoc(enterpriseRef);
-          
-          if (enterpriseSnap.exists()) {
-            const data = enterpriseSnap.data();
-            const users = data.users || {};
-            
-            if (!users[u.uid]) {
-              await updateDoc(enterpriseRef, {
-                [`users.${u.uid}`]: {
-                  name: u.displayName || u.email?.split('@')[0] || 'New User',
-                  email: u.email,
-                  role: 'Enterprise User',
-                  joinedAt: new Date().toISOString()
-                },
-                adminUsers: [...(data.adminUsers || []), u.uid]
-              });
-            }
-
-            // 5. Mark invitation as accepted
-            await updateDoc(inviteDoc.ref, {
-              status: 'accepted',
-              acceptedAt: new Date().toISOString(),
-              acceptedBy: u.uid
-            });
-
-            // 6. Clear URL params
-            window.history.replaceState({}, document.title, window.location.pathname);
-            alert(`Welcome! You've been added to ${data.name}.`);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to process invitation:', error);
-      }
+      setSelectedEnterpriseId(enterprise.id);
+      localStorage.setItem('selectedEnterpriseId', enterprise.id);
     }
   };
 
   useEffect(() => {
-    if (!user) return;
-
-    // Fetch Enterprise
-    const enterpriseQuery = isSystemOwner && systemOwnerEnterpriseId
-      ? query(collection(db, 'enterprises'), where('__name__', '==', systemOwnerEnterpriseId))
-      : query(collection(db, 'enterprises'), where('adminUsers', 'array-contains', user.uid));
-
-    const unsubscribe = onSnapshot(enterpriseQuery, (snapshot) => {
-      if (!snapshot.empty) {
-        const doc = snapshot.docs[0];
-        const data = { ...doc.data() as Enterprise, id: doc.id };
-        setCurrentEnterprise(data);
-        
-        // Fetch projects for this enterprise
-        const qProjects = query(collection(db, 'projects'), where('enterpriseId', '==', doc.id));
-        getDocs(qProjects).then(projSnap => {
-          setProjects(projSnap.docs.map(d => ({ ...d.data() as Project, id: d.id })));
-        });
-      } else {
-        setCurrentEnterprise(null);
-      }
-    }, (error) => {
-      console.error("Enterprise fetch error:", error);
-    });
-    return () => unsubscribe();
-  }, [user, systemOwnerEnterpriseId]);
+    try { setIsInIframe(window.self !== window.top); } catch (e) { setIsInIframe(true); }
+  }, []);
 
   useEffect(() => {
-    if (!user || 
-        (user.email?.toLowerCase() !== 'tarek.guindy@gmail.com' && 
-         user.email?.toLowerCase() !== 'tarek_guindy@hotmail.com')) return;
+    if (theme === 'dark') document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
+  }, [theme]);
 
-    // Check if any enterprise exists
-    const q = query(collection(db, 'enterprises'));
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      if (snapshot.empty) {
-        try {
-          await addDoc(collection(db, 'enterprises'), {
-            name: 'Global Construction Corp',
-            adminUsers: [user.uid],
-            settings: { theme: 'dark' },
-            users: {
-              [user.uid]: {
-                name: 'Tarek Guindy',
-                role: 'Enterprise System Admin'
-              }
-            }
-          });
-        } catch (error) {
-          console.error('Bootstrap failed', error);
-        }
-      }
-    }, (error) => {
-      console.error("Bootstrap check error:", error);
+  useEffect(() => {
+    return authRepo.subscribeToAuth((u) => {
+      setUser(u);
+      setLoading(false);
+      if (u) handlePendingInvitation(u);
     });
-    return () => unsubscribe();
-  }, [user]);
+  }, []);
+
+  const handlePendingInvitation = async (u: AuthUser) => {
+    const token = new URLSearchParams(window.location.search).get('token');
+    if (!token) return;
+    try {
+      const result = await enterpriseRepo.acceptInvitation(token, u.id, u.email || '', u.displayName || u.email?.split('@')[0] || 'New User');
+      if (result) alert(`Welcome! You've been added to ${result.enterpriseName}.`);
+    } catch (error: any) {
+      setAuthError(error.message || 'Failed to process invitation.');
+      console.error('Failed to process invitation:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!user || isSystemOwner) return;
+    return enterpriseRepo.subscribeByUserId(user.id, (ents) => {
+      setEnterprises(ents);
+      setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || !isSystemOwner) return;
+    return enterpriseRepo.subscribeAll(async (ents) => {
+      setEnterprises(ents);
+      setSystemOwnerEnterpriseId(prev => {
+        if (prev) return prev;
+        const first = ents[0]?.id ?? null;
+        if (first) localStorage.setItem('systemOwnerEnterpriseId', first);
+        return first;
+      });
+      if (ents.length === 0) {
+        try { await enterpriseRepo.bootstrapIfEmpty(user.id, 'Global Construction Corp', 'Enterprise System Admin'); }
+        catch (error) { console.error('Bootstrap failed', error); }
+      }
+    });
+  }, [user?.id]);
+
+  // Subscribe to the currently-selected enterprise and load its projects
+  const activeEnterpriseId = isSystemOwner ? systemOwnerEnterpriseId : selectedEnterpriseId;
+  useEffect(() => {
+    if (!user || !activeEnterpriseId) return;
+    return enterpriseRepo.subscribeById(activeEnterpriseId, (ent) => {
+      setCurrentEnterprise(ent);
+      if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
+    });
+  }, [user?.id, activeEnterpriseId]);
 
   useEffect(() => {
     if (!user || !currentProject?.id) return;
-
-    const unsubscribe = onSnapshot(doc(db, 'projects', currentProject.id), (snapshot) => {
-      if (snapshot.exists()) {
-        setCurrentProject({ ...snapshot.data() as Project, id: snapshot.id });
-      }
-    }, (error) => {
-      console.error("Current project fetch error:", error);
-    });
-    return () => unsubscribe();
-  }, [user, currentProject?.id]);
+    return projectRepo.subscribe(currentProject.id, (p) => { if (p) setCurrentProject(p); });
+  }, [user?.id, currentProject?.id]);
 
   const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
     setAuthError(null);
     try {
-      await signInWithPopup(auth, provider);
+      await authRepo.signInWithOAuth();
     } catch (error: any) {
       console.error('Login failed', error);
       if (error.code === 'auth/popup-blocked') {
@@ -247,11 +160,11 @@ export default function App() {
     setAuthError(null);
     try {
       if (isRegistering) {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        await sendEmailVerification(userCredential.user);
+        await authRepo.registerWithCredentials(email, password);
+        await authRepo.sendVerificationEmail();
         alert('A verification email has been sent. Please check your inbox to complete registration.');
       } else {
-        await signInWithEmailAndPassword(auth, email, password);
+        await authRepo.signInWithCredentials(email, password);
       }
     } catch (error: any) {
       console.error('Email auth failed', error);
@@ -302,13 +215,15 @@ export default function App() {
         handleEmailAuth={handleEmailAuth}
         openInNewTab={openInNewTab}
         projects={projects}
+        enterprises={enterprises}
+        onEnterpriseChange={handleEnterpriseSwitch}
       />
     </BrowserRouter>
   );
 }
 
 interface AuthenticatedAppProps {
-  user: User | null;
+  user: AuthUser | null;
   loading: boolean;
   currentEnterprise: Enterprise | null;
   setCurrentEnterprise: (e: Enterprise | null) => void;
@@ -334,6 +249,8 @@ interface AuthenticatedAppProps {
   handleEmailAuth: (e: React.FormEvent) => Promise<void>;
   openInNewTab: () => void;
   projects: Project[];
+  enterprises: Enterprise[];
+  onEnterpriseChange: (enterprise: Enterprise) => void;
 }
 
 function AuthenticatedApp({
@@ -341,12 +258,15 @@ function AuthenticatedApp({
   systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
   isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
   email, setEmail, password, setPassword, isRegistering, setIsRegistering,
-  showLanding, setShowLanding, 
+  showLanding, setShowLanding,
   isInIframe, handleLogin, handleEmailAuth, openInNewTab,
-  projects
+  projects, enterprises, onEnterpriseChange
 }: AuthenticatedAppProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const authRepo = useAuthRepo();
+  const enterpriseRepo = useEnterpriseRepo();
+  const [showPassword, setShowPassword] = useState(false);
 
   if (loading) {
     return (
@@ -373,13 +293,13 @@ function AuthenticatedApp({
           </p>
           <div className="space-y-4">
             <button 
-              onClick={() => sendEmailVerification(user).then(() => alert('Verification email resent!'))}
+              onClick={() => authRepo.sendVerificationEmail().then(() => alert('Verification email resent!'))}
               className="w-full py-3 bg-black text-white rounded-lg font-medium hover:bg-black/90 transition-colors"
             >
               Resend Verification Email
             </button>
             <button 
-              onClick={() => auth.signOut()}
+              onClick={() => authRepo.signOut()}
               className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors"
             >
               Sign Out
@@ -482,14 +402,24 @@ function AuthenticatedApp({
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold uppercase tracking-widest text-gray-600 mb-2">Password</label>
-                    <input 
-                      required
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5"
-                    />
+                    <div className="relative">
+                      <input
+                        required
+                        type={showPassword ? 'text' : 'password'}
+                        value={password}
+                        onChange={e => setPassword(e.target.value)}
+                        placeholder="••••••••"
+                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-black/5 pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(v => !v)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
                   </div>
                   <button 
                     type="submit"
@@ -570,18 +500,7 @@ function AuthenticatedApp({
                 const name = prompt('Enter your Enterprise Name:');
                 if (name) {
                   try {
-                    await addDoc(collection(db, 'enterprises'), {
-                      name,
-                      adminUsers: [user.uid],
-                      users: {
-                        [user.uid]: {
-                          name: user.displayName || user.email?.split('@')[0] || 'Admin',
-                          email: user.email,
-                          role: 'Enterprise System Admin',
-                          joinedAt: new Date().toISOString()
-                        }
-                      }
-                    });
+                    await enterpriseRepo.create({ name, adminUsers: [user.id], users: { [user.id]: { name: user.displayName || user.email?.split('@')[0] || 'Admin', email: user.email, role: 'Enterprise System Admin', joinedAt: new Date().toISOString() } } } as any);
                   } catch (e) {
                     alert('Failed to create enterprise. Please try again.');
                   }
@@ -593,7 +512,7 @@ function AuthenticatedApp({
               Create New Enterprise
             </button>
             <button 
-              onClick={() => auth.signOut()}
+              onClick={() => authRepo.signOut()}
               className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
             >
               <LogOut className="w-4 h-4" />
@@ -610,23 +529,25 @@ function AuthenticatedApp({
       <Sidebar 
         enterprise={currentEnterprise}
         userEmail={user.email}
-        userId={user.uid}
+        userId={user.id}
         theme={theme}
         setTheme={setTheme}
         isCollapsed={isSidebarCollapsed}
         setIsCollapsed={setIsSidebarCollapsed}
       />
       <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0A0A0A] transition-colors duration-300">
-        <Header 
-          user={user} 
-          enterprise={currentEnterprise} 
+        <Header
+          user={user}
+          enterprise={currentEnterprise}
+          enterprises={enterprises}
+          onEnterpriseChange={onEnterpriseChange}
         />
         <main className="flex-1 flex flex-col overflow-hidden bg-[#F5F5F4] dark:bg-[#0A0A0A] transition-colors duration-300">
           <Routes>
             <Route path="/" element={
               <EnterpriseDashboard 
                 enterprise={currentEnterprise} 
-                userId={user.uid}
+                userId={user.id}
                 isSystemOwner={isSystemOwner}
               />
             } />
@@ -648,7 +569,7 @@ function AuthenticatedApp({
               currentEnterprise ? <EnterpriseAdmin enterprise={currentEnterprise} setIsSidebarCollapsed={setIsSidebarCollapsed} /> : <Navigate to="/" />
             } />
             <Route path="/profile" element={
-              currentEnterprise ? <UserProfile userId={user.uid} enterprise={currentEnterprise} /> : <Navigate to="/" />
+              currentEnterprise ? <UserProfile userId={user.id} enterprise={currentEnterprise} /> : <Navigate to="/" />
             } />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
@@ -659,33 +580,21 @@ function AuthenticatedApp({
   );
 }
 
-function ProjectView({ enterprise, user, theme, setIsSidebarCollapsed }: { enterprise: Enterprise | null, user: User, theme?: 'light' | 'dark', setIsSidebarCollapsed?: (c: boolean) => void }) {
+function ProjectView({ enterprise, user, theme, setIsSidebarCollapsed }: { enterprise: Enterprise | null, user: AuthUser, theme?: 'light' | 'dark', setIsSidebarCollapsed?: (c: boolean) => void }) {
   const { projectId, moduleId, subModuleId, sheetId } = useParams();
   const navigate = useNavigate();
+  const projectRepo = useProjectRepo();
   const [project, setProject] = useState<Project | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
 
   useEffect(() => {
     if (!projectId) return;
-    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (snapshot) => {
-      if (snapshot.exists()) {
-        setProject({ ...snapshot.data() as Project, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    return projectRepo.subscribe(projectId, (p) => { if (p) setProject(p); });
   }, [projectId]);
 
   useEffect(() => {
-    if (!sheetId) {
-      setSheet(null);
-      return;
-    }
-    const unsubscribe = onSnapshot(doc(db, 'sheets', sheetId), (snapshot) => {
-      if (snapshot.exists()) {
-        setSheet({ ...snapshot.data() as Sheet, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    if (!sheetId) { setSheet(null); return; }
+    return projectRepo.subscribeSheet(sheetId, setSheet);
   }, [sheetId]);
 
   if (!project || !enterprise) return null;

@@ -1,17 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Project, RuleOfCredit, RuleOfCreditStep, ProgressPackage } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  deleteDoc, 
-  writeBatch
-} from 'firebase/firestore';
+import { useProgressRepo } from '../platform/firestore/hooks';
 import { Download, Upload, Trash2, X, Loader2, Edit2, Plus } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -24,48 +13,13 @@ import { AgGridReact } from 'ag-grid-react';
 import { ColDef, ICellRendererParams } from 'ag-grid-community';
 import * as XLSX from 'xlsx';
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  toast.error(`Firestore Error: ${errInfo.error}`);
-  throw new Error(JSON.stringify(errInfo));
-}
-
 interface RulesOfCreditProps {
   project: Project;
   theme?: 'light' | 'dark';
 }
 
 export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCreditProps) {
+  const progressRepo = useProgressRepo();
   const [rules, setRules] = useState<RuleOfCredit[]>([]);
   const [packages, setPackages] = useState<ProgressPackage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -78,28 +32,9 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
 
   useEffect(() => {
     if (!project.id) return;
-    const path = 'rulesOfCredit';
-    const q = query(collection(db, path), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as RuleOfCredit));
-      setRules(data);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, path);
-    });
-    return unsubscribe;
-  }, [project.id]);
-
-  useEffect(() => {
-    if (!project.id) return;
-    const q = query(collection(db, 'progressPackages'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProgressPackage));
-      setPackages(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'progressPackages');
-    });
-    return unsubscribe;
+    const unsubRules = progressRepo.subscribeRulesOfCredit(project.id, (data) => { setRules(data); setLoading(false); });
+    const unsubPkgs = progressRepo.subscribeProgressPackages(project.id, setPackages);
+    return () => { unsubRules(); unsubPkgs(); };
   }, [project.id]);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -128,19 +63,13 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
     setSaving(true);
     const path = 'rulesOfCredit';
     try {
-      await addDoc(collection(db, path), {
-        ruleId: formData.ruleId,
-        description: formData.description || '',
-        packageId: formData.packageId || '',
-        steps: [],
-        projectId: project.id,
-        createdAt: new Date().toISOString()
-      });
+      await progressRepo.createRuleOfCredit({ ruleId: formData.ruleId!, description: formData.description || '', packageId: formData.packageId || '', steps: [], projectId: project.id });
       setIsAdding(false);
       setFormData({ ruleId: '', description: '', packageId: '' });
       toast.success('Rule of Credit added');
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, path);
+      console.error('Create rule error:', error);
+      toast.error('Failed to add rule.');
     } finally {
       setSaving(false);
     }
@@ -151,20 +80,21 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
     if (!window.confirm('Delete this Rule of Credit and all its steps?')) return;
     const path = `rulesOfCredit/${id}`;
     try {
-      await deleteDoc(doc(db, 'rulesOfCredit', id));
+      await progressRepo.deleteRuleOfCredit(id);
       if (selectedRuleId === id) setSelectedRuleId(null);
       toast.success('Rule deleted');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, path);
+      console.error('Delete rule error:', error);
+      toast.error('Failed to delete rule.');
     }
   };
 
   const updateRule = async (id: string, updates: Partial<RuleOfCredit>) => {
-    const path = `rulesOfCredit/${id}`;
     try {
-      await updateDoc(doc(db, 'rulesOfCredit', id), updates);
+      await progressRepo.updateRuleOfCredit(id, updates);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, path);
+      console.error('Update rule error:', error);
+      toast.error('Failed to update rule.');
     }
   };
 
@@ -213,18 +143,14 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
     if (selectedIds.length === 0) return;
     if (!window.confirm(`Delete ${selectedIds.length} Rules of Credit and all their steps?`)) return;
 
-    const batch = writeBatch(db);
-    selectedIds.forEach(id => {
-      batch.delete(doc(db, 'rulesOfCredit', id));
-    });
-
     try {
-      await batch.commit();
+      await Promise.all(selectedIds.map(id => progressRepo.deleteRuleOfCredit(id)));
       toast.success(`Deleted ${selectedIds.length} rules`);
       setSelectedIds([]);
       if (selectedIds.includes(selectedRuleId || '')) setSelectedRuleId(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'rulesOfCredit');
+      console.error('Bulk delete rules error:', error);
+      toast.error('Failed to delete rules.');
     }
   };
 
@@ -233,19 +159,14 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
 
   const handleBulkUpdate = async () => {
     if (!bulkUpdateData.field || selectedIds.length === 0) return;
-    
-    const batch = writeBatch(db);
-    selectedIds.forEach(id => {
-      batch.update(doc(db, 'rulesOfCredit', id), { [bulkUpdateData.field]: bulkUpdateData.value });
-    });
-
     try {
-      await batch.commit();
+      await Promise.all(selectedIds.map(id => progressRepo.updateRuleOfCredit(id, { [bulkUpdateData.field]: bulkUpdateData.value })));
       toast.success(`Updated ${selectedIds.length} rules`);
       setIsBulkUpdateOpen(false);
       setSelectedIds([]);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'rulesOfCredit');
+      console.error('Bulk update rules error:', error);
+      toast.error('Failed to update rules.');
     }
   };
 
@@ -434,43 +355,29 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
-        const batch = writeBatch(db);
         let count = 0;
+        const toUpdate: Array<{ id: string; data: Partial<RuleOfCredit> }> = [];
+        const toCreate: Array<Omit<RuleOfCredit, 'id' | 'createdAt'>> = [];
 
         for (const row of data) {
           const rocId = row['RoC ID']?.toString().trim();
           if (!rocId) continue;
-
-          // Check if it already exists
           const existing = rules.find(r => r.ruleId.toLowerCase() === rocId.toLowerCase());
-          
-          const payload = {
-            ruleId: rocId,
-            description: row['Description']?.toString() || '',
+          const payload: any = {
+            ruleId: rocId, description: row['Description']?.toString() || '',
             packageId: row['Package ID']?.toString() || '',
-            userField1: row['Field 1']?.toString() || '',
-            userField2: row['Field 2']?.toString() || '',
-            userField3: row['Field 3']?.toString() || '',
-            userField4: row['Field 4']?.toString() || '',
-            userField5: row['Field 5']?.toString() || '',
-            projectId: project.id,
-            updatedAt: new Date().toISOString()
+            userField1: row['Field 1']?.toString() || '', userField2: row['Field 2']?.toString() || '',
+            userField3: row['Field 3']?.toString() || '', userField4: row['Field 4']?.toString() || '',
+            userField5: row['Field 5']?.toString() || '', projectId: project.id,
           };
-
-          if (existing) {
-            batch.update(doc(db, 'rulesOfCredit', existing.id), payload);
-          } else {
-            const newDocRef = doc(collection(db, 'rulesOfCredit'));
-            batch.set(newDocRef, {
-              ...payload,
-              steps: [],
-              createdAt: new Date().toISOString()
-            });
-          }
+          if (existing) { toUpdate.push({ id: existing.id, data: payload }); }
+          else { toCreate.push({ ...payload, steps: [] }); }
           count++;
         }
-
-        await batch.commit();
+        await Promise.all([
+          ...toUpdate.map(({ id, data }) => progressRepo.updateRuleOfCredit(id, data)),
+          ...toCreate.map(data => progressRepo.createRuleOfCredit(data)),
+        ]);
         toast.success(`Imported/Updated ${count} Rules of Credit`);
       } catch (error) {
         console.error('Import error:', error);

@@ -4,13 +4,12 @@ import path from "path";
 import { Resend } from "resend";
 import dotenv from "dotenv";
 
+dotenv.config({ path: '.env.local' });
 dotenv.config();
-
-const resend = new Resend(process.env.RESEND_API_KEY);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3001;
 
   app.use(express.json());
 
@@ -30,7 +29,8 @@ async function startServer() {
     }
 
     try {
-      // Note: onboarding@resend.dev only works for the account owner's email 
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      // Note: onboarding@resend.dev only works for the account owner's email
       // until a custom domain is verified in the Resend dashboard.
       const { data, error } = await resend.emails.send({
         from: "onboarding@resend.dev",

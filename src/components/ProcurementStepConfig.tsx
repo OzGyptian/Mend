@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, doc, serverTimestamp, updateDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { Project, Enterprise, ProcurementStepDefinition, Calendar as ProjectCalendar } from '../types';
+import { useProcurementRepo, useScheduleRepo, useProjectRepo } from '../platform/firestore/hooks';
 import { Plus, Trash2, Save, Settings, Calendar as CalendarIcon, Tag, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
@@ -16,6 +15,9 @@ interface ProcurementStepConfigProps {
 }
 
 export default function ProcurementStepConfig({ project, enterprise, currentSteps, enterpriseSteps }: ProcurementStepConfigProps) {
+  const procurementRepo = useProcurementRepo();
+  const scheduleRepo = useScheduleRepo();
+  const projectRepo = useProjectRepo();
   const [isAdding, setIsAdding] = useState(false);
   const [newStepName, setNewStepName] = useState('');
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
@@ -25,29 +27,25 @@ export default function ProcurementStepConfig({ project, enterprise, currentStep
     attributeValues: {}
   });
   const [isSavingDefaults, setIsSavingDefaults] = useState(false);
-  
+
   const gridRef = useRef<AgGridReact>(null);
 
   useEffect(() => {
     if (!project.id) return;
-    const calQuery = query(collection(db, 'calendars'), where('projectId', '==', project.id));
-    const unsubCal = onSnapshot(calQuery, (snapshot) => {
-      setCalendars(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ProjectCalendar)));
-    });
-    return () => unsubCal();
+    const unsub = scheduleRepo.subscribeProjectCalendars(project.id, setCalendars);
+    return () => unsub();
   }, [project.id]);
 
   const handleAddStep = async () => {
     if (!newStepName) return;
     try {
       const maxOrder = currentSteps.length > 0 ? Math.max(...currentSteps.map(s => s.order || 0)) : 0;
-      await addDoc(collection(db, 'procurementStepDefinitions'), {
+      await procurementRepo.createStepDefinition({
         projectId: project.id,
         name: newStepName,
         order: maxOrder + 1,
         defaultDurationDays: 5,
         isEnterpriseStandard: false,
-        createdAt: serverTimestamp()
       });
       setNewStepName('');
       setIsAdding(false);
@@ -61,11 +59,11 @@ export default function ProcurementStepConfig({ project, enterprise, currentStep
   const onCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data } = params;
     try {
-      await updateDoc(doc(db, 'procurementStepDefinitions', data.id), {
+      await procurementRepo.updateStepDefinition(data.id, {
         name: data.name,
         order: Number(data.order) || 0,
         defaultDurationDays: Number(data.defaultDurationDays) || 0,
-        enterpriseStepId: data.enterpriseStepId || ''
+        enterpriseStepId: data.enterpriseStepId || '',
       });
       toast.success('Step updated');
     } catch (e) {
@@ -77,9 +75,7 @@ export default function ProcurementStepConfig({ project, enterprise, currentStep
   const handleSaveDefaults = async () => {
     try {
       setIsSavingDefaults(true);
-      await updateDoc(doc(db, 'projects', project.id), {
-        procurementDefaults: defaults
-      });
+      await projectRepo.update(project.id, { procurementDefaults: defaults });
       toast.success('Project settings updated');
     } catch (e) {
       console.error(e);
@@ -149,7 +145,7 @@ export default function ProcurementStepConfig({ project, enterprise, currentStep
         <button 
           onClick={async () => {
             if (confirm(`Delete step "${params.data.name}"?`)) {
-              await deleteDoc(doc(db, 'procurementStepDefinitions', params.data.id));
+              await procurementRepo.deleteStepDefinition(params.data.id);
               toast.success('Step deleted');
             }
           }}

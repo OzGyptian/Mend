@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Project, Enterprise, Subcontract, SubcontractLineItem, CostCode } from '../types';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, writeBatch, updateDoc } from 'firebase/firestore';
+import { useSubcontractRepo, useCostRepo } from '../platform/firestore/hooks';
 import DataGridModule from './DataGridModule';
 import { ColDef, ColGroupDef, CellValueChangedEvent } from 'ag-grid-community';
 import toast from 'react-hot-toast';
@@ -38,6 +37,8 @@ interface FlattenedLineItem extends SubcontractLineItem {
 }
 
 const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, enterprise }) => {
+  const subcontractRepo = useSubcontractRepo();
+  const costRepo = useCostRepo();
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,33 +59,19 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
     if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} items? This will remove them from their respective subcontracts.`)) return;
 
     try {
-      const batch = writeBatch(db);
       const subcontractsToUpdate = new Map<string, Subcontract>();
-
       selectedIds.forEach(id => {
         const row = rowData.find(r => r.id === id);
         if (!row) return;
-
         let sub = subcontractsToUpdate.get(row.parentSubcontractId) || subcontracts.find(s => s.id === row.parentSubcontractId);
         if (!sub) return;
-
         if (!subcontractsToUpdate.has(row.parentSubcontractId)) {
           sub = { ...sub!, lineItems: sub!.lineItems?.map(it => ({ ...it })) || [] };
         }
-
         sub!.lineItems = sub!.lineItems.filter(it => it.id !== id);
-        sub!.updatedAt = new Date().toISOString();
         subcontractsToUpdate.set(row.parentSubcontractId, sub!);
       });
-
-      for (const [id, updatedSub] of Array.from(subcontractsToUpdate.entries())) {
-        batch.update(doc(db, 'subcontracts', id), {
-          lineItems: updatedSub.lineItems,
-          updatedAt: updatedSub.updatedAt
-        });
-      }
-
-      await batch.commit();
+      await Promise.all([...subcontractsToUpdate.entries()].map(([id, sub]) => subcontractRepo.updateSubcontract(id, { lineItems: sub.lineItems })));
       toast.success(`Deleted ${selectedIds.length} items.`);
       setSelectedIds([]);
     } catch (error) {
@@ -153,7 +140,6 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
 
   const handleImportData = async (data: any[]) => {
     try {
-      const batch = writeBatch(db);
       const subcontractsToUpdate = new Map<string, Subcontract>();
       let updateCount = 0;
 
@@ -161,44 +147,25 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
         const orderId = row['Order ID'] || row['orderId'];
         const itemNo = row['Item No'] || row['itemNo'];
         if (!orderId || !itemNo) return;
-
-        // Find match in current subcontracts
         const sub = subcontracts.find(s => s.orderId === orderId);
         if (!sub) return;
-
         let updatedSub = subcontractsToUpdate.get(sub.id) || { ...sub, lineItems: sub.lineItems?.map(it => ({ ...it })) || [] };
-        
         const itemIndex = updatedSub.lineItems.findIndex(it => it.itemNo === itemNo);
         if (itemIndex === -1) return;
-
-        const originalItem = updatedSub.lineItems[itemIndex];
-        const updatedItem = { ...originalItem };
-
+        const updatedItem = { ...updatedSub.lineItems[itemIndex] };
         if (row['Description'] !== undefined) updatedItem.description = row['Description'];
         if (row['Qty'] !== undefined) updatedItem.qty = Number(row['Qty']) || 0;
         if (row['Unit'] !== undefined) updatedItem.unit = row['Unit'];
         if (row['Rate'] !== undefined) updatedItem.rate = Number(row['Rate']) || 0;
         if (row['Status'] !== undefined) updatedItem.status = row['Status'];
         if (row['Type'] !== undefined) updatedItem.type = row['Type'];
-
-        // Recalculate total
         updatedItem.total = (updatedItem.qty || 0) * (updatedItem.rate || 0);
-        updatedItem.updatedAt = new Date().toISOString();
-
         updatedSub.lineItems[itemIndex] = updatedItem;
-        updatedSub.updatedAt = new Date().toISOString();
         subcontractsToUpdate.set(sub.id, updatedSub);
         updateCount++;
       });
 
-      for (const [id, updatedSub] of Array.from(subcontractsToUpdate.entries())) {
-        batch.update(doc(db, 'subcontracts', id), {
-          lineItems: updatedSub.lineItems,
-          updatedAt: updatedSub.updatedAt
-        });
-      }
-
-      await batch.commit();
+      await Promise.all([...subcontractsToUpdate.entries()].map(([id, sub]) => subcontractRepo.updateSubcontract(id, { lineItems: sub.lineItems })));
       toast.success(`Import complete. Updated ${updateCount} items.`);
     } catch (error) {
       console.error('Import error:', error);
@@ -208,25 +175,12 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
 
   useEffect(() => {
     if (!project.id) return;
-    const qSub = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
-    const unsubSub = onSnapshot(qSub, (snapshot) => {
-      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
-      setLoading(false);
-    }, (error) => {
-      console.error("BulkSubcontractItems: subcontracts fetch error:", error);
-      toast.error("Failed to load subcontracts: " + error.message);
+    const unsubSub = subcontractRepo.subscribeSubcontracts(project.id, (data) => {
+      setSubcontracts(data);
       setLoading(false);
     });
-
-    const qCost = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubCost = onSnapshot(qCost, (snapshot) => {
-      setCostCodes(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode)));
-    });
-
-    return () => {
-      unsubSub();
-      unsubCost();
-    };
+    const unsubCost = costRepo.subscribeCostCodes(project.id, setCostCodes);
+    return () => { unsubSub(); unsubCost(); };
   }, [project.id]);
 
   const rowData = useMemo(() => {
@@ -256,43 +210,25 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
   const handleBulkUpdate = async () => {
     if (selectedIds.length === 0) return;
     try {
-      const batch = writeBatch(db);
       const subcontractsToUpdate = new Map<string, Subcontract>();
-
       selectedIds.forEach(id => {
         const row = rowData.find(r => r.id === id);
         if (!row) return;
-
         let sub = subcontractsToUpdate.get(row.parentSubcontractId) || subcontracts.find(s => s.id === row.parentSubcontractId);
         if (!sub) return;
-
         if (!subcontractsToUpdate.has(row.parentSubcontractId)) {
           sub = { ...sub!, lineItems: sub!.lineItems?.map(it => ({ ...it })) || [] };
         }
-
         sub!.lineItems = sub!.lineItems.map(it => {
-          if (it.id === id) {
-            const updated = { ...it };
-            if (bulkUpdateData.status) updated.status = bulkUpdateData.status as any;
-            if (bulkUpdateData.type) updated.type = bulkUpdateData.type as any;
-            updated.updatedAt = new Date().toISOString();
-            return updated;
-          }
-          return it;
+          if (it.id !== id) return it;
+          const updated = { ...it };
+          if (bulkUpdateData.status) updated.status = bulkUpdateData.status as any;
+          if (bulkUpdateData.type) updated.type = bulkUpdateData.type as any;
+          return updated;
         });
-
-        sub!.updatedAt = new Date().toISOString();
         subcontractsToUpdate.set(row.parentSubcontractId, sub!);
       });
-
-      for (const [id, updatedSub] of Array.from(subcontractsToUpdate.entries())) {
-        batch.update(doc(db, 'subcontracts', id), {
-          lineItems: updatedSub.lineItems,
-          updatedAt: updatedSub.updatedAt
-        });
-      }
-
-      await batch.commit();
+      await Promise.all([...subcontractsToUpdate.entries()].map(([id, sub]) => subcontractRepo.updateSubcontract(id, { lineItems: sub.lineItems })));
       toast.success(`Updated ${selectedIds.length} items.`);
       setSelectedIds([]);
       setIsBulkUpdateOpen(false);
@@ -346,10 +282,7 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
     });
 
     try {
-      await updateDoc(doc(db, 'subcontracts', subcontractDocId), {
-        lineItems: updatedLineItems,
-        updatedAt: new Date().toISOString()
-      });
+      await subcontractRepo.updateSubcontract(subcontractDocId, { lineItems: updatedLineItems });
       toast.success('Line item updated');
     } catch (error) {
       console.error('Error updating line item:', error);

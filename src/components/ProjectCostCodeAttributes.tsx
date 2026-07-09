@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Project, ProjectAttribute, ProjectAttributeValue } from '../types';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+
+import { useProjectRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Trash2, 
@@ -52,6 +52,7 @@ interface ProjectCostCodeAttributesProps {
 }
 
 const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ project }) => {
+  const projectRepo = useProjectRepo();
   const [attributes, setAttributes] = useState<ProjectAttribute[]>([]);
   const [selectedAttrId, setSelectedAttrId] = useState<string | null>('01');
   const [attrSearch, setAttrSearch] = useState('');
@@ -73,7 +74,7 @@ const ProjectCostCodeAttributes: React.FC<ProjectCostCodeAttributesProps> = ({ p
 
   const handleGlobalSave = async (updatedAttrs: ProjectAttribute[]) => {
     try {
-      await updateDoc(doc(db, 'projects', project.id), { costCodeAttributes: updatedAttrs });
+      await projectRepo.update(project.id, { costCodeAttributes: updatedAttrs });
     } catch (error) {
       console.error('Error saving cost code attributes:', error);
       toast.error('Failed to save changes.');

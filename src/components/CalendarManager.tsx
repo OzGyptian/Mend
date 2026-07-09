@@ -1,17 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar as ProjectCalendar } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  getDocs
-} from 'firebase/firestore';
+import { useScheduleRepo } from '../platform/firestore/hooks';
 import { 
   Plus, 
   Trash2, 
@@ -48,17 +37,9 @@ enum OperationType {
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-    },
-    operationType,
-    path
-  };
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  const msg = error instanceof Error ? error.message : String(error);
+  console.error('Firestore Error: ', JSON.stringify({ error: msg, operationType, path }));
+  throw new Error(msg);
 }
 
 const DAYS = [
@@ -72,6 +53,7 @@ const DAYS = [
 ];
 
 export default function CalendarManager({ projectId, enterpriseId, title, description, allowImport }: CalendarManagerProps) {
+  const scheduleRepo = useScheduleRepo();
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
   const [enterpriseCalendars, setEnterpriseCalendars] = useState<ProjectCalendar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,46 +65,22 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
     weekends: [0, 6],
     holidays: []
   });
-  
-  // Multi-select state for holidays
   const [selectedHolidays, setSelectedHolidays] = useState<Date[]>([]);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'calendars'),
-      where(projectId ? 'projectId' : 'enterpriseId', '==', projectId || enterpriseId)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ProjectCalendar));
-      setCalendars(data);
-      setLoading(false);
-    }, (error) => {
-      setLoading(false);
-      handleFirestoreError(error, OperationType.GET, 'calendars');
-    });
+    const unsub = projectId
+      ? scheduleRepo.subscribeProjectCalendars(projectId, (data) => { setCalendars(data); setLoading(false); })
+      : scheduleRepo.subscribeEnterpriseCalendars(enterpriseId!, (data) => { setCalendars(data); setLoading(false); });
     return () => unsub();
   }, [projectId, enterpriseId]);
 
   useEffect(() => {
-    if (allowImport && projectId && enterpriseId) {
-      // Fetch enterprise calendars for importing
-      const fetchEnterpriseCalendars = async () => {
-        try {
-          const q = query(
-            collection(db, 'calendars'), 
-            where('enterpriseId', '==', enterpriseId)
-          );
-          const snapshot = await getDocs(q);
-          const data = snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as ProjectCalendar));
-          setEnterpriseCalendars(data);
-        } catch (error) {
-          console.error('Error fetching enterprise calendars:', error);
-        }
-      };
-      fetchEnterpriseCalendars();
+    if (allowImport && enterpriseId) {
+      scheduleRepo.listEnterpriseCalendars(enterpriseId)
+        .then(setEnterpriseCalendars)
+        .catch(err => console.error('Error fetching enterprise calendars:', err));
     }
-  }, [allowImport, projectId, enterpriseId]);
+  }, [allowImport, enterpriseId]);
 
   const handleSave = async () => {
     if (!formData.name) {
@@ -141,26 +99,23 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
     }
 
     try {
-      const dataToSave = {
-        ...formData,
-        holidays: selectedHolidays.map(d => {
-          const year = d.getFullYear();
-          const month = (d.getMonth() + 1).toString().padStart(2, '0');
-          const day = d.getDate().toString().padStart(2, '0');
-          return `${year}-${month}-${day}`;
-        }).sort(),
-        createdAt: formData.createdAt || new Date().toISOString()
-      };
+      const holidays = selectedHolidays.map(d => {
+        const year = d.getFullYear();
+        const month = (d.getMonth() + 1).toString().padStart(2, '0');
+        const day = d.getDate().toString().padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }).sort();
 
       if (isEditing) {
-        await updateDoc(doc(db, 'calendars', isEditing), dataToSave);
+        await scheduleRepo.updateCalendar(isEditing, { ...formData, holidays });
         toast.success('Calendar updated');
       } else {
-        await addDoc(collection(db, 'calendars'), {
-          ...dataToSave,
+        await scheduleRepo.createCalendar({
+          ...formData,
+          holidays,
           projectId: projectId || null,
           enterpriseId: enterpriseId || null,
-        });
+        } as Omit<ProjectCalendar, 'id' | 'createdAt'>);
         toast.success('Calendar created');
       }
       resetForm();
@@ -171,25 +126,19 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
 
   const handleImport = async (cal: ProjectCalendar) => {
     const importedName = `${cal.name} (Imported)`;
-    
-    // Check for duplicate names
-    const isDuplicate = calendars.some(c => 
-      c.name.toLowerCase() === importedName.toLowerCase()
-    );
-
+    const isDuplicate = calendars.some(c => c.name.toLowerCase() === importedName.toLowerCase());
     if (isDuplicate) {
       toast.error(`A calendar with the name "${importedName}" already exists in this project.`);
       return;
     }
-
     try {
-      await addDoc(collection(db, 'calendars'), {
+      await scheduleRepo.createCalendar({
         name: importedName,
-        weekends: cal.weekends,
-        holidays: cal.holidays,
-        projectId: projectId,
-        createdAt: new Date().toISOString()
-      });
+        weekends: cal.weekends ?? [0, 6],
+        holidays: cal.holidays ?? [],
+        projectId: projectId || null,
+        enterpriseId: null,
+      } as Omit<ProjectCalendar, 'id' | 'createdAt'>);
       toast.success('Calendar imported from Enterprise');
       setIsImporting(false);
     } catch (error) {
@@ -200,7 +149,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
   const handleDelete = async (id: string) => {
     if (!confirm('Are you sure you want to delete this calendar?')) return;
     try {
-      await deleteDoc(doc(db, 'calendars', id));
+      await scheduleRepo.deleteCalendar(id);
       toast.success('Calendar deleted');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `calendars/${id}`);
@@ -276,7 +225,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                 <div>
                   <h4 className="font-bold dark:text-white">{cal.name}</h4>
                   <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-1">
-                    {cal.weekends.length} Weekends • {cal.holidays.length} Holidays
+                    {(cal.weekends ?? []).length} Weekends • {(cal.holidays ?? []).length} Holidays
                   </p>
                 </div>
                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -311,7 +260,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                         key={day.id}
                         className={cn(
                           "w-7 h-7 rounded-md flex items-center justify-center text-[10px] font-bold border transition-all",
-                          cal.weekends.includes(day.id)
+                          (cal.weekends ?? []).includes(day.id)
                             ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-600"
                             : "bg-white dark:bg-white/5 border-gray-200 dark:border-white/10 text-gray-400"
                         )}
@@ -479,7 +428,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
                       <div>
                         <h4 className="font-bold dark:text-white">{cal.name}</h4>
                         <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold mt-1">
-                          {cal.weekends.length} Weekends • {cal.holidays.length} Holidays
+                          {(cal.weekends ?? []).length} Weekends • {(cal.holidays ?? []).length} Holidays
                         </p>
                       </div>
                       <button 

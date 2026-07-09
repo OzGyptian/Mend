@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { useUtilityRepo } from '../platform/firestore/hooks';
 import { Sheet, Project } from '../types';
 import { Users, Save, X } from 'lucide-react';
 
@@ -11,13 +10,12 @@ interface SheetSettingsProps {
 }
 
 export default function SheetSettings({ sheet, project, onClose }: SheetSettingsProps) {
+  const utilityRepo = useUtilityRepo();
   const [selectedUsers, setSelectedUsers] = useState<string[]>(sheet.users || []);
 
   const handleSave = async () => {
     try {
-      await updateDoc(doc(db, 'sheets', sheet.id), {
-        users: selectedUsers
-      });
+      await utilityRepo.updateSheet(sheet.id, { users: selectedUsers });
       onClose();
     } catch (error) {
       console.error('Update failed', error);

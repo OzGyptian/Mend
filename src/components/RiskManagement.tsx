@@ -1,18 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Project, Enterprise, Risk, RiskRecord, CostCode } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDocs,
-  writeBatch,
-  doc,
-  updateDoc,
-  addDoc,
-  deleteDoc
-} from 'firebase/firestore';
+import { useRiskRepo, useCostRepo } from '../platform/firestore/hooks';
 import { 
   Search, 
   Plus, 
@@ -71,6 +59,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { betaPertExposure } from '../domain/risk';
 import { 
   BarChart, 
   Bar, 
@@ -104,57 +93,6 @@ import {
   SelectValue 
 } from '@/components/ui/select';
 
-enum OperationType {
-  CREATE = 'create',
-  UPDATE = 'update',
-  DELETE = 'delete',
-  LIST = 'list',
-  GET = 'get',
-  WRITE = 'write',
-}
-
-interface FirestoreErrorInfo {
-  error: string;
-  operationType: OperationType;
-  path: string | null;
-  authInfo: {
-    userId: string | undefined;
-    email: string | null | undefined;
-    emailVerified: boolean | undefined;
-    isAnonymous: boolean | undefined;
-    tenantId: string | null | undefined;
-    providerInfo: {
-      providerId: string;
-      displayName: string | null;
-      email: string | null;
-      photoUrl: string | null;
-    }[];
-  }
-}
-
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: auth.currentUser?.uid,
-      email: auth.currentUser?.email,
-      emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
-    },
-    operationType,
-    path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  toast.error(`Database Error: ${errInfo.error}`);
-  throw new Error(JSON.stringify(errInfo));
-}
 
 interface RiskManagementProps {
   project: Project;
@@ -162,6 +100,8 @@ interface RiskManagementProps {
 }
 
 export default function RiskManagement({ project, enterprise }: RiskManagementProps) {
+  const riskRepo = useRiskRepo();
+  const costRepo = useCostRepo();
   const [risks, setRisks] = useState<Risk[]>([]);
   const [riskRecords, setRiskRecords] = useState<RiskRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
@@ -188,42 +128,37 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   const handleBulkUpdateRisks = async () => {
     if (selectedIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
-      const updates: any = { updatedAt: new Date().toISOString() };
+      const updates: any = {};
       if (bulkRiskUpdateData.status) updates.status = bulkRiskUpdateData.status;
       if (bulkRiskUpdateData.strategy) updates.strategy = bulkRiskUpdateData.strategy;
       if (bulkRiskUpdateData.initiator) updates.initiator = bulkRiskUpdateData.initiator;
       if (bulkRiskUpdateData.type) updates.type = bulkRiskUpdateData.type;
-
-      selectedIds.forEach(id => {
-        batch.update(doc(db, 'risks', id), updates);
-      });
-      await batch.commit();
+      await riskRepo.updateManyRisks([...selectedIds].map(id => ({ id, data: updates })));
       toast.success("Risks Updated Successfully");
       setIsBulkRiskUpdateOpen(false);
       setSelectedIds(new Set());
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'risks/bulk');
+      console.error('Bulk risk update error:', error);
+      toast.error('Failed to update risks.');
     }
   };
 
   const handleBulkDeleteRisks = async () => {
     if (selectedIds.size === 0) return;
     try {
-      const batch = writeBatch(db);
-      // Also need to delete children records to avoid orphans
-      for (const riskId of Array.from(selectedIds)) {
-        const recordsSnap = await getDocs(query(collection(db, 'riskRecords'), where('riskId', '==', riskId)));
-        recordsSnap.docs.forEach(d => batch.delete(d.ref));
-        batch.delete(doc(db, 'risks', riskId));
+      const riskIds = [...selectedIds];
+      for (const riskId of riskIds) {
+        const records = await riskRepo.listRiskRecords(project.id, riskId);
+        await riskRepo.deleteManyRiskRecords(records.map(r => r.id));
       }
-      await batch.commit();
+      await riskRepo.deleteManyRisks(riskIds);
       toast.success("Risks and associated records deleted");
       setIsBulkRiskDeleteOpen(false);
       setSelectedIds(new Set());
       if (selectedRiskId && selectedIds.has(selectedRiskId)) setSelectedRiskId(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'risks/bulk');
+      console.error('Bulk risk delete error:', error);
+      toast.error('Failed to delete risks.');
     }
   };
   const [bulkRecordUpdateData, setBulkRecordUpdateData] = useState<{
@@ -369,78 +304,50 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     if (!importPreview) return;
     const { type, data } = importPreview;
     try {
-      const batch = writeBatch(db);
-      let count = 0;
-
       if (type === 'risks') {
+        const toUpdate: Array<{ id: string; data: any }> = [];
+        const toCreate: Array<Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>> = [];
         for (const row of data) {
           const riskId = String(row['Risk ID'] || row.riskId || row.ID || row.id || '').trim();
           if (!riskId) continue;
-          
           const existing = risks.find(r => r.riskId.toLowerCase() === riskId.toLowerCase());
-          const riskData = {
-            projectId: project.id,
-            riskId: riskId.slice(0, 20),
+          const riskData: any = {
+            projectId: project.id, riskId: riskId.slice(0, 20),
             description: String(row['Description'] || row.description || ''),
             type: String(row['Type'] || row.type || (enterprise.riskTypes?.[0] || '')),
             status: String(row['Status'] || row.status || 'Open'),
             strategy: String(row['Strategy'] || row.strategy || 'Mitigate'),
             initiator: String(row['Initiator'] || row.initiator || '').slice(0, 50),
             reference: String(row['Reference'] || row.reference || '').slice(0, 50),
-            updatedAt: new Date().toISOString()
           };
-
           if (existing) {
-            batch.update(doc(db, 'risks', existing.id), riskData);
+            toUpdate.push({ id: existing.id, data: riskData });
           } else {
-            const newRiskRef = doc(collection(db, 'risks'));
-            batch.set(newRiskRef, {
-              ...riskData,
-              exposure: 0,
-              minImpactTotal: 0,
-              mostLikelyImpactTotal: 0,
-              maxImpactTotal: 0,
-              mitigation: 0,
-              residualExposure: 0,
-              enterpriseAttributes: {},
-              projectAttributes: {},
-              createdAt: new Date().toISOString()
-            });
+            toCreate.push({ ...riskData, exposure: 0, minImpactTotal: 0, mostLikelyImpactTotal: 0, maxImpactTotal: 0, mitigation: 0, residualExposure: 0, enterpriseAttributes: {}, projectAttributes: {} });
           }
-          count++;
         }
-        await batch.commit();
-        toast.success(`Processed ${count} risks`);
+        await riskRepo.updateManyRisks(toUpdate);
+        if (toCreate.length > 0) await riskRepo.createManyRisks(toCreate);
+        toast.success(`Processed ${toUpdate.length + toCreate.length} risks`);
       } else if (type === 'records' && selectedRiskId) {
+        const toCreate: Array<Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>> = [];
         for (const row of data) {
           const costCodeId = String(row['Cost Code'] || row.costCodeId || '').trim();
           if (!costCodeId) continue;
-
-          const newRecordRef = doc(collection(db, 'riskRecords'));
           const min = Number(row['Min Value $'] || row.minImpactAmount || 0);
           const mostLikely = Number(row['Most Likely $'] || row.mostLikelyImpactAmount || 0);
           const max = Number(row['Max Value $'] || row.maxImpactAmount || 0);
           const prob = Number(row['Prob %'] || row.probability || 100) / 100;
-          const betaPert = ((min + 4 * mostLikely + max) / 6) * prob;
-
-          batch.set(newRecordRef, {
-            riskId: selectedRiskId,
-            projectId: project.id,
-            costCodeId,
+          toCreate.push({
+            riskId: selectedRiskId, projectId: project.id, costCodeId,
             scope: String(row['Scope'] || row.scope || ''),
-            probability: prob,
-            minImpactAmount: min,
-            mostLikelyImpactAmount: mostLikely,
-            maxImpactAmount: max,
-            betaPertImpactAmount: betaPert,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-          });
-          count++;
+            probability: prob, minImpactAmount: min, mostLikelyImpactAmount: mostLikely, maxImpactAmount: max,
+            betaPertImpactAmount: betaPertExposure(min, mostLikely, max, prob),
+          } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
         }
-        await batch.commit();
+        if (toCreate.length > 0) await riskRepo.createManyRiskRecords(toCreate);
         await updateParentTotals(selectedRiskId);
-        toast.success(`Imported ${count} records`);
+        toast.success(`Imported ${toCreate.length} records`);
       }
     } catch (error) {
       console.error('Import commit error:', error);
@@ -467,7 +374,9 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       minImpactAmount: riskRecords.reduce((sum, r) => sum + (r.minImpactAmount || 0), 0),
       mostLikelyImpactAmount: riskRecords.reduce((sum, r) => sum + (r.mostLikelyImpactAmount || 0), 0),
       maxImpactAmount: riskRecords.reduce((sum, r) => sum + (r.maxImpactAmount || 0), 0),
-      betaPertImpactAmount: riskRecords.reduce((sum, r) => sum + (r.betaPertImpactAmount || 0), 0)
+      betaPertImpactAmount: riskRecords.reduce((sum, r) => sum + betaPertExposure(
+        r.minImpactAmount || 0, r.mostLikelyImpactAmount || 0, r.maxImpactAmount || 0, r.probability || 0
+      ), 0)
     }];
   }, [riskRecords]);
 
@@ -539,48 +448,25 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
 
   // Fetch Risks
   useEffect(() => {
-    const q = query(collection(db, 'risks'), where('projectId', '==', project.id));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Risk));
+    return riskRepo.subscribeRisks(project.id, (data) => {
       setRisks(data);
       setIsLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'risks');
-      setIsLoading(false);
     });
-    return () => unsub();
   }, [project.id]);
 
   // Fetch Risk Records
   useEffect(() => {
-    if (!selectedRiskId) {
-      setRiskRecords([]);
-      return;
-    }
-    const q = query(
-      collection(db, 'riskRecords'), 
-      where('projectId', '==', project.id),
-      where('riskId', '==', selectedRiskId)
-    );
-    const unsub = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as RiskRecord));
-      setRiskRecords(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'riskRecords');
+    if (!selectedRiskId) { setRiskRecords([]); return; }
+    return riskRepo.subscribeRiskRecords(project.id, (data) => {
+      setRiskRecords(data.filter(r => r.riskId === selectedRiskId));
     });
-    return () => unsub();
-  }, [selectedRiskId]);
+  }, [selectedRiskId, project.id]);
 
   // Fetch Cost Codes
   useEffect(() => {
-    const q = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
+    return costRepo.subscribeCostCodes(project.id, (data) => {
       setCostCodes(data.sort((a, b) => a.sortOrder - b.sortOrder));
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'costCodes');
     });
-    return () => unsubscribe();
   }, [project.id]);
 
   const handleCreateRisk = async (e: React.FormEvent) => {
@@ -611,42 +497,46 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };
-      await addDoc(collection(db, 'risks'), riskData);
+      await riskRepo.createRisk(riskData as Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>);
       toast.success("Risk created successfully");
       setIsCreateRiskOpen(false);
       setNewRisk({ riskId: '', description: '', type: '', status: 'Open', strategy: 'Mitigate', initiator: '', reference: '', periodId: '' });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'risks');
+      console.error('Create risk error:', error);
+      toast.error('Failed to create risk.');
     }
   };
 
   const handleDeleteRisk = async () => {
     if (!riskToDelete) return;
     try {
-      const batch = writeBatch(db);
-      const recordsSnap = await getDocs(query(collection(db, 'riskRecords'), where('riskId', '==', riskToDelete.id)));
-      recordsSnap.docs.forEach(d => batch.delete(d.ref));
-      batch.delete(doc(db, 'risks', riskToDelete.id));
-      await batch.commit();
+      const records = await riskRepo.listRiskRecords(project.id, riskToDelete.id);
+      await riskRepo.deleteManyRiskRecords(records.map(r => r.id));
+      await riskRepo.deleteRisk(riskToDelete.id);
       toast.success("Risk and records deleted");
       setIsDeleteRiskOpen(false);
       setRiskToDelete(null);
       if (selectedRiskId === riskToDelete.id) setSelectedRiskId(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'risks');
+      console.error('Delete risk error:', error);
+      toast.error('Failed to delete risk.');
     }
   };
 
   const updateParentTotals = async (riskId: string) => {
     try {
-      const recordsSnap = await getDocs(query(collection(db, 'riskRecords'), where('riskId', '==', riskId)));
-      const records = recordsSnap.docs.map(d => d.data() as RiskRecord);
-      const totalBetaPert = records.reduce((sum, r) => sum + (Number(r.betaPertImpactAmount) || 0), 0);
+      const records = await riskRepo.listRiskRecords(project.id, riskId);
+      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
+        Number(r.minImpactAmount) || 0,
+        Number(r.mostLikelyImpactAmount) || 0,
+        Number(r.maxImpactAmount) || 0,
+        Number(r.probability) || 0,
+      ), 0);
       const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
       const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
       const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
-      
-      await updateDoc(doc(db, 'risks', riskId), {
+
+      await riskRepo.updateRisk(riskId, {
         exposure: totalBetaPert,
         minImpactTotal: totalMin,
         mostLikelyImpactTotal: totalLikely,
@@ -654,7 +544,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         updatedAt: new Date().toISOString()
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `risks/${riskId}/totals`);
+      console.error(`Error updating risk totals for ${riskId}:`, error);
     }
   };
 
@@ -768,9 +658,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         const attrId = parts[1];
         updates = { [`${attrField}.${attrId}`]: params.newValue, updatedAt: new Date().toISOString() };
       }
-      await updateDoc(doc(db, 'risks', data.id), updates);
+      await riskRepo.updateRisk(data.id, updates);
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `risks/${data.id}`);
+      console.error(`Error updating risk ${data.id}:`, error);
+      toast.error('Failed to update risk.');
     }
   };
 
@@ -832,7 +723,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
               const min = Number(p.data.minImpactAmount) || 0;
               const ml = Number(p.data.mostLikelyImpactAmount) || 0;
               const max = Number(p.data.maxImpactAmount) || 0;
-              return ((min + 4 * ml + max) / 6) * prob;
+              return betaPertExposure(min, ml, max, prob);
             },
             valueFormatter: (p) => formatCurrency(p.value),
             cellStyle: { backgroundColor: 'rgba(220, 38, 38, 0.05)', fontWeight: 'bold' }
@@ -843,7 +734,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
          headerName: 'Actions', width: 80, pinned: 'right',
          cellRenderer: (p: any) => p.node.rowPinned ? null : (
            <button onClick={async () => {
-             await deleteDoc(doc(db, 'riskRecords', p.data.id));
+             await riskRepo.deleteRiskRecord(p.data.id);
              updateParentTotals(p.data.riskId);
            }} className="p-1.5 text-gray-400 hover:text-red-600">
              <Trash2 className="w-4 h-4" />
@@ -913,46 +804,38 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         const min = Number(colDef.field === 'minImpactAmount' ? params.newValue : data.minImpactAmount) || 0;
         const ml = Number(colDef.field === 'mostLikelyImpactAmount' ? params.newValue : data.mostLikelyImpactAmount) || 0;
         const max = Number(colDef.field === 'maxImpactAmount' ? params.newValue : data.maxImpactAmount) || 0;
-        const betaPert = ((min + 4 * ml + max) / 6) * prob;
+        const betaPert = betaPertExposure(min, ml, max, prob);
         updates.betaPertImpactAmount = betaPert;
       }
       
-      await updateDoc(doc(db, 'riskRecords', data.id), updates);
+      await riskRepo.updateRiskRecord(data.id, updates);
       if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
         updateParentTotals(data.riskId);
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `riskRecords/${data.id}`);
+      console.error(`Error updating risk record ${data.id}:`, error);
+      toast.error('Failed to update record.');
     }
   };
 
   const handleAddRecord = async () => {
     if (!selectedRiskId) return;
     try {
-      await addDoc(collection(db, 'riskRecords'), {
-        riskId: selectedRiskId,
-        projectId: project.id,
-        costCodeId: '',
-        scope: '',
-        probability: 1.0,
-        minImpactAmount: 0,
-        mostLikelyImpactAmount: 0,
-        maxImpactAmount: 0,
-        betaPertImpactAmount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
+      await riskRepo.createRiskRecord({
+        riskId: selectedRiskId, projectId: project.id, costCodeId: '', scope: '',
+        probability: 1.0, minImpactAmount: 0, mostLikelyImpactAmount: 0, maxImpactAmount: 0, betaPertImpactAmount: 0,
+      } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
       await updateParentTotals(selectedRiskId);
       toast.success("Record added (Default Prob 100%)");
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'riskRecords');
+      console.error('Add record error:', error);
+      toast.error('Failed to add record.');
     }
   };
 
   const handleBulkUpdateRecords = async () => {
     if (selectedRecordIds.size === 0 || !selectedRiskId) return;
     try {
-      const batch = writeBatch(db);
       const updates: any = { updatedAt: new Date().toISOString() };
       if (bulkRecordUpdateData.costCodeId) {
         updates.costCodeId = bulkRecordUpdateData.costCodeId === '_' ? '' : bulkRecordUpdateData.costCodeId;
@@ -976,45 +859,42 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         if (val) updates[`projectAttributes.${id}`] = val === '_' ? '' : val;
       });
 
-      selectedRecordIds.forEach(id => {
+      const recordUpdates = [...selectedRecordIds].flatMap(id => {
         const record = riskRecords.find(r => r.id === id);
-        if (record) {
-          const finalUpdates = { ...updates };
-          const hasProbChange = bulkRecordUpdateData.probability !== '';
-          if (hasMinChange || hasMLChange || hasMaxChange || hasProbChange) {
-            const prob = hasProbChange ? (Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability)) : (record.probability || 0);
-            const min = hasMinChange ? Number(bulkRecordUpdateData.minImpactAmount) : (record.minImpactAmount || 0);
-            const ml = hasMLChange ? Number(bulkRecordUpdateData.mostLikelyImpactAmount) : (record.mostLikelyImpactAmount || 0);
-            const max = hasMaxChange ? Number(bulkRecordUpdateData.maxImpactAmount) : (record.maxImpactAmount || 0);
-            finalUpdates.betaPertImpactAmount = ((min + 4 * ml + max) / 6) * prob;
-          }
-          batch.update(doc(db, 'riskRecords', id), finalUpdates);
+        if (!record) return [];
+        const finalUpdates = { ...updates };
+        const hasProbChange = bulkRecordUpdateData.probability !== '';
+        if (hasMinChange || hasMLChange || hasMaxChange || hasProbChange) {
+          const prob = hasProbChange ? (Number(bulkRecordUpdateData.probability) > 1 ? Number(bulkRecordUpdateData.probability) / 100 : Number(bulkRecordUpdateData.probability)) : (record.probability || 0);
+          const min = hasMinChange ? Number(bulkRecordUpdateData.minImpactAmount) : (record.minImpactAmount || 0);
+          const ml = hasMLChange ? Number(bulkRecordUpdateData.mostLikelyImpactAmount) : (record.mostLikelyImpactAmount || 0);
+          const max = hasMaxChange ? Number(bulkRecordUpdateData.maxImpactAmount) : (record.maxImpactAmount || 0);
+          finalUpdates.betaPertImpactAmount = betaPertExposure(min, ml, max, prob);
         }
+        return [{ id, data: finalUpdates }];
       });
-      await batch.commit();
+      await riskRepo.updateManyRiskRecords(recordUpdates);
       await updateParentTotals(selectedRiskId);
       toast.success("Updated Successfully");
       setIsBulkRecordUpdateOpen(false);
       setSelectedRecordIds(new Set());
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'riskRecords/bulk');
+      console.error('Bulk record update error:', error);
+      toast.error('Failed to update records.');
     }
   };
 
   const handleBulkDeleteRecords = async () => {
     if (selectedRecordIds.size === 0 || !selectedRiskId) return;
     try {
-      const batch = writeBatch(db);
-      selectedRecordIds.forEach(id => {
-        batch.delete(doc(db, 'riskRecords', id));
-      });
-      await batch.commit();
+      await riskRepo.deleteManyRiskRecords([...selectedRecordIds]);
       await updateParentTotals(selectedRiskId);
       toast.success("Deleted Successfully");
       setIsBulkRecordDeleteOpen(false);
       setSelectedRecordIds(new Set());
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, 'riskRecords/bulk');
+      console.error('Bulk record delete error:', error);
+      toast.error('Failed to delete records.');
     }
   };
 
@@ -1141,6 +1021,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         <div className="flex-1 relative">
           <div className={cn("absolute inset-0 ag-theme-quartz", theme === 'dark' ? "ag-theme-quartz-dark" : "")}>
             <AgGridReact
+              theme="legacy"
               ref={gridRef} rowData={risks} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
               onCellValueChanged={onCellValueChanged} rowSelection="multiple" animateRows={true}
               pinnedBottomRowData={riskPinnedBottomRowData}
@@ -1197,7 +1078,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
               </div>
             </div>
             <div className="flex-1 relative ag-theme-quartz-dark">
-              <AgGridReact 
+              <AgGridReact theme="legacy"
                 ref={recordsGridRef} rowData={riskRecords} columnDefs={recordColumnDefs}
                 onCellValueChanged={onRecordCellValueChanged} quickFilterText={recordsQuickFilterText}
                 pinnedBottomRowData={recordPinnedBottomRowData}

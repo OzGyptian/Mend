@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { version } from '../../package.json';
 import { 
   Layout, 
   Briefcase, 
@@ -25,9 +26,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom';
 import { Enterprise, Project, Sheet } from '../types';
-import { auth, db } from '../firebase';
-import { signOut } from 'firebase/auth';
-import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
+import { useProjectRepo, useAuthRepo, useUtilityRepo, useAuth } from '../platform/firestore/hooks';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -66,36 +65,23 @@ export default function Sidebar({
   let moduleId = moduleMatch?.params.moduleId;
   if (moduleId === 'sheet') moduleId = undefined;
 
+  const projectRepo = useProjectRepo();
+  const authRepo = useAuthRepo();
+  const utilityRepo = useUtilityRepo();
   const [project, setProject] = useState<Project | null>(null);
   const [sheet, setSheet] = useState<Sheet | null>(null);
 
   useEffect(() => {
-    if (!projectId) {
-      setProject(null);
-      return;
-    }
-    const unsubscribe = onSnapshot(doc(db, 'projects', projectId), (snapshot) => {
-      if (snapshot.exists()) {
-        setProject({ ...snapshot.data() as Project, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    if (!projectId) { setProject(null); return; }
+    return projectRepo.subscribe(projectId, setProject);
   }, [projectId]);
 
   useEffect(() => {
-    if (!sheetId) {
-      setSheet(null);
-      return;
-    }
-    const unsubscribe = onSnapshot(doc(db, 'sheets', sheetId), (snapshot) => {
-      if (snapshot.exists()) {
-        setSheet({ ...snapshot.data() as Sheet, id: snapshot.id });
-      }
-    });
-    return () => unsubscribe();
+    if (!sheetId) { setSheet(null); return; }
+    return utilityRepo.subscribeSheet(sheetId, setSheet);
   }, [sheetId]);
 
-  const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
+  const { isPlatformAdmin: isSystemAdmin } = useAuth();
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
@@ -297,7 +283,7 @@ export default function Sidebar({
 
           <Button 
             variant="ghost"
-            onClick={() => signOut(auth)}
+            onClick={() => authRepo.signOut()}
             className={cn(
               "w-full justify-start gap-3 px-3 py-2 h-auto font-normal text-red-400 hover:text-red-300 hover:bg-red-400/10",
               isCollapsed && "justify-center px-0"
@@ -313,7 +299,7 @@ export default function Sidebar({
           <div className="px-3 pt-2">
             <div className="flex items-center justify-between text-[10px] font-mono text-gray-900 dark:text-white/20 uppercase tracking-widest">
               <span>Version</span>
-              <span>1.0.0</span>
+              <span>{version}</span>
             </div>
           </div>
         )}

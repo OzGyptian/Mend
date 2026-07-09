@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { db, auth } from '../firebase';
-import { doc, updateDoc, collection, query, where, onSnapshot, deleteDoc, getDocs, addDoc, writeBatch } from 'firebase/firestore';
+import { useEnterpriseRepo, useProjectRepo, useAuthRepo, useUtilityRepo } from '../platform/firestore/hooks';
 import { Enterprise, Project, Sheet, ProjectAttribute, ProjectAttributeValue, SavedView } from '../types';
 import { Users, Briefcase, Settings, Plus, Trash2, Tag, Search, X, ChevronRight, ChevronDown, UserPlus, ExternalLink, AlertTriangle, Edit2, Download, Upload, Eye, Lock, Unlock, MoreVertical, Bookmark, Filter, Layout, CheckCircle2, PieChart, DollarSign, RefreshCw, Receipt, Calendar, Hash, Menu, ChevronLeft, Building2, ShieldAlert, ShoppingCart, Activity } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -62,6 +61,10 @@ interface EnterpriseAdminProps {
 }
 
 export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: EnterpriseAdminProps) {
+  const enterpriseRepo = useEnterpriseRepo();
+  const projectRepo = useProjectRepo();
+  const authRepo = useAuthRepo();
+  const utilityRepo = useUtilityRepo();
   const [activeTab, setActiveTab] = useState<string>('users');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['General', 'Cost', 'Change', 'Risk', 'Sub-Contract', 'Procurement', 'Progress', 'Schedule']));
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -277,36 +280,27 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   };
 
   useEffect(() => {
-    if (!auth.currentUser) return;
-    const q = query(collection(db, 'savedViews'), where('userId', '==', auth.currentUser.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const views = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as SavedView));
-      setSavedViews(views);
-    }, (error) => {
-      console.error("Saved views fetch error:", error);
-    });
-    return () => unsubscribe();
-  }, [auth.currentUser?.uid]);
+    const currentUser = authRepo.getCurrentUser();
+    if (!currentUser) return;
+    return utilityRepo.subscribeSavedViews(currentUser.id, 'admin', setSavedViews);
+  }, [authRepo.getCurrentUser()?.id]);
 
   const saveView = async (tableId: string, name: string) => {
-    if (!name.trim() || !auth.currentUser) return;
+    const currentUser = authRepo.getCurrentUser();
+    if (!name.trim() || !currentUser) return;
     try {
-      const newView: Omit<SavedView, 'id'> = {
+      const newView: any = {
         name,
         tableId,
         columns: visibleColumns[tableId],
-        userId: auth.currentUser.uid,
-        createdAt: new Date().toISOString(),
+        userId: currentUser.id,
         config: {
           isFrozen: isFrozen[tableId],
-          sort: tableId === 'users' ? userSort : 
-                tableId === 'projects' ? projectSort : 
-                tableId === 'resourceRates' ? resourceSort : 
-                (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'changeAttributes') ? attrSort : {},
+          sort: tableId === 'users' ? userSort : tableId === 'projects' ? projectSort : tableId === 'resourceRates' ? resourceSort : (tableId === 'lineItemAttributes' || tableId === 'costCodeAttributes' || tableId === 'projectAttributes' || tableId === 'subcontractAttributes' || tableId === 'changeAttributes') ? attrSort : {},
           columnFilters: columnFilters[tableId]
         }
-      } as any;
-      await addDoc(collection(db, 'savedViews'), newView);
+      };
+      await utilityRepo.createSavedView(newView);
       setNewViewName('');
       setIsSavedViewMenuOpen(null);
     } catch (error) {
@@ -338,7 +332,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
 
   const deleteView = async (viewId: string) => {
     try {
-      await deleteDoc(doc(db, 'savedViews', viewId));
+      await utilityRepo.deleteSavedView(viewId);
     } catch (error) {
       console.error('Failed to delete view', error);
     }
@@ -373,30 +367,14 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   const valueIdExists = !isSubmitting && !isEditingValue?.valueId && isEditingValue && (getAttributes(isEditingValue.type).find(a => a.id === isEditingValue.attrId)?.values || []).some(v => v.id === valueFormData.id);
 
   useEffect(() => {
-    const q = query(collection(db, 'projects'), where('enterpriseId', '==', enterprise.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setProjects(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Project)));
-    }, (error) => {
-      console.error("Projects fetch error:", error);
-    });
-    return () => unsubscribe();
+    return projectRepo.subscribeByEnterprise(enterprise.id, '', setProjects);
   }, [enterprise.id]);
-
-  useEffect(() => {
-    const q = query(collection(db, 'sheets'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSheets(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Sheet)));
-    }, (error) => {
-      console.error("Sheets fetch error:", error);
-    });
-    return () => unsubscribe();
-  }, []);
 
   const bulkDeleteResourceRates = async () => {
     if (!enterprise.id || selectedRateIds.size === 0) return;
     try {
       const newRates = (enterprise.resourceRates || []).filter(r => !selectedRateIds.has(r.id));
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { resourceRates: newRates });
+      await enterpriseRepo.update(enterprise.id, { resourceRates: newRates });
       setSelectedRateIds(new Set());
       setDeleteConfirm(null);
     } catch (error) {
@@ -432,7 +410,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         // When adding new, use the inputed ID
         newVendors = [...currentVendors, { ...vendorFormData }];
       }
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      await enterpriseRepo.update(enterprise.id, { vendors: newVendors });
       setIsEditingVendor(null);
       setVendorFormData({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
     } catch (error) {
@@ -447,7 +425,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     if (!enterprise.id) return;
     try {
       const newVendors = (enterprise.vendors || []).filter(v => v.id !== id);
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      await enterpriseRepo.update(enterprise.id, { vendors: newVendors });
       setDeleteConfirm(null);
     } catch (error) {
       console.error('Delete vendor failed', error);
@@ -459,7 +437,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     if (!enterprise.id || selectedVendorIds.size === 0) return;
     try {
       const newVendors = (enterprise.vendors || []).filter(v => !selectedVendorIds.has(v.id));
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+      await enterpriseRepo.update(enterprise.id, { vendors: newVendors });
       setSelectedVendorIds(new Set());
       setDeleteConfirm(null);
     } catch (error) {
@@ -472,15 +450,13 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     const user = enterprise.users?.[uid];
     if (!user) return;
     const newRole = user.role === 'Enterprise System Admin' ? 'Enterprise User' : 'Enterprise System Admin';
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-      [`users.${uid}.role`]: newRole
-    });
+    await enterpriseRepo.update(enterprise.id, { [`users.${uid}.role`]: newRole });
   };
 
   const deleteUser = async (uid: string) => {
     const newUsers = { ...enterprise.users };
     delete newUsers[uid];
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       users: newUsers
     });
     setDeleteConfirm(null);
@@ -494,7 +470,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       selectedUserIds.forEach(uid => {
         delete newUsers[uid];
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         users: newUsers
       });
       setSelectedUserIds(new Set());
@@ -507,7 +483,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   };
 
   const deleteProject = async (projectId: string) => {
-    await deleteDoc(doc(db, 'projects', projectId));
+    await projectRepo.delete(projectId);
     setDeleteConfirm(null);
     if (selectedProjectId === projectId) setSelectedProjectId(null);
     const newSelected = new Set(selectedProjectIds);
@@ -634,7 +610,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   }, [enterprise.vendors, vendorSearch, vendorSort, columnFilters.vendors]);
 
   const bulkDeleteProjects = async () => {
-    const promises = Array.from(selectedProjectIds).map((id: string) => deleteDoc(doc(db, 'projects', id)));
+    const promises = Array.from(selectedProjectIds).map((id: string) => projectRepo.delete(id));
     await Promise.all(promises);
     setSelectedProjectIds(new Set());
     setDeleteConfirm(null);
@@ -650,7 +626,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       }
       return a;
     });
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       [field]: newAttrs
     });
     setSelectedAttrValueIds(new Set());
@@ -668,7 +644,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         }
         return a;
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         [field]: newAttrs
       });
       toast.success('Value deleted successfully');
@@ -687,15 +663,15 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       // 1. Generate a secure token
       const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
       
-      // 2. Create invitation document in Firestore
-      await addDoc(collection(db, 'invitations'), {
+      // 2. Create invitation document
+      await utilityRepo.createInvitation({
+        token,
         enterpriseId: enterprise.id,
         email: inviteEmail.toLowerCase().trim(),
-        token: token,
+        enterpriseName: enterprise.name,
+        invitedBy: authRepo.getCurrentUser()?.id || '',
         status: 'pending',
-        invitedBy: auth.currentUser?.uid,
         createdAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
       });
 
       // 3. Generate the secure link
@@ -703,23 +679,33 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       setGeneratedLink(inviteLink);
 
       // 4. Try to send real email via our backend
-      await fetch('/api/invite', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: inviteEmail,
-          enterpriseName: enterprise.name,
-          inviterName: auth.currentUser?.displayName || auth.currentUser?.email || 'A colleague',
-          appUrl: inviteLink
-        })
-      }).catch(err => console.warn('Email sending failed, but link was generated:', err));
+      try {
+        const emailRes = await fetch('/api/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: inviteEmail,
+            enterpriseName: enterprise.name,
+            inviterName: authRepo.getCurrentUser()?.displayName || authRepo.getCurrentUser()?.email || 'A colleague',
+            appUrl: inviteLink
+          })
+        });
+        if (!emailRes.ok) {
+          const body = await emailRes.json().catch(() => ({}));
+          console.error('Email delivery failed:', body);
+          toast.error('Email could not be delivered — share the link below directly.');
+        }
+      } catch (emailErr) {
+        console.warn('Email request failed (network):', emailErr);
+        toast.error('Email could not be delivered — share the link below directly.');
+      }
 
       // 5. Track pending invite in Enterprise doc
       const pendingInvites = (enterprise as any).pendingInvites || [];
       if (!pendingInvites.includes(inviteEmail)) {
-        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        await enterpriseRepo.update(enterprise.id, {
           pendingInvites: [...pendingInvites, inviteEmail]
-        });
+        } as any);
       }
       
       // We don't close the modal immediately so they can copy the link
@@ -748,28 +734,25 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     } else {
       newUsers[uid] = 'Project User';
     }
-    await updateDoc(doc(db, 'projects', projectId), { 
+    await projectRepo.update(projectId, { 
       users: newUsers,
       dateLastModified: new Date().toISOString()
     });
   };
 
   const updateProjectRole = async (projectId: string, uid: string, role: 'Project Admin' | 'Project User') => {
-    await updateDoc(doc(db, 'projects', projectId), {
+    await projectRepo.update(projectId, {
       [`users.${uid}`]: role,
       dateLastModified: new Date().toISOString()
     });
   };
 
   const handleUpdateProjectStatus = async (projectId: string, status: string) => {
-    await updateDoc(doc(db, 'projects', projectId), {
-      status,
-      dateLastModified: new Date().toISOString()
-    });
+    await projectRepo.update(projectId, { status: status as any });
   };
 
   const handleUpdateProjectPhoto = async (projectId: string, photoURL: string) => {
-    await updateDoc(doc(db, 'projects', projectId), {
+    await projectRepo.update(projectId, {
       photoURL,
       dateLastModified: new Date().toISOString()
     });
@@ -789,21 +772,14 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     setReplaceError('');
 
     try {
-      // Check for duplicates
-      const q = query(
-        collection(db, 'projects'),
-        where('enterpriseId', '==', enterprise.id),
-        where('projectCode', '==', newProjectCode.trim())
-      );
-      const querySnapshot = await getDocs(q);
-      
-      if (!querySnapshot.empty) {
+      // Check for duplicates from local state
+      if (projects.some(p => p.projectCode === newProjectCode.trim() && p.id !== projectToReplace?.id)) {
         setReplaceError('This Project ID already exists in the enterprise.');
         setIsReplacing(false);
         return;
       }
 
-      await updateDoc(doc(db, 'projects', projectToReplace.id), {
+      await projectRepo.update(projectToReplace.id, {
         projectCode: newProjectCode.trim(),
         dateLastModified: new Date().toISOString()
       });
@@ -838,19 +814,12 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
           }
           return r;
         });
-        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        await enterpriseRepo.update(enterprise.id, {
           resourceRates: newResources
         });
         setSelectedRateIds(new Set());
       } else if (type === 'project') {
-        const batch = writeBatch(db);
-        selectedProjectIds.forEach(id => {
-          batch.update(doc(db, 'projects', id), {
-            ...bulkUpdateFormData,
-            dateLastModified: new Date().toISOString()
-          });
-        });
-        await batch.commit();
+        await Promise.all([...selectedProjectIds].map(id => projectRepo.update(id, { ...bulkUpdateFormData })));
         setSelectedProjectIds(new Set());
       } else if (type === 'vendor') {
         const currentVendors = enterprise.vendors || [];
@@ -860,7 +829,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
           }
           return v;
         });
-        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        await enterpriseRepo.update(enterprise.id, {
           vendors: newVendors
         });
         setSelectedVendorIds(new Set());
@@ -879,7 +848,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
 
   const handleUpdateEnterprise = async (updates: Partial<Enterprise>) => {
     try {
-      await updateDoc(doc(db, 'enterprises', enterprise.id), updates);
+      await enterpriseRepo.update(enterprise.id, updates);
     } catch (error) {
       console.error('Enterprise update failed', error);
       alert('Failed to update enterprise settings.');
@@ -996,7 +965,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       'Project Code': p.projectCode,
       'Date Created': p.dateCreated ? new Date(p.dateCreated).toLocaleDateString() : '',
       'Users Count': Object.keys(p.users || {}).length,
-      'Sheets Count': sheets.filter(s => s.projectId === p.id).length
+      'Sheets Count': (p as any).sheets?.length || 0
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -1411,7 +1380,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
     if (currentAttr && currentAttr.title === title) return;
 
     try {
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         [field]: newAttrs
       });
     } catch (e) {
@@ -1442,7 +1411,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         }
         return a;
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         [field]: newAttrs
       });
     } catch (error) {
@@ -1464,7 +1433,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       }
       return a;
     });
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       [field]: newAttrs
     });
   };
@@ -1562,7 +1531,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         }
         return a;
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { [type]: newAttrs });
+      await enterpriseRepo.update(enterprise.id, { [type]: newAttrs });
     } else if (type === 'resourceRates') {
       const currentResources = [...(enterprise.resourceRates || [])];
       data.forEach(row => {
@@ -1579,7 +1548,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
           currentResources.push({ id, name, category, unit, rate });
         }
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { resourceRates: currentResources });
+      await enterpriseRepo.update(enterprise.id, { resourceRates: currentResources });
     } else if (type === 'users') {
       const currentUsers = { ...(enterprise.users || {}) };
       data.forEach(row => {
@@ -1600,47 +1569,29 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
           currentUsers[tempUid] = { email, displayName: name, role, joinedAt: new Date().toISOString() };
         }
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { users: currentUsers });
+      await enterpriseRepo.update(enterprise.id, { users: currentUsers });
     } else if (type === 'projects') {
       const activeAttrs = (enterprise.projectAttributes || []).filter(attr => attr.title);
-      const batch = writeBatch(db);
+      const importProjUpdates: Array<{ id: string; data: any }> = [];
+      const importProjCreates: any[] = [];
 
       for (const row of data) {
         const code = row.Code?.toString() || row.code?.toString() || row.ProjectCode?.toString() || row.projectCode?.toString() || row['Project ID']?.toString();
         const name = row.Name?.toString() || row.name?.toString() || row.ProjectName?.toString() || row.projectName?.toString() || row['Project Name']?.toString() || '';
         if (!code) continue;
-
         const existingProject = projects.find(p => p.projectCode === code);
-        const updates: any = {};
-        if (name) updates.projectName = name;
-        
-        // Attributes
         const newAttributes: any = existingProject?.attributes ? { ...existingProject.attributes } : {};
-        activeAttrs.forEach(attr => {
-          if (row[attr.title] !== undefined) {
-            newAttributes[attr.id] = row[attr.title].toString();
-          }
-        });
-        updates.attributes = newAttributes;
-
+        activeAttrs.forEach(attr => { if (row[attr.title] !== undefined) newAttributes[attr.id] = row[attr.title].toString(); });
         if (existingProject) {
-          updates.dateLastModified = new Date().toISOString();
-          batch.update(doc(db, 'projects', existingProject.id), updates);
+          importProjUpdates.push({ id: existingProject.id, data: { ...(name ? { projectName: name } : {}), attributes: newAttributes } });
         } else {
-          const newProjRef = doc(collection(db, 'projects'));
-          batch.set(newProjRef, {
-            enterpriseId: enterprise.id,
-            projectCode: code,
-            projectName: name,
-            attributes: newAttributes,
-            dateCreated: new Date().toISOString(),
-            dateLastModified: new Date().toISOString(),
-            users: { [auth.currentUser?.uid || '']: 'Project Admin' },
-            sheets: []
-          });
+          importProjCreates.push({ enterpriseId: enterprise.id, projectCode: code, projectName: name, attributes: newAttributes, users: { [authRepo.getCurrentUser()?.id || '']: 'Project Admin' }, sheets: [] });
         }
       }
-      await batch.commit();
+      await Promise.all([
+        ...importProjUpdates.map(u => projectRepo.update(u.id, u.data)),
+        ...importProjCreates.map(c => projectRepo.create(c as any)),
+      ]);
     } else if (type === 'vendors') {
       const currentVendors = [...(enterprise.vendors || [])];
       data.forEach(row => {
@@ -1659,7 +1610,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
           currentVendors.push({ id, name, code, contactName, contactEmail });
         }
       });
-      await updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: currentVendors });
+      await enterpriseRepo.update(enterprise.id, { vendors: currentVendors });
     }
 
     setImportPreview(null);
@@ -1680,8 +1631,8 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
       setIsSubmitting(true);
       const now = new Date().toISOString();
       const finalName = newProjectData.name.trim() || 'Project Name';
-      const user = auth.currentUser;
-      await addDoc(collection(db, 'projects'), {
+      const user = authRepo.getCurrentUser();
+      await projectRepo.create({
         enterpriseId: enterprise.id,
         projectName: finalName,
         projectCode: newProjectData.code,
@@ -1689,16 +1640,12 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         startDate: now.split('T')[0],
         endDate: now.split('T')[0],
         cutoffDate: now.split('T')[0],
-        users: { [user?.uid || '']: 'Project Admin' },
-        dateCreated: now,
-        dateLastModified: now,
-        createdBy: user?.uid || '',
+        users: { [user?.id || '']: 'Project Admin' },
+        createdBy: user?.id || '',
         createdByEmail: user?.email || '',
-        modifiedBy: user?.uid || '',
-        modifiedByEmail: user?.email || '',
         sheets: [],
         status: 'Active'
-      });
+      } as any);
       setIsCreateProjectModalOpen(false);
       setNewProjectData({ name: '', code: '' });
     } catch (error) {
@@ -1728,7 +1675,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
         currentResources.push(finalResource);
       }
 
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
+      await enterpriseRepo.update(enterprise.id, {
         resourceRates: currentResources
       });
     } catch (error) {
@@ -1741,7 +1688,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   const updateResourceRate = async (id: string, updates: any) => {
     const currentResources = enterprise.resourceRates || [];
     const newResources = currentResources.map(r => r.id === id ? { ...r, ...updates } : r);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       resourceRates: newResources
     });
   };
@@ -1749,7 +1696,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   const updateVendor = async (id: string, updates: any) => {
     const currentVendors = enterprise.vendors || [];
     const newVendors = currentVendors.map(v => v.id === id ? { ...v, ...updates } : v);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       vendors: newVendors
     });
   };
@@ -1757,7 +1704,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
   const deleteResourceRate = async (id: string) => {
     const currentResources = enterprise.resourceRates || [];
     const newResources = currentResources.filter(r => r.id !== id);
-    await updateDoc(doc(db, 'enterprises', enterprise.id), {
+    await enterpriseRepo.update(enterprise.id, {
       resourceRates: newResources
     });
   };
@@ -2052,9 +1999,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                   onCellValueChanged={async (event) => {
                     const { data, colDef, newValue } = event;
                     if (!data.uid) return;
-                    await updateDoc(doc(db, 'enterprises', enterprise.id), {
-                      [`users.${data.uid}.${colDef.field}`]: newValue
-                    });
+                    await enterpriseRepo.update(enterprise.id, { [`users.${data.uid}.${colDef.field}`]: newValue });
                   }}
                   gridProps={{
                     rowSelection: 'multiple',
@@ -2118,7 +2063,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                 onCellValueChanged={async (event) => {
                   const { data, colDef, newValue } = event;
                   if (!data.id) return;
-                  await updateDoc(doc(db, 'projects', data.id), {
+                  await projectRepo.update(data.id, {
                     [colDef.field!]: newValue,
                     dateLastModified: new Date().toISOString()
                   });
@@ -2372,7 +2317,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                       currentVendors.push(vendorData);
                     }
                   });
-                  updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: currentVendors });
+                  enterpriseRepo.update(enterprise.id, { vendors: currentVendors });
                   toast.success(`Imported ${data.length} vendors`);
                 }}
                 onQuickFilterChange={setVendorSearch}
@@ -2383,7 +2328,7 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                   const { data, colDef, newValue } = event;
                   if (!data.id) return;
                   const newVendors = (enterprise.vendors || []).map(v => v.id === data.id ? { ...v, [colDef.field!]: newValue } : v);
-                  updateDoc(doc(db, 'enterprises', enterprise.id), { vendors: newVendors });
+                  enterpriseRepo.update(enterprise.id, { vendors: newVendors });
                 }}
                 onBulkUpdate={() => {
                   setIsBulkUpdateModalOpen({ type: 'vendor', count: selectedVendorIds.size });
@@ -3086,8 +3031,8 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                     className="space-y-6"
                   >
                     <div className="p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 rounded-2xl">
-                      <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Link Generated!</p>
-                      <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">Copy the link below and send it to your colleague.</p>
+                      <p className="text-sm text-emerald-800 dark:text-emerald-400 font-medium mb-1">Invitation Sent!</p>
+                      <p className="text-xs text-emerald-700/70 dark:text-emerald-400/60">An email has been sent to your colleague. If it doesn't arrive, you can also share this link directly.</p>
                     </div>
                     
                     <div className="relative">
@@ -3419,12 +3364,12 @@ export default function EnterpriseAdmin({ enterprise, setIsSidebarCollapsed }: E
                 if (!projectToEdit) return;
                 try {
                   setIsSubmitting(true);
-                  const user = auth.currentUser;
-                  await updateDoc(doc(db, 'projects', projectToEdit.id), {
+                  const user = authRepo.getCurrentUser();
+                  await projectRepo.update(projectToEdit.id, {
                     projectName: editingProjectDetails.projectName,
                     attributes: editingProjectDetails.attributes,
                     dateLastModified: new Date().toISOString(),
-                    modifiedBy: user?.uid || '',
+                    modifiedBy: user?.id || '',
                     modifiedByEmail: user?.email || ''
                   });
                   toast.success('Project details updated successfully');

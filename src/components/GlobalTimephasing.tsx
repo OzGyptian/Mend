@@ -1,17 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Project, Enterprise, CostCode, Subcontract, ScheduleItem } from '../types';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  getDocs,
-  writeBatch,
-  doc,
-  updateDoc,
-  addDoc
-} from 'firebase/firestore';
+import { useCostRepo, useAuthRepo, useSubcontractRepo, useScheduleRepo } from '../platform/firestore/hooks';
 import { 
   Search, 
   Download, 
@@ -61,6 +50,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { calculatePhasing } from '../domain/phasing';
 
 interface GlobalTimephasingProps {
   project: Project;
@@ -69,6 +59,10 @@ interface GlobalTimephasingProps {
 }
 
 export default function GlobalTimephasing({ project, enterprise, theme = 'light' }: GlobalTimephasingProps) {
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
+  const subcontractRepo = useSubcontractRepo();
+  const scheduleRepo = useScheduleRepo();
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
@@ -120,30 +114,11 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
 
   // Fetch all cost codes
   useEffect(() => {
-    const q = query(
-      collection(db, 'costCodes'), 
-      where('projectId', '==', project.id)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const allCodes = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CostCode));
-      
-      // Filter codes based on assignedUsers
-      const currentUser = auth.currentUser;
-      const isAdmin = project.users[currentUser?.uid || ''] === 'Project Admin';
-      
-      const filteredCodes = isAdmin 
-        ? allCodes 
-        : allCodes.filter(code => 
-            !code.assignedUsers || 
-            code.assignedUsers.length === 0 || 
-            code.assignedUsers.includes(currentUser?.uid || '')
-          );
-
+    const unsubscribe = costRepo.subscribeCostCodes(project.id, (allCodes) => {
+      const currentUser = authRepo.getCurrentUser();
+      const isAdmin = project.users[currentUser?.id || ''] === 'Project Admin';
+      const filteredCodes = isAdmin ? allCodes : allCodes.filter(code => !code.assignedUsers || code.assignedUsers.length === 0 || code.assignedUsers.includes(currentUser?.id || ''));
       setCostCodes(filteredCodes);
-      setLoading(false);
-    }, (error) => {
-      console.error("Cost codes fetch error:", error);
-      toast.error("Failed to fetch cost codes.");
       setLoading(false);
     });
     return () => unsubscribe();
@@ -151,26 +126,12 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
 
   // Fetch all subcontracts
   useEffect(() => {
-    const q = query(
-      collection(db, 'subcontracts'),
-      where('projectId', '==', project.id)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
-    });
-    return () => unsubscribe();
+    return subcontractRepo.subscribeSubcontracts(project.id, setSubcontracts);
   }, [project.id]);
 
   // Fetch all schedule items
   useEffect(() => {
-    const q = query(
-      collection(db, 'scheduleItems'),
-      where('projectId', '==', project.id)
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      setScheduleItems(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ScheduleItem)));
-    });
-    return () => unsubscribe();
+    return scheduleRepo.subscribeScheduleItems(project.id, setScheduleItems);
   }, [project.id]);
 
   // Fetch all phasing data and construct rows
@@ -185,29 +146,11 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         const currentPeriodId = project.reportingPeriods?.currentPeriodId;
         const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
         
-        // 1. Get ALL Phasing data for the project
-        const phasingQuery = query(
-          collection(db, 'costPhasing'),
-          where('projectId', '==', project.id)
-        );
-        const phasingSnap = await getDocs(phasingQuery);
-        const allPhasing = phasingSnap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
-
-        // 2. Get ALL Actuals for the project
-        const actualsQuery = query(
-          collection(db, 'actualCosts'),
-          where('projectId', '==', project.id)
-        );
-        const actualsSnap = await getDocs(actualsQuery);
-        const allActuals = actualsSnap.docs.map(doc => doc.data());
-
-        // 3. Get ALL ETC Details for the project
-        const etcQuery = query(
-          collection(db, 'etcDetails'),
-          where('projectId', '==', project.id)
-        );
-        const etcSnap = await getDocs(etcQuery);
-        const allEtcDetails = etcSnap.docs.map(doc => doc.data());
+        const [allPhasing, allActuals, allEtcDetails] = await Promise.all([
+          costRepo.listAllCostPhasing(project.id) as Promise<any[]>,
+          costRepo.listActualCosts(project.id) as Promise<any[]>,
+          costRepo.listEtcDetails(project.id) as Promise<any[]>,
+        ]);
 
         // 4. Construct Rows for each cost code
         const allRows: any[] = [];
@@ -385,78 +328,6 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
     fetchData();
   }, [costCodes, project.id, project.reportingPeriods, refreshTrigger, subcontracts]);
 
-  const calculatePhasing = useCallback((
-    total: number,
-    startDate: string | Date,
-    endDate: string | Date,
-    distribution: string,
-    periods: any[],
-    existingPeriodValues?: Record<string, number>
-  ) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return {};
-
-    const periodValues: Record<string, number> = {};
-    const activePeriods = periods.filter(p => {
-      const pStart = new Date(p.startDate);
-      const pEnd = new Date(p.endDate);
-      return (pStart <= end && pEnd >= start);
-    });
-
-    if (activePeriods.length === 0) return {};
-
-    const n = activePeriods.length;
-    let weights: number[] = [];
-
-    switch (distribution) {
-      case 'Even':
-        weights = new Array(n).fill(1);
-        break;
-      case 'Front load':
-        weights = activePeriods.map((_, i) => n - i);
-        break;
-      case 'Back load':
-        weights = activePeriods.map((_, i) => i + 1);
-        break;
-      case 'Bell Curve':
-        weights = activePeriods.map((_, i) => {
-          const x = (i - (n - 1) / 2) / (n / 4 || 1);
-          return Math.exp(-0.5 * x * x);
-        });
-        break;
-      case 'S-Curve':
-        weights = activePeriods.map((_, i) => {
-          const x = (i / (n - 1 || 1)) * 10 - 5;
-          const sigmoid = 1 / (1 + Math.exp(-x));
-          const prevX = ((i - 1) / (n - 1 || 1)) * 10 - 5;
-          const prevSigmoid = i === 0 ? 0 : 1 / (1 + Math.exp(-prevX));
-          return sigmoid - prevSigmoid;
-        });
-        break;
-      case 'Profile':
-        if (existingPeriodValues) {
-          weights = activePeriods.map(p => existingPeriodValues[p.id] || 0);
-          const weightSum = weights.reduce((a, b) => a + b, 0);
-          if (weightSum === 0) {
-            weights = new Array(n).fill(1);
-          }
-        } else {
-          weights = new Array(n).fill(1);
-        }
-        break;
-      default:
-        weights = new Array(n).fill(1);
-    }
-
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    activePeriods.forEach((p, i) => {
-      periodValues[p.id] = (weights[i] / (totalWeight || 1)) * total;
-    });
-
-    return periodValues;
-  }, []);
-
   const handleCalculateAutoPhasing = useCallback(async () => {
     const selectedNodes = gridRef.current?.api.getSelectedNodes();
     const selectedRows = selectedNodes?.map(node => node.data) || [];
@@ -478,7 +349,8 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
 
     setIsTimephasingLoading(true);
     try {
-      const batch = writeBatch(db);
+      const phasingUpdates: Array<{ id: string; data: any }> = [];
+      const phasingCreates: any[] = [];
       const periods = project.reportingPeriods?.periods || [];
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = periods.find(p => p.id === currentPeriodId);
@@ -530,16 +402,19 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           };
 
           if (row.docId) {
-            batch.update(doc(db, 'costPhasing', row.docId), updatePayload);
+            phasingUpdates.push({ id: row.docId, data: updatePayload });
           } else {
-            batch.set(doc(collection(db, 'costPhasing')), updatePayload);
+            phasingCreates.push(updatePayload);
           }
           updatedCount++;
         }
       }
 
       if (updatedCount > 0) {
-        await batch.commit();
+        await Promise.all([
+          phasingUpdates.length > 0 ? costRepo.updateManyPhasing(phasingUpdates) : Promise.resolve(),
+          phasingCreates.length > 0 ? costRepo.saveCostPhasing(phasingCreates) : Promise.resolve(),
+        ]);
         toast.success(`Recalculated phasing for ${updatedCount} row(s)`);
         setRefreshTrigger(prev => prev + 1);
       } else {
@@ -603,9 +478,10 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
       }
 
       if (data.docId) {
-        await updateDoc(doc(db, 'costPhasing', data.docId), updatePayload);
+        await costRepo.updateCostPhasing(data.docId, updatePayload);
       } else {
-        const docRef = await addDoc(collection(db, 'costPhasing'), updatePayload);
+        await costRepo.saveCostPhasing([updatePayload]);
+        const docRef = null;
         data.docId = docRef.id;
       }
       
@@ -630,31 +506,25 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
 
     setIsTimephasingLoading(true);
     try {
-      const batch = writeBatch(db);
+      const batchPhasingUpdates: Array<{ id: string; data: any }> = [];
+      const batchPhasingCreates: any[] = [];
       let updatedCount = 0;
 
       for (const row of selectedRows) {
-        const updatePayload: any = {
-          projectId: project.id,
-          costCodeId: row.costCode,
-          type: row.rowType,
-          updatedAt: new Date().toISOString()
-        };
-
+        const updatePayload: any = { projectId: project.id, costCodeId: row.costCode, type: row.rowType };
         if (bulkUpdateData.phasingSource) updatePayload.phasingSource = bulkUpdateData.phasingSource;
         if (bulkUpdateData.startDate) updatePayload.startDate = bulkUpdateData.startDate;
         if (bulkUpdateData.endDate) updatePayload.endDate = bulkUpdateData.endDate;
         if (bulkUpdateData.distribution) updatePayload.distribution = bulkUpdateData.distribution;
-
-        if (row.docId) {
-          batch.update(doc(db, 'costPhasing', row.docId), updatePayload);
-        } else {
-          batch.set(doc(collection(db, 'costPhasing')), updatePayload);
-        }
+        if (row.docId) batchPhasingUpdates.push({ id: row.docId, data: updatePayload });
+        else batchPhasingCreates.push(updatePayload);
         updatedCount++;
       }
 
-      await batch.commit();
+      await Promise.all([
+        batchPhasingUpdates.length > 0 ? costRepo.updateManyPhasing(batchPhasingUpdates) : Promise.resolve(),
+        batchPhasingCreates.length > 0 ? costRepo.saveCostPhasing(batchPhasingCreates) : Promise.resolve(),
+      ]);
       toast.success(`Bulk updated ${updatedCount} row(s)`);
       setIsBulkUpdateOpen(false);
       setBulkUpdateData({});
@@ -912,7 +782,8 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
         const periods = project.reportingPeriods?.periods || [];
-        const batch = writeBatch(db);
+        const importUpdates: Array<{ id: string; data: any }> = [];
+        const importCreates: any[] = [];
         let importCount = 0;
         const errors: string[] = [];
 
@@ -975,27 +846,26 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
             // Here we only update periodValues from Excel
 
             if (existingRow?.docId) {
-              batch.update(doc(db, 'costPhasing', existingRow.docId), updatePayload);
+              importUpdates.push({ id: existingRow.docId, data: updatePayload });
             } else {
-              batch.set(doc(collection(db, 'costPhasing')), updatePayload);
+              importCreates.push(updatePayload);
             }
             importCount++;
           }
         }
 
         if (errors.length > 0) {
-          // Show first few errors to avoid overwhelming the toast
           const displayErrors = errors.slice(0, 3);
           const errorMsg = displayErrors.join('\n') + (errors.length > 3 ? `\n...and ${errors.length - 3} more errors.` : '');
-          toast.error("Import failed due to validation errors:", {
-            description: errorMsg,
-            duration: 5000
-          });
+          toast.error("Import failed due to validation errors:", { description: errorMsg, duration: 5000 });
           return;
         }
 
         if (importCount > 0) {
-          await batch.commit();
+          await Promise.all([
+            importUpdates.length > 0 ? costRepo.updateManyPhasing(importUpdates) : Promise.resolve(),
+            importCreates.length > 0 ? costRepo.saveCostPhasing(importCreates) : Promise.resolve(),
+          ]);
           toast.success(`Successfully imported phasing for ${importCount} rows`);
           setRefreshTrigger(prev => prev + 1);
         } else {

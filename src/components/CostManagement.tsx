@@ -3,7 +3,7 @@ import { Project, Sheet, Enterprise } from '../types';
 import { DollarSign, Tag, List, ChevronLeft, Menu, Settings, Hash, Database, Calendar, Target, ClipboardList } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { auth } from '../firebase';
+import { useAuthRepo } from '../platform/firestore/hooks';
 import ProjectCostCodeAttributes from './ProjectCostCodeAttributes';
 import ProjectResourceRates from './ProjectResourceRates';
 import CostReportingPeriod from './CostReportingPeriod';
@@ -45,8 +45,9 @@ const CostManagement: React.FC<CostManagementProps> = ({
   const [expandedSections, setExpandedSections] = useState<string[]>(['overview', 'settings']);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
-  const userId = auth.currentUser?.uid;
-  const userEmail = auth.currentUser?.email;
+  const currentUser = useAuthRepo().getCurrentUser();
+  const userId = currentUser?.id;
+  const userEmail = currentUser?.email;
   const isSystemAdmin = userEmail?.toLowerCase() === 'tarek.guindy@gmail.com' || userEmail?.toLowerCase() === 'tarek_guindy@hotmail.com';
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin' || isSystemAdmin);

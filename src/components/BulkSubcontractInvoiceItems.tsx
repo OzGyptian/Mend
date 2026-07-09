@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Project, Enterprise, Invoice, Subcontract } from '../types';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { useSubcontractRepo } from '../platform/firestore/hooks';
 import DataGridModule from './DataGridModule';
 import { ColDef, ColGroupDef, CellValueChangedEvent, ValueFormatterParams } from 'ag-grid-community';
 import toast from 'react-hot-toast';
@@ -53,6 +52,7 @@ interface FlattenedInvoiceItem {
 }
 
 const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = ({ project, enterprise }) => {
+  const subcontractRepo = useSubcontractRepo();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,29 +68,14 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
 
   useEffect(() => {
     if (!project.id) return;
-    const qSub = query(collection(db, 'subcontracts'), where('projectId', '==', project.id));
-    const unsubSub = onSnapshot(qSub, (snapshot) => {
-      setSubcontracts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Subcontract)));
-    }, (error) => {
-      console.error("BulkSubcontractInvoiceItems: subcontracts fetch error:", error);
-      toast.error("Failed to load subcontracts: " + error.message);
+    const unsubSub = subcontractRepo.subscribeSubcontracts(project.id, (data) => {
+      setSubcontracts(data);
+    });
+    const unsubInv = subcontractRepo.subscribeInvoices(project.id, (data) => {
+      setInvoices(data);
       setLoading(false);
     });
-
-    const qInv = query(collection(db, 'invoices'), where('projectId', '==', project.id));
-    const unsubInv = onSnapshot(qInv, (snapshot) => {
-      setInvoices(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Invoice)));
-      setLoading(false);
-    }, (error) => {
-      console.error("BulkSubcontractInvoiceItems: invoices fetch error:", error);
-      toast.error("Failed to load invoices: " + error.message);
-      setLoading(false);
-    });
-
-    return () => {
-      unsubSub();
-      unsubInv();
-    };
+    return () => { unsubSub(); unsubInv(); };
   }, [project.id]);
 
   const rowData = useMemo(() => {
@@ -124,7 +109,6 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
   const handleBulkUpdate = async () => {
     if (selectedIds.length === 0) return;
     try {
-      const batch = writeBatch(db);
       const invoicesToUpdate = new Map<string, Invoice>();
 
       // To calculate cumulative correctly, we'd need previous invoice data
@@ -175,16 +159,11 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
         invoicesToUpdate.set(row.invoiceId, inv!);
       });
 
-      invoicesToUpdate.forEach((updatedInv, id) => {
-        batch.update(doc(db, 'invoices', id), {
-          items: updatedInv.items,
-          totalAmount: updatedInv.totalAmount,
-          certifiedAmount: updatedInv.certifiedAmount,
-          updatedAt: updatedInv.updatedAt
-        });
-      });
-
-      await batch.commit();
+      const updates = Array.from(invoicesToUpdate.entries()).map(([id, inv]) => ({
+        id,
+        data: { items: inv.items, totalAmount: inv.totalAmount, certifiedAmount: inv.certifiedAmount, updatedAt: inv.updatedAt },
+      }));
+      await subcontractRepo.updateManyInvoices(updates);
       toast.success(`Updated ${selectedIds.length} invoice items.`);
       setSelectedIds([]);
       setIsBulkUpdateOpen(false);
@@ -241,11 +220,11 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
     const newCertifiedTotal = updatedItems.reduce((sum, item) => sum + (item.periodicCertifiedValue || 0), 0);
 
     try {
-      await updateDoc(doc(db, 'invoices', invoiceDocId), {
+      await subcontractRepo.updateInvoice(invoiceDocId, {
         items: updatedItems,
         totalAmount: newClaimedTotal,
         certifiedAmount: newCertifiedTotal,
-        updatedAt: new Date().toISOString()
+        updatedAt: new Date().toISOString(),
       });
       toast.success('Item updated');
     } catch (error) {
@@ -337,25 +316,17 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
           return;
         }
 
-        // Chunked updates
         const updateEntries = Array.from(invoicesToUpdate.values());
         const chunkSize = 450;
         const totalChunks = Math.ceil(updateEntries.length / chunkSize);
 
         for (let i = 0; i < totalChunks; i++) {
           const chunk = updateEntries.slice(i * chunkSize, (i + 1) * chunkSize);
-          const batch = writeBatch(db);
           toast.loading(`Saving invoice data chunk ${i + 1} of ${totalChunks}...`, { id: toastId });
-          
-          chunk.forEach((updatedInv) => {
-            batch.update(doc(db, 'invoices', updatedInv.id), {
-              items: updatedInv.items,
-              totalAmount: updatedInv.totalAmount,
-              certifiedAmount: updatedInv.certifiedAmount,
-              updatedAt: updatedInv.updatedAt
-            });
-          });
-          await batch.commit();
+          await subcontractRepo.updateManyInvoices(chunk.map(inv => ({
+            id: inv.id,
+            data: { items: inv.items, totalAmount: inv.totalAmount, certifiedAmount: inv.certifiedAmount, updatedAt: inv.updatedAt },
+          })));
         }
 
         toast.success(`Processed items across ${invoicesToUpdate.size} invoices.`, { id: toastId });
@@ -468,53 +439,44 @@ const BulkSubcontractInvoiceItems: React.FC<BulkSubcontractInvoiceItemsProps> = 
                 return;
               }
 
-              const chunkSize = 400;
-              const totalChunks = Math.ceil(excelData.length / chunkSize);
               let importedCount = 0;
+              const pendingUpdates: Array<{ id: string; data: Partial<Invoice> }> = [];
 
-              for (let i = 0; i < totalChunks; i++) {
-                const chunk = excelData.slice(i * chunkSize, (i + 1) * chunkSize);
-                const batch = writeBatch(db);
+              for (const row of excelData) {
+                const orderId = String(row['Order ID'] || row.orderId || '').trim();
+                const targetSub = subcontracts.find(s => s.orderId === orderId);
+                if (!targetSub) continue;
 
-                for (const row of chunk) {
-                  const orderId = String(row['Order ID'] || row.orderId || '').trim();
-                  const targetSub = subcontracts.find(s => s.orderId === orderId);
-                  if (!targetSub) continue;
+                const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '');
+                if (!invoiceNo) continue;
 
-                  const invoiceNo = String(row['Invoice No.'] || row.invoiceId || '');
-                  if (!invoiceNo) continue;
+                const invoice = invoices.find(inv => inv.subcontractId === targetSub.id && inv.invoiceId === invoiceNo);
+                if (!invoice) continue;
 
-                  const invoice = invoices.find(inv => inv.subcontractId === targetSub.id && inv.invoiceId === invoiceNo);
-                  if (!invoice) continue;
+                const itemNo = String(row['Item No.'] || row.itemNo || '');
+                if (!itemNo) continue;
 
-                  const itemNo = String(row['Item No.'] || row.itemNo || '');
-                  if (!itemNo) continue;
+                const items = invoice.items || [];
+                const itemIndex = items.findIndex(it => it.itemNo === itemNo);
+                if (itemIndex === -1) continue;
 
-                  const items = invoice.items || [];
-                  const itemIndex = items.findIndex(it => it.itemNo === itemNo);
-                  if (itemIndex === -1) continue;
+                const updatedItems = [...items];
+                const item = { ...updatedItems[itemIndex] };
 
-                  const updatedItems = [...items];
-                  const item = { ...updatedItems[itemIndex] };
-                  
-                  if (row['Claim Value'] !== undefined || row.periodicClaimValue !== undefined) item.periodicClaimValue = Number(row['Claim Value'] || row.periodicClaimValue || 0);
-                  if (row['Certified Value'] !== undefined || row.periodicCertifiedValue !== undefined) item.periodicCertifiedValue = Number(row['Certified Value'] || row.periodicCertifiedValue || 0);
-                  
-                  updatedItems[itemIndex] = item;
-                  
-                  // Calculate new invoice totals
-                  const invoiceTotal = updatedItems.reduce((sum, it) => sum + (it.periodicClaimValue || 0), 0);
-                  const invoiceCertifiedTotal = updatedItems.reduce((sum, it) => sum + (it.periodicCertifiedValue || 0), 0);
+                if (row['Claim Value'] !== undefined || row.periodicClaimValue !== undefined) item.periodicClaimValue = Number(row['Claim Value'] || row.periodicClaimValue || 0);
+                if (row['Certified Value'] !== undefined || row.periodicCertifiedValue !== undefined) item.periodicCertifiedValue = Number(row['Certified Value'] || row.periodicCertifiedValue || 0);
 
-                  batch.update(doc(db, 'invoices', invoice.id), {
-                    items: updatedItems,
-                    totalAmount: invoiceTotal,
-                    certifiedAmount: invoiceCertifiedTotal,
-                    updatedAt: new Date().toISOString()
-                  });
-                  importedCount++;
-                }
-                await batch.commit();
+                updatedItems[itemIndex] = item;
+                const invoiceTotal = updatedItems.reduce((sum, it) => sum + (it.periodicClaimValue || 0), 0);
+                const invoiceCertifiedTotal = updatedItems.reduce((sum, it) => sum + (it.periodicCertifiedValue || 0), 0);
+
+                pendingUpdates.push({ id: invoice.id, data: { items: updatedItems, totalAmount: invoiceTotal, certifiedAmount: invoiceCertifiedTotal, updatedAt: new Date().toISOString() } });
+                importedCount++;
+              }
+
+              const chunkSize = 400;
+              for (let i = 0; i < Math.ceil(pendingUpdates.length / chunkSize); i++) {
+                await subcontractRepo.updateManyInvoices(pendingUpdates.slice(i * chunkSize, (i + 1) * chunkSize));
               }
               toast.success(`Imported ${importedCount} invoice items.`, { id: toastId });
             } catch (error: any) {

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { db, auth } from '../firebase';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { useEnterpriseRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
 import { 
   User, 
@@ -12,6 +11,8 @@ import {
   Settings, 
   Bell, 
   Lock,
+  Eye,
+  EyeOff,
   Upload,
   Trash2,
   Save,
@@ -24,18 +25,35 @@ interface UserProfileProps {
 }
 
 export default function UserProfile({ userId, enterprise }: UserProfileProps) {
+  const enterpriseRepo = useEnterpriseRepo();
+  const authRepo = useAuthRepo();
   const [userData, setUserData] = useState<any>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordFeedback, setPasswordFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isPasswordLoading, setIsPasswordLoading] = useState(false);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [linkedProviders, setLinkedProviders] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isGoogleOnly = linkedProviders.includes('google.com') && !linkedProviders.includes('password');
+
+  useEffect(() => {
+    setLinkedProviders(authRepo.getLinkedProviders());
+  }, []);
 
   useEffect(() => {
     if (!enterprise || !userId) return;
     const user = enterprise.users?.[userId] as any;
+    const currentUser = authRepo.getCurrentUser();
     if (user) {
       setUserData({
         ...user,
-        displayName: user.displayName || auth.currentUser?.displayName || '',
-        email: user.email || auth.currentUser?.email || '',
+        displayName: user.displayName || currentUser?.displayName || '',
+        email: user.email || currentUser?.email || '',
         preferences: user.preferences || {
           notifications: true,
           darkMode: true,
@@ -66,9 +84,9 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
       
       // Auto-save photo
       try {
-        await updateDoc(doc(db, 'enterprises', enterprise.id), {
+        await enterpriseRepo.update(enterprise.id, {
           [`users.${userId}.photoURL`]: base64String
-        });
+        } as any);
       } catch (error) {
         console.error('Failed to save photo', error);
       }
@@ -79,14 +97,64 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
   const handleSavePreferences = async () => {
     setIsSaving(true);
     try {
-      await updateDoc(doc(db, 'enterprises', enterprise.id), {
-        [`users.${userId}.displayName`]: userData.displayName,
-        [`users.${userId}.preferences`]: userData.preferences
-      });
+      await Promise.all([
+        enterpriseRepo.update(enterprise.id, {
+          [`users.${userId}.displayName`]: userData.displayName,
+          [`users.${userId}.preferences`]: userData.preferences
+        } as any),
+        authRepo.updateDisplayName(userData.displayName),
+      ]);
     } catch (error) {
       console.error('Failed to save preferences', error);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleSendPasswordReset = async () => {
+    const email = authRepo.getCurrentUser()?.email;
+    if (!email) return;
+    setIsPasswordLoading(true);
+    setPasswordFeedback(null);
+    try {
+      await authRepo.sendPasswordReset(email);
+      setPasswordFeedback({ type: 'success', message: `Password reset email sent to ${email}. Click the link in the email to set your password.` });
+    } catch (err: any) {
+      setPasswordFeedback({ type: 'error', message: err.message ?? 'Failed to send reset email.' });
+    } finally {
+      setIsPasswordLoading(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!newPassword) return;
+    if (!isGoogleOnly && !currentPassword) return;
+    setIsPasswordLoading(true);
+    setPasswordFeedback(null);
+    try {
+      if (isGoogleOnly) {
+        await authRepo.linkEmailPassword(newPassword);
+        setLinkedProviders(authRepo.getLinkedProviders());
+        setPasswordFeedback({ type: 'success', message: 'Password set. You can now sign in with email and password.' });
+      } else {
+        await authRepo.updatePassword(currentPassword, newPassword);
+        setPasswordFeedback({ type: 'success', message: 'Password updated successfully.' });
+      }
+      setCurrentPassword('');
+      setNewPassword('');
+      setShowPasswordForm(false);
+    } catch (err: any) {
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        setPasswordFeedback({ type: 'error', message: 'Current password is incorrect.' });
+      } else if (err.code === 'auth/provider-already-linked') {
+        setPasswordFeedback({ type: 'error', message: 'A password is already set. Sign out and sign in with email/password to change it.' });
+      } else if (err.code === 'auth/requires-recent-login') {
+        setPasswordFeedback({ type: 'error', message: 'Session expired. Please sign out and sign back in, then try again.' });
+      } else {
+        setPasswordFeedback({ type: 'error', message: err.message ?? 'Failed to update password.' });
+      }
+    } finally {
+      setIsPasswordLoading(false);
     }
   };
 
@@ -246,9 +314,73 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
                     <Lock className="w-4 h-4 text-red-500" />
                     Security
                   </h4>
-                  <button className="px-4 py-2 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest dark:text-white hover:bg-gray-200 dark:hover:bg-white/10 transition-colors">
-                    Change Password
-                  </button>
+
+                  {passwordFeedback && (
+                    <div className={`mb-4 p-3 rounded-xl text-sm ${passwordFeedback.type === 'success' ? 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400' : 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'}`}>
+                      {passwordFeedback.message}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col gap-3">
+                    {/* Works for all users — Google OAuth users receive a "set password" link */}
+                    <button
+                      onClick={handleSendPasswordReset}
+                      disabled={isPasswordLoading}
+                      className="self-start px-4 py-2 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest dark:text-white hover:bg-gray-200 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+                    >
+                      {isPasswordLoading && !showPasswordForm ? 'Sending…' : 'Send Password Reset Email'}
+                    </button>
+
+                    {/* Direct change / set password */}
+                    <button
+                      onClick={() => { setShowPasswordForm(f => !f); setPasswordFeedback(null); }}
+                      className="self-start px-4 py-2 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-xs font-bold uppercase tracking-widest dark:text-white hover:bg-gray-200 dark:hover:bg-white/10 transition-colors"
+                    >
+                      {showPasswordForm ? 'Cancel' : isGoogleOnly ? 'Set a Password' : 'Change Password Directly'}
+                    </button>
+
+                    {showPasswordForm && (
+                      <div className="flex flex-col gap-2 mt-1">
+                        {isGoogleOnly ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            You signed in with Google. Setting a password will also let you sign in with email and password. You'll be asked to confirm via a Google sign-in popup.
+                          </p>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type={showCurrentPassword ? 'text' : 'password'}
+                              placeholder="Current password"
+                              value={currentPassword}
+                              onChange={e => setCurrentPassword(e.target.value)}
+                              className="w-full px-3 py-2 pr-9 text-sm border border-gray-200 dark:border-white/10 rounded-xl bg-white dark:bg-white/5 dark:text-white focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                            />
+                            <button type="button" onClick={() => setShowCurrentPassword(v => !v)} tabIndex={-1} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                              {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        )}
+                        <div className="relative">
+                          <input
+                            type={showNewPassword ? 'text' : 'password'}
+                            placeholder={isGoogleOnly ? 'New password' : 'New password'}
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            className="w-full px-3 py-2 pr-9 text-sm border border-gray-200 dark:border-white/10 rounded-xl bg-white dark:bg-white/5 dark:text-white focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white"
+                          />
+                          <button type="button" onClick={() => setShowNewPassword(v => !v)} tabIndex={-1} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                            {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                        </div>
+                        <button
+                          onClick={handleChangePassword}
+                          disabled={isPasswordLoading || (!isGoogleOnly && !currentPassword) || !newPassword}
+                          className="self-start px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-xs font-bold uppercase tracking-widest hover:scale-105 transition-transform disabled:opacity-50"
+                        >
+                          {isPasswordLoading ? (isGoogleOnly ? 'Setting…' : 'Updating…') : isGoogleOnly ? 'Set Password' : 'Update Password'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="pt-8 flex justify-end">

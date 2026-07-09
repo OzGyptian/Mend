@@ -34,26 +34,11 @@ import {
   GridApi
 } from 'ag-grid-community';
 import { format, parseISO } from 'date-fns';
-import { db, auth } from '../firebase';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp,
-  getDocs,
-  getDoc,
-  writeBatch,
-  orderBy
-} from 'firebase/firestore';
+import { useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatNumber } from '../lib/utils';
-import { OperationType, handleFirestoreError } from '../lib/errorHandlers';
+
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from 'next-themes';
@@ -88,6 +73,8 @@ interface BaselineBudgetRecord {
 }
 
 const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) => {
+  const costRepo = useCostRepo();
+  const authRepo = useAuthRepo();
   const [records, setRecords] = useState<BaselineBudgetRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -132,88 +119,29 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
   const { theme: currentTheme } = useTheme();
   const theme = currentTheme === 'dark' ? 'dark' : 'light';
 
-  const userId = auth.currentUser?.uid;
+  const userId = authRepo.getCurrentUser()?.id;
   const isEnterpriseAdmin = userId && enterprise?.users?.[userId]?.role === 'Enterprise System Admin';
   const isProjectAdmin = userId && (isEnterpriseAdmin || project?.users?.[userId] === 'Project Admin');
 
   // Fetch Baseline Budgets
   useEffect(() => {
-    const q = query(
-      collection(db, 'baselineBudgets'), 
-      where('projectId', '==', project.id),
-      orderBy('createdAt', 'asc')
-    );
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as BaselineBudgetRecord[];
-      setRecords(data);
-      setIsLoading(false);
-    }, (error) => {
-      console.error("Error fetching baseline budgets:", error);
-      toast.error("Failed to load baseline budgets");
-      setIsLoading(false);
-    });
-    return () => unsubscribe();
-  }, [project.id]);
-
-  // Fetch Cost Codes for dropdown
-  useEffect(() => {
-    const q = query(collection(db, 'costCodes'), where('projectId', '==', project.id));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as CostCode[];
-      setCostCodes(data.sort((a, b) => a.sortOrder - b.sortOrder));
-    });
-    return () => unsubscribe();
+    const unsubRec = costRepo.subscribeBaselineBudgets(project.id, (data) => { setRecords(data); setIsLoading(false); });
+    const unsubCC = costRepo.subscribeCostCodes(project.id, (data) => { setCostCodes([...data].sort((a, b) => a.sortOrder - b.sortOrder)); });
+    return () => { unsubRec(); unsubCC(); };
   }, [project.id]);
 
   const syncBaselineBudgetToCostCode = useCallback(async (costCodeId: string) => {
     if (!costCodeId) return;
     try {
-      const ccDoc = await getDoc(doc(db, 'costCodes', costCodeId));
-      if (!ccDoc.exists()) return;
-      const ccData = ccDoc.data() as CostCode;
-
-      // OPTIMIZATION: Query only the records for this specific cost code
-      const qById = query(
-        collection(db, 'baselineBudgets'),
-        where('projectId', '==', project.id),
-        where('costCodeId', '==', costCodeId)
-      );
-
-      const qByCode = query(
-        collection(db, 'baselineBudgets'),
-        where('projectId', '==', project.id),
-        where('costCodeId', '==', ccData.code)
-      );
-
-      const [snapById, snapByCode] = await Promise.all([
-        getDocs(qById),
-        getDocs(qByCode)
-      ]);
-
-      const recordsById = snapById.docs.map(doc => doc.data() as BaselineBudgetRecord);
-      const recordsByCode = snapByCode.docs.map(doc => doc.data() as BaselineBudgetRecord);
-      
-      const uniqueRecordsMap = new Map<string, BaselineBudgetRecord>();
-      snapById.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsById[i]));
-      snapByCode.docs.forEach((doc, i) => uniqueRecordsMap.set(doc.id, recordsByCode[i]));
-      
-      const codeBudgets = Array.from(uniqueRecordsMap.values());
+      const ccData = costCodes.find(c => c.id === costCodeId);
+      if (!ccData) return;
+      const codeBudgets = records.filter(r => r.costCodeId === costCodeId || r.costCodeId === ccData.code);
       const totalBaseline = codeBudgets.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
-      
-      await updateDoc(doc(db, 'costCodes', costCodeId), {
-        baselineBudget: totalBaseline,
-        updatedAt: new Date().toISOString()
-      });
+      await costRepo.updateCostCode(costCodeId, { baselineBudget: totalBaseline } as any);
     } catch (error) {
       console.error("Error syncing baseline budget:", error);
     }
-  }, [project.id]);
+  }, [project.id, records, costCodes]);
 
   const handleAddRecord = async () => {
     if (!isProjectAdmin) {
@@ -234,7 +162,7 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
         enterpriseAttributes: {},
         projectAttributes: {}
       };
-      await addDoc(collection(db, 'baselineBudgets'), newRecord);
+      await costRepo.createBaselineBudget(newRecord as any);
       toast.success("Record added");
 
       setTimeout(() => {
@@ -246,7 +174,7 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
         }
       }, 500);
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'baselineBudgets');
+      console.error(error);
       toast.error("Failed to add record");
     }
   };
@@ -258,11 +186,11 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
     }
 
     try {
-      await deleteDoc(doc(db, 'baselineBudgets', id));
+      await costRepo.deleteBaselineBudget(id);
       toast.success("Record deleted");
       if (costCodeId) await syncBaselineBudgetToCostCode(costCodeId);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `baselineBudgets/${id}`);
+      console.error(error);
       toast.error("Failed to delete record");
     }
   };
@@ -274,16 +202,12 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
 
     setIsLoading(true);
     try {
-      const batch = writeBatch(db);
       const affectedCostCodeIds = new Set<string>();
-      
       idsToDelete.forEach(id => {
         const record = records.find(r => r.id === id);
         if (record?.costCodeId) affectedCostCodeIds.add(record.costCodeId);
-        batch.delete(doc(db, 'baselineBudgets', id));
       });
-
-      await batch.commit();
+      await Promise.all(idsToDelete.map(id => costRepo.deleteBaselineBudget(id)));
       
       for (const ccId of affectedCostCodeIds) {
         await syncBaselineBudgetToCostCode(ccId);
@@ -309,9 +233,8 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
 
     setIsLoading(true);
     try {
-      const batch = writeBatch(db);
       const affectedCostCodeIds = new Set<string>();
-      
+      const bulkUpdates: Array<{id: string; data: Partial<BaselineBudgetRecord>}> = [];
       idsToUpdate.forEach(id => {
         const record = records.find(r => r.id === id);
         if (record?.costCodeId) affectedCostCodeIds.add(record.costCodeId);
@@ -340,11 +263,11 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
           };
         }
 
-        batch.update(doc(db, 'baselineBudgets', id), updates);
+        bulkUpdates.push({ id, data: updates as Partial<BaselineBudgetRecord> });
       });
 
-      await batch.commit();
-      
+      await costRepo.updateManyBaselineBudgets(bulkUpdates);
+
       for (const ccId of affectedCostCodeIds) {
         await syncBaselineBudgetToCostCode(ccId);
       }
@@ -473,42 +396,17 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
     try {
       for (let i = 0; i < totalChunks; i++) {
         const chunk = data.slice(i * chunkSize, (i + 1) * chunkSize);
-        const batch = writeBatch(db);
-        
+        const toCreate: any[] = [];
         chunk.forEach(row => {
           const costCode = costCodes.find(cc => cc.code === String(row['Cost Code ID']).trim());
           if (costCode) affectedCostCodeIds.add(costCode.id);
-
           const enterpriseAttributes: Record<string, any> = {};
-          enterpriseAttrs.forEach(attr => {
-            if (row[`E_${attr.title}`] !== undefined) {
-              enterpriseAttributes[attr.id] = String(row[`E_${attr.title}`]);
-            }
-          });
-
+          enterpriseAttrs.forEach(attr => { if (row[`E_${attr.title}`] !== undefined) enterpriseAttributes[attr.id] = String(row[`E_${attr.title}`]); });
           const projectAttributes: Record<string, any> = {};
-          projectAttrs.forEach(attr => {
-            if (row[`P_${attr.title}`] !== undefined) {
-              projectAttributes[attr.id] = String(row[`P_${attr.title}`]);
-            }
-          });
-
-          const newDocRef = doc(collection(db, 'baselineBudgets'));
-          batch.set(newDocRef, {
-            projectId: project.id,
-            costCodeId: costCode?.id || '',
-            item: row['Item'] || '',
-            description: row['Description'] || '',
-            source: 'EST',
-            amount: Number(row['Amount']) || 0,
-            reportingPeriodId: project.reportingPeriods?.currentPeriodId || '',
-            enterpriseAttributes,
-            projectAttributes,
-            createdAt: new Date().toISOString()
-          });
+          projectAttrs.forEach(attr => { if (row[`P_${attr.title}`] !== undefined) projectAttributes[attr.id] = String(row[`P_${attr.title}`]); });
+          toCreate.push({ projectId: project.id, costCodeId: costCode?.id || '', item: row['Item'] || '', description: row['Description'] || '', source: 'EST', amount: Number(row['Amount']) || 0, reportingPeriodId: project.reportingPeriods?.currentPeriodId || '', enterpriseAttributes, projectAttributes });
         });
-
-        await batch.commit();
+        await Promise.all(toCreate.map(r => costRepo.createBaselineBudget(r)));
         const processed = Math.min((i + 1) * chunkSize, data.length);
         setImportWizard(prev => ({ 
           ...prev, 
@@ -537,7 +435,7 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
       };
       delete updates.id;
 
-      await updateDoc(doc(db, 'baselineBudgets', data.id), updates);
+      await costRepo.updateBaselineBudget(data.id, updates as any);
       
       if (colDef.field === 'costCodeId' || colDef.field === 'amount') {
         if (data.costCodeId) await syncBaselineBudgetToCostCode(data.costCodeId);
@@ -546,7 +444,7 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
         }
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `baselineBudgets/${data.id}`);
+      console.error(error);
       toast.error("Failed to update record");
       event.node.setDataValue(colDef.field!, oldValue);
     }
