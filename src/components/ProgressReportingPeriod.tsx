@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { rocPercentComplete, earnedQty } from '../domain/progress';
 
 interface ProgressReportingPeriodProps {
   project: Project;
@@ -212,11 +213,8 @@ const ProgressReportingPeriod: React.FC<ProgressReportingPeriodProps> = ({ proje
         let earned = 0;
         if (roc?.steps) {
           const progress = (item as any).ruleOfCreditProgress || {};
-          const percent = roc.steps.reduce((sum: number, step: any) => {
-            const stepProgress = progress[step.id] || 0;
-            return sum + (stepProgress * step.weight / 100);
-          }, 0);
-          earned = (percent / 100) * ((item as any).totalQty || 0);
+          const percent = rocPercentComplete(roc.steps, progress);
+          earned = earnedQty(percent, (item as any).totalQty || 0);
         }
         const prevEarned = (item as any).earnedQtyPrevious || 0;
         const currentActual = Math.max(0, earned - prevEarned);

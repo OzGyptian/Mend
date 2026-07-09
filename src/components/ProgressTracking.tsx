@@ -45,6 +45,7 @@ import {
 import { AllEnterpriseModule } from 'ag-grid-enterprise';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
+import { rocPercentComplete, earnedQty, overallPercentComplete } from '../domain/progress';
 
 ModuleRegistry.registerModules([AllEnterpriseModule]);
 
@@ -494,11 +495,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
           return pkgItems.reduce((sum, item) => {
             const progress = item.ruleOfCreditProgress || {};
-            const percent = roc.steps.reduce((s, step) => {
-              const stepProgress = progress[step.id] || 0;
-              return s + (stepProgress * step.weight / 100);
-            }, 0);
-            return sum + ((percent / 100) * (item.totalQty || 0));
+            const percent = rocPercentComplete(roc.steps, progress);
+            return sum + earnedQty(percent, item.totalQty || 0);
           }, 0);
         },
         valueFormatter: params => params.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
@@ -527,11 +525,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
           const earned = pkgItems.reduce((sum, item) => {
             const progress = item.ruleOfCreditProgress || {};
-            const percent = roc.steps.reduce((s, step) => {
-              const stepProgress = progress[step.id] || 0;
-              return s + (stepProgress * step.weight / 100);
-            }, 0);
-            return sum + ((percent / 100) * (item.totalQty || 0));
+            const percent = rocPercentComplete(roc.steps, progress);
+            return sum + earnedQty(percent, item.totalQty || 0);
           }, 0);
 
           const prev = pkgItems.reduce((sum, i) => sum + (i.earnedQtyPrevious || 0), 0);
@@ -554,11 +549,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
           const earned = pkgItems.reduce((sum, item) => {
             const progress = item.ruleOfCreditProgress || {};
-            const percent = roc.steps.reduce((s, step) => {
-              const stepProgress = progress[step.id] || 0;
-              return s + (stepProgress * step.weight / 100);
-            }, 0);
-            return sum + ((percent / 100) * (item.totalQty || 0));
+            const percent = rocPercentComplete(roc.steps, progress);
+            return sum + earnedQty(percent, item.totalQty || 0);
           }, 0);
 
           return total - earned;
@@ -584,16 +576,13 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
             if (roc?.steps) {
               earned = pkgItems.reduce((sum, item) => {
                 const progress = item.ruleOfCreditProgress || {};
-                const percent = roc.steps.reduce((s, step) => {
-                  const stepProgress = progress[step.id] || 0;
-                  return s + (stepProgress * step.weight / 100);
-                }, 0);
-                return sum + ((percent / 100) * (item.totalQty || 0));
+                const percent = rocPercentComplete(roc.steps, progress);
+                return sum + earnedQty(percent, item.totalQty || 0);
               }, 0);
             }
           }
 
-          return total > 0 ? (earned / total) * 100 : 0;
+          return overallPercentComplete(earned, total);
         },
         cellRenderer: (params: any) => {
           if (params.value === undefined) return null;
@@ -850,11 +839,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         let earnedToDate = 0;
         if (roc?.steps) {
           const progress = item.ruleOfCreditProgress || {};
-          const percent = roc.steps.reduce((sum, step) => {
-            const stepProgress = progress[step.id] || 0;
-            return sum + (stepProgress * step.weight / 100);
-          }, 0);
-          earnedToDate = (percent / 100) * (item.totalQty || 0);
+          const percent = rocPercentComplete(roc.steps, progress);
+          earnedToDate = earnedQty(percent, item.totalQty || 0);
         }
 
         // 2. Populate Earned in the Current Period
@@ -1151,11 +1137,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         }
         if (!selectedRuleOfCredit || !selectedRuleOfCredit.steps) return 0;
         const progress = params.data.ruleOfCreditProgress || {};
-        const totalWeighted = selectedRuleOfCredit.steps.reduce((sum, step) => {
-          const stepProgress = progress[step.id] || 0;
-          return sum + (stepProgress * step.weight / 100);
-        }, 0);
-        return totalWeighted;
+        return rocPercentComplete(selectedRuleOfCredit.steps, progress);
       },
       valueFormatter: params => `${params.value.toFixed(2)}%`,
       cellClassRules: hideOnSubRows,
@@ -1187,11 +1169,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         }
         if (!selectedRuleOfCredit || !selectedRuleOfCredit.steps) return 0;
         const progress = params.data.ruleOfCreditProgress || {};
-        const percent = selectedRuleOfCredit.steps.reduce((sum, step) => {
-          const stepProgress = progress[step.id] || 0;
-          return sum + (stepProgress * step.weight / 100);
-        }, 0);
-        return (percent / 100) * (params.data.totalQty || 0);
+        const percent = rocPercentComplete(selectedRuleOfCredit.steps, progress);
+        return earnedQty(percent, params.data.totalQty || 0);
       },
       valueFormatter: params => params.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
     };
@@ -1264,18 +1243,15 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
           }
           if (!selectedRuleOfCredit || !selectedRuleOfCredit.steps) return 0;
           const progress = params.data.ruleOfCreditProgress || {};
-          const percent = selectedRuleOfCredit.steps.reduce((sum, step) => {
-            const stepProgress = progress[step.id] || 0;
-            return sum + (stepProgress * step.weight / 100);
-          }, 0);
-          const earned = (percent / 100) * (params.data.totalQty || 0);
+          const percent = rocPercentComplete(selectedRuleOfCredit.steps, progress);
+          const earned = earnedQty(percent, params.data.totalQty || 0);
           return earned - (params.data.earnedQtyPrevious || 0);
         },
         valueFormatter: params => params.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       },
-      { 
-        headerName: 'Remaining Qty', 
-        width: 130, 
+      {
+        headerName: 'Remaining Qty',
+        width: 130,
         type: 'numericColumn',
         rowSpan,
         cellClassRules: hideOnSubRows,
@@ -1286,11 +1262,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
           }
           if (!selectedRuleOfCredit || !selectedRuleOfCredit.steps) return params.data.totalQty || 0;
           const progress = params.data.ruleOfCreditProgress || {};
-          const percent = selectedRuleOfCredit.steps.reduce((sum, step) => {
-            const stepProgress = progress[step.id] || 0;
-            return sum + (stepProgress * step.weight / 100);
-          }, 0);
-          const earned = (percent / 100) * (params.data.totalQty || 0);
+          const percent = rocPercentComplete(selectedRuleOfCredit.steps, progress);
+          const earned = earnedQty(percent, params.data.totalQty || 0);
           return (params.data.totalQty || 0) - earned;
         },
         valueFormatter: params => params.value.toLocaleString()
@@ -1377,12 +1350,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
                   const phased = Object.values(values).reduce((a, b) => a + (b || 0), 0);
                   
                   const progress = params.data.ruleOfCreditProgress || {};
-                  const percent: number = selectedRuleOfCredit?.steps?.reduce((sum: number, step: any) => {
-                    const stepProgress = progress[step.id] || 0;
-                    return sum + (stepProgress * step.weight / 100);
-                  }, 0) || 0;
-                  const earned = (percent / 100) * (params.data.totalQty || 0);
-                  
+                  const percent = selectedRuleOfCredit?.steps ? rocPercentComplete(selectedRuleOfCredit.steps, progress) : 0;
+                  const earned = earnedQty(percent, params.data.totalQty || 0);
                   return phased - earned;
                 },
                 valueFormatter: params => params.value != null ? params.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '',
@@ -1421,11 +1390,8 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
                   const phased = Object.values(values).reduce((a, b) => a + (b || 0), 0);
                   
                   const progress = params.data.ruleOfCreditProgress || {};
-                  const percent: number = selectedRuleOfCredit?.steps?.reduce((sum: number, step: any) => {
-                    const stepProgress = progress[step.id] || 0;
-                    return sum + (stepProgress * step.weight / 100);
-                  }, 0) || 0;
-                  const earned = (percent / 100) * (params.data.totalQty || 0);
+                  const percent = selectedRuleOfCredit?.steps ? rocPercentComplete(selectedRuleOfCredit.steps, progress) : 0;
+                  const earned = earnedQty(percent, params.data.totalQty || 0);
                   const remaining = (params.data.totalQty || 0) - earned;
                   
                   return phased - remaining;
@@ -1740,16 +1706,13 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
         // Calculate earned for this item
         if (selectedRuleOfCredit?.steps) {
           const progress = item.ruleOfCreditProgress || {};
-          const percent = selectedRuleOfCredit.steps.reduce((sum, step) => {
-            const stepProgress = progress[step.id] || 0;
-            return sum + (stepProgress * step.weight / 100);
-          }, 0);
-          totalEarnedQty += (percent / 100) * (item.totalQty || 0);
+          const percent = rocPercentComplete(selectedRuleOfCredit.steps, progress);
+          totalEarnedQty += earnedQty(percent, item.totalQty || 0);
         }
       });
     }
 
-    const overallPercent = totalQty > 0 ? (totalEarnedQty / totalQty) * 100 : 0;
+    const overallPercent = overallPercentComplete(totalEarnedQty, totalQty);
 
     return [{
       itemId: 'TOTAL',
