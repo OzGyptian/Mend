@@ -271,6 +271,38 @@ Codebase is a construction project cost management tool. Key findings:
 - Baseline build: passing
 - Type-check: passing
 
+---
+
+## Session 6 — Phase 11.3–11.8 (Foundation Uplift slices)
+
+### What was done
+
+Phase 11.3 — Risk domain: added `betaPertExposure(min, ml, max, prob)` to `src/domain/risk.ts`. Replaced 6 inline `((min + 4 * ml + max) / 6) * prob` copies in RiskManagement.tsx and BulkRiskRecords.tsx. Fixed `listRiskRecords` to accept optional `riskId` filter in MemoryRiskAdapter. 34/34 unit tests, 11/11 E2E. v1.0.69.
+
+Phase 11.4 — SSOT for betaPertImpactAmount: `updateParentTotals` in RiskManagement.tsx and BulkRiskRecords.tsx now re-derives from leaf fields (`min`, `mostLikely`, `max`, `probability`) using `betaPertExposure()` instead of reading the stored `betaPertImpactAmount`. Pinned totals row also computes live. v1.0.70.
+
+Phase 11.5 — Progress domain: new `src/domain/progress.ts` with `rocPercentComplete`, `earnedQty`, `overallPercentComplete`. 11 unit tests. Replaced all 9 inline Rule-of-Credit weighted-sum reduces in ProgressTracking.tsx and 1 in ProgressReportingPeriod.tsx. 45/45 unit, 11/11 E2E. v1.0.71.
+
+Phase 11.6 — Phasing domain wiring: `CostCodes.tsx` and `GlobalTimephasing.tsx` each defined a ~65-line `useCallback` copy of `calculatePhasing`. Both deleted; now import from `domain/phasing`. BulkEtcDetails retains its working-days-aware variant (legitimately different). v1.0.72.
+
+Phase 11.7 — Procurement domain: replaced 8-line inline `isWorkingDay` closures in CostCodes.tsx and BulkEtcDetails.tsx with 1-liner wrapping `domain/procurement.isWorkingDay`. ProcurementProgress.tsx now imports directly from domain (not via stub). v1.0.73.
+
+Phase 11.8 — Identity unification: `hooks.ts isPlatformAdmin` is now the single source of truth (roles.platformRole OR system-owner emails). App.tsx and 5 sub-pane components (Change, Progress, Subcontract, Risk, Sidebar) replaced 6 inline email comparisons with `useAuth().isPlatformAdmin`. v1.0.74.
+
+### Deferred (pragmatic)
+- Phase 11.9: file >800-line splits, remaining `: any` cleanup, referential integrity cascade, god-document splits
+- BulkEtcDetails working-days phasing is legitimately different from domain/phasing — not unified
+
+### State at end of session
+- Branch: `refactor/platform-seam` · v1.0.74
+- 45/45 unit tests, 11/11 E2E passing
+- All planned Phase 11.x foundation-uplift slices complete
+
+### What to do next
+1. Phase 11.9 deferred items (optional — can ship without)
+2. Full acid test: `VITE_ADAPTER=memory npm run dev` full manual smoke
+3. Draft PR: `refactor/platform-seam` → `main`, Tarek review
+
 ### What to do next (start of Session 2)
 
 1. **P0.7 — Add Vitest** (needed before Phase 3 can run TDD). Install `vitest` + `@vitest/ui`, add `test` script to `package.json`, add `vitest.config.ts`.
