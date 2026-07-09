@@ -59,6 +59,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { betaPertExposure } from '../domain/risk';
 import { 
   BarChart, 
   Bar, 
@@ -341,7 +342,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
             riskId: selectedRiskId, projectId: project.id, costCodeId,
             scope: String(row['Scope'] || row.scope || ''),
             probability: prob, minImpactAmount: min, mostLikelyImpactAmount: mostLikely, maxImpactAmount: max,
-            betaPertImpactAmount: ((min + 4 * mostLikely + max) / 6) * prob,
+            betaPertImpactAmount: betaPertExposure(min, mostLikely, max, prob),
           } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
         }
         if (toCreate.length > 0) await riskRepo.createManyRiskRecords(toCreate);
@@ -715,7 +716,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
               const min = Number(p.data.minImpactAmount) || 0;
               const ml = Number(p.data.mostLikelyImpactAmount) || 0;
               const max = Number(p.data.maxImpactAmount) || 0;
-              return ((min + 4 * ml + max) / 6) * prob;
+              return betaPertExposure(min, ml, max, prob);
             },
             valueFormatter: (p) => formatCurrency(p.value),
             cellStyle: { backgroundColor: 'rgba(220, 38, 38, 0.05)', fontWeight: 'bold' }
@@ -796,7 +797,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         const min = Number(colDef.field === 'minImpactAmount' ? params.newValue : data.minImpactAmount) || 0;
         const ml = Number(colDef.field === 'mostLikelyImpactAmount' ? params.newValue : data.mostLikelyImpactAmount) || 0;
         const max = Number(colDef.field === 'maxImpactAmount' ? params.newValue : data.maxImpactAmount) || 0;
-        const betaPert = ((min + 4 * ml + max) / 6) * prob;
+        const betaPert = betaPertExposure(min, ml, max, prob);
         updates.betaPertImpactAmount = betaPert;
       }
       
@@ -861,7 +862,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           const min = hasMinChange ? Number(bulkRecordUpdateData.minImpactAmount) : (record.minImpactAmount || 0);
           const ml = hasMLChange ? Number(bulkRecordUpdateData.mostLikelyImpactAmount) : (record.mostLikelyImpactAmount || 0);
           const max = hasMaxChange ? Number(bulkRecordUpdateData.maxImpactAmount) : (record.maxImpactAmount || 0);
-          finalUpdates.betaPertImpactAmount = ((min + 4 * ml + max) / 6) * prob;
+          finalUpdates.betaPertImpactAmount = betaPertExposure(min, ml, max, prob);
         }
         return [{ id, data: finalUpdates }];
       });

@@ -353,8 +353,8 @@ export class MemoryRiskAdapter {
     return riskRecordStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
   }
 
-  async listRiskRecords(pid: string): Promise<RiskRecord[]> {
-    return riskRecordStore.list(r => r.projectId === pid);
+  async listRiskRecords(pid: string, riskId?: string): Promise<RiskRecord[]> {
+    return riskRecordStore.list(r => r.projectId === pid && (!riskId || r.riskId === riskId));
   }
 
   async createRiskRecord(data: Omit<RiskRecord, 'id'>) {
