@@ -371,9 +371,13 @@ service cloud.firestore {
     }
 
     match /invitations/{invitationId} {
-      allow read: if isAuthenticated();
+      // F11 fix: invitations are only readable by the enterprise admin or the invitee themselves.
+      allow read: if isAuthenticated() && (
+        isAdminOfEnterprise(resource.data.enterpriseId) ||
+        request.auth.token.email.lower() == resource.data.email.lower()
+      );
       allow create: if isAuthenticated() && isAdminOfEnterprise(request.resource.data.enterpriseId);
-      allow update: if isAuthenticated() && 
+      allow update: if isAuthenticated() &&
                       request.auth.token.email.lower() == resource.data.email.lower() &&
                       request.resource.data.status == 'accepted' &&
                       resource.data.status == 'pending';
@@ -496,10 +500,23 @@ service cloud.firestore {
     }
 
     match /procurementStepDefinitions/{stepId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidProcurementStepDefinition(request.resource.data);
-      allow update: if isAuthenticated() && isValidProcurementStepDefinition(request.resource.data);
-      allow delete: if isAuthenticated();
+      // F3 fix: scope reads to enterprise admins or users with project access.
+      allow read: if isAuthenticated() && (
+        ('enterpriseId' in resource.data && isAdminOfEnterprise(resource.data.enterpriseId)) ||
+        ('projectId' in resource.data && canAccessProject(resource.data.projectId))
+      );
+      allow create: if isAuthenticated() && (
+        ('enterpriseId' in request.resource.data && isAdminOfEnterprise(request.resource.data.enterpriseId)) ||
+        ('projectId' in request.resource.data && canAccessProject(request.resource.data.projectId))
+      ) && isValidProcurementStepDefinition(request.resource.data);
+      allow update: if isAuthenticated() && (
+        ('enterpriseId' in resource.data && isAdminOfEnterprise(resource.data.enterpriseId)) ||
+        ('projectId' in resource.data && canAccessProject(resource.data.projectId))
+      ) && isValidProcurementStepDefinition(request.resource.data);
+      allow delete: if isAuthenticated() && (
+        ('enterpriseId' in resource.data && isAdminOfEnterprise(resource.data.enterpriseId)) ||
+        ('projectId' in resource.data && canAccessProject(resource.data.projectId))
+      );
     }
 
     match /procurementItems/{itemId} {
@@ -553,7 +570,8 @@ service cloud.firestore {
 
     match /userRoles/{userId} {
       allow read: if isAuthenticated() && request.auth.uid == userId;
-      allow write: if isSystemAdmin() || isAuthenticated();
+      // F12 fix: only a system admin or the user themselves can write their own roles doc.
+      allow write: if isSystemAdmin() || request.auth.uid == userId;
     }
   }
 }
