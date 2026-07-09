@@ -42,6 +42,7 @@ import {
 import * as XLSX from 'xlsx';
 import DataGridModule from './DataGridModule';
 import { cn, formatNumber } from '../lib/utils';
+import { isWorkingDay as domainIsWorkingDay } from '../domain/procurement';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { Badge } from '@/components/ui/badge';
@@ -573,14 +574,7 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
         if (userEnd < userStart) continue;
 
         const calendar = calendars.find(c => c.id === row.calendarId);
-        const isWorkingDay = (date: Date) => {
-          if (!calendar) return true;
-          const day = date.getUTCDay();
-          const dateStr = date.toISOString().split('T')[0];
-          if (Array.isArray(calendar.weekends) && calendar.weekends.includes(day)) return false;
-          if (Array.isArray(calendar.holidays) && calendar.holidays.includes(dateStr)) return false;
-          return true;
-        };
+        const isWorkingDay = (date: Date) => domainIsWorkingDay(date, calendar!);
 
         const workingDaysInPeriod: Record<string, number> = {};
         const distributionPeriodIds: string[] = [];

@@ -66,6 +66,7 @@ import * as XLSX from 'xlsx';
 import { cn, formatCurrency, formatNumber } from '../lib/utils';
 import { computePeriodEndFields } from '../domain/eac';
 import { calculatePhasing } from '../domain/phasing';
+import { isWorkingDay as domainIsWorkingDay } from '../domain/procurement';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -1326,14 +1327,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         if (userEnd < userStart) continue;
 
         const calendar = calendars.find(c => c.id === row.calendarId);
-        const isWorkingDay = (date: Date) => {
-          if (!calendar) return true;
-          const day = date.getUTCDay();
-          const dateStr = date.toISOString().split('T')[0];
-          if (Array.isArray(calendar.weekends) && calendar.weekends.includes(day)) return false;
-          if (Array.isArray(calendar.holidays) && calendar.holidays.includes(dateStr)) return false;
-          return true;
-        };
+        const isWorkingDay = (date: Date) => domainIsWorkingDay(date, calendar!);
 
         const workingDaysInPeriod: Record<string, number> = {};
         const distributionPeriodIds: string[] = [];

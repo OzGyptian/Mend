@@ -20,7 +20,7 @@ import {
 import * as XLSX from 'xlsx';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
-import { recalculatePlannedDates, recalculateForecastDates } from '../lib/procurementUtils';
+import { recalculatePlannedDates, recalculateForecastDates } from '../domain/procurement';
 
 import CreatePackageModal from './CreatePackageModal';
 
