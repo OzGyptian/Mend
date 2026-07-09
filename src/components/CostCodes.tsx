@@ -65,6 +65,7 @@ import {
 import * as XLSX from 'xlsx';
 import { cn, formatCurrency, formatNumber } from '../lib/utils';
 import { computePeriodEndFields } from '../domain/eac';
+import { calculatePhasing } from '../domain/phasing';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -2445,78 +2446,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     return defs;
   }, [project.reportingPeriods?.periods, project.reportingPeriods?.currentPeriodId, scheduleItems]);
-
-  const calculatePhasing = useCallback((
-    total: number,
-    startDate: string,
-    endDate: string,
-    distribution: string,
-    periods: any[],
-    existingPeriodValues?: Record<string, number>
-  ) => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start >= end) return {};
-
-    const periodValues: Record<string, number> = {};
-    const activePeriods = periods.filter(p => {
-      const pStart = new Date(p.startDate);
-      const pEnd = new Date(p.endDate);
-      return (pStart <= end && pEnd >= start);
-    });
-
-    if (activePeriods.length === 0) return {};
-
-    const n = activePeriods.length;
-    let weights: number[] = [];
-
-    switch (distribution) {
-      case 'Even':
-        weights = new Array(n).fill(1);
-        break;
-      case 'Front load':
-        weights = activePeriods.map((_, i) => n - i);
-        break;
-      case 'Back load':
-        weights = activePeriods.map((_, i) => i + 1);
-        break;
-      case 'Bell Curve':
-        weights = activePeriods.map((_, i) => {
-          const x = (i - (n - 1) / 2) / (n / 4 || 1);
-          return Math.exp(-0.5 * x * x);
-        });
-        break;
-      case 'S-Curve':
-        weights = activePeriods.map((_, i) => {
-          const x = (i / (n - 1 || 1)) * 10 - 5;
-          const sigmoid = 1 / (1 + Math.exp(-x));
-          const prevX = ((i - 1) / (n - 1 || 1)) * 10 - 5;
-          const prevSigmoid = i === 0 ? 0 : 1 / (1 + Math.exp(-prevX));
-          return sigmoid - prevSigmoid;
-        });
-        break;
-      case 'Profile':
-        if (existingPeriodValues) {
-          weights = activePeriods.map(p => existingPeriodValues[p.id] || 0);
-          const weightSum = weights.reduce((a, b) => a + b, 0);
-          if (weightSum === 0) {
-            weights = new Array(n).fill(1);
-          }
-        } else {
-          weights = new Array(n).fill(1);
-        }
-        break;
-      default:
-        weights = new Array(n).fill(1);
-    }
-
-    const totalWeight = weights.reduce((a, b) => a + b, 0);
-    activePeriods.forEach((p, i) => {
-      periodValues[p.id] = (weights[i] / (totalWeight || 1)) * total;
-    });
-
-    return periodValues;
-  }, []);
 
   const handleCalculateAutoPhasing = useCallback(async () => {
     if (!selectedTimephasingCode) return;
