@@ -124,7 +124,21 @@ export class MemoryProjectAdapter {
   async getAll() { return projectStore.list(); }
 
   checkProjectCodeExists(_eid: string, _code: string) { return Promise.resolve(false); }
-  deleteProjectWithSheets(id: string) { projectStore.delete(id); return Promise.resolve(); }
+  async deleteProjectWithSheets(id: string) {
+    // Cascade delete: collect sheet IDs first (ForecastRow has sheetId, not projectId)
+    const sheetIds = sheetStore.list(s => s.projectId === id).map(s => s.id);
+    sheetIds.forEach(sid => forecastRowStore.list(r => r.sheetId === sid).forEach(r => forecastRowStore.delete(r.id)));
+    sheetIds.forEach(sid => sheetStore.delete(sid));
+    // All other project-scoped stores
+    const purge = (store: MemoryStore<any>) =>
+      store.list((r: any) => r.projectId === id).forEach((r: any) => store.delete(r.id));
+    [costCodeStore, etcStore, actualStore, baselineStore, phasingStore,
+      changeStore, changeRecordStore, riskStore, riskRecordStore,
+      subcontractStore, invoiceStore, progressPackageStore, progressItemStore,
+      rocStore, procurementItemStore, stepDefinitionStore, scheduleItemStore,
+      calendarStore, savedViewStore].forEach(purge);
+    projectStore.delete(id);
+  }
 
   subscribeSheet(sheetId: string, cb: (s: any) => void) {
     cb(null);
@@ -162,7 +176,18 @@ export class MemoryCostAdapter {
 
   async updateCostCode(id: string, data: Partial<CostCode>) { costCodeStore.update(id, data); }
   async updateManyCostCodes(updates: Array<{ id: string; data: Partial<CostCode> }>) { updates.forEach(u => costCodeStore.update(u.id, u.data)); }
-  async deleteCostCode(id: string) { costCodeStore.delete(id); }
+  async deleteCostCode(id: string) {
+    const cc = costCodeStore.get(id);
+    if (cc) {
+      // EtcDetail and ForecastRow reference by the human-readable code string
+      etcStore.list(r => r.costCode === cc.code).forEach(r => etcStore.delete(r.id));
+      // ActualCostRecord, CostPhasingRecord, BaselineBudgetRecord reference by document ID
+      [actualStore, phasingStore, baselineStore].forEach(store =>
+        store.list((r: any) => r.costCodeId === id).forEach((r: any) => store.delete(r.id))
+      );
+    }
+    costCodeStore.delete(id);
+  }
 
   subscribeEtcDetails(pid: string, cb: (e: EtcDetail[]) => void) {
     return etcStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
