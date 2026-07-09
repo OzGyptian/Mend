@@ -22,7 +22,7 @@ describe('MemoryRiskAdapter', () => {
       await adapter.createRisk({ projectId: 'p2', title: 'R2' } as any);
       const risks = await adapter.listRisks('p1');
       expect(risks).toHaveLength(1);
-      expect(risks[0].title).toBe('R1');
+      expect((risks[0] as any).title).toBe('R1');
     });
   });
 
@@ -32,7 +32,7 @@ describe('MemoryRiskAdapter', () => {
     it('returns a Risk with an id set', async () => {
       const risk = await adapter.createRisk({ projectId: 'p1', title: 'My Risk' } as any);
       expect(risk.id).toBeTruthy();
-      expect(risk.title).toBe('My Risk');
+      expect((risk as any).title).toBe('My Risk');
     });
 
     it('persists so listRisks can find it', async () => {
@@ -47,9 +47,9 @@ describe('MemoryRiskAdapter', () => {
   describe('updateRisk', () => {
     it('mutates the stored risk', async () => {
       const risk = await adapter.createRisk({ projectId: 'p1', title: 'Original' } as any);
-      await adapter.updateRisk(risk.id, { title: 'Updated' });
+      await adapter.updateRisk(risk.id, { title: 'Updated' } as any);
       const list = await adapter.listRisks('p1');
-      expect(list[0].title).toBe('Updated');
+      expect((list[0] as any).title).toBe('Updated');
     });
   });
 
@@ -156,9 +156,9 @@ describe('MemoryRiskAdapter', () => {
   describe('updateRiskRecord', () => {
     it('mutates the stored record', async () => {
       const record = await adapter.createRiskRecord({ projectId: 'p1', riskId: 'r1', description: 'old' } as any);
-      await adapter.updateRiskRecord(record.id, { description: 'new' });
+      await adapter.updateRiskRecord(record.id, { description: 'new' } as any);
       const list = await adapter.listRiskRecords('p1');
-      expect(list[0].description).toBe('new');
+      expect((list[0] as any).description).toBe('new');
     });
   });
 

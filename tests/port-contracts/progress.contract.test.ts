@@ -23,23 +23,23 @@ describe('MemoryProgressAdapter', () => {
     it('subscribe fires again after createProgressPackage', async () => {
       const calls: any[][] = [];
       const unsub = adapter.subscribeProgressPackages('p1', rows => calls.push(rows));
-      await adapter.createProgressPackage({ projectId: 'p1', name: 'Pkg A' } as any);
+      await adapter.createProgressPackage({ projectId: 'p1', description: 'Pkg A' } as any);
       expect(calls.length).toBeGreaterThan(1);
       expect(calls[calls.length - 1]).toHaveLength(1);
       unsub();
     });
 
     it('updateProgressPackage mutates the stored record', async () => {
-      const pkg = await adapter.createProgressPackage({ projectId: 'p1', name: 'Old' } as any);
-      await adapter.updateProgressPackage(pkg.id, { name: 'New' });
+      const pkg = await adapter.createProgressPackage({ projectId: 'p1', description: 'Old' } as any);
+      await adapter.updateProgressPackage(pkg.id, { description: 'New' });
       const calls: any[][] = [];
       const unsub = adapter.subscribeProgressPackages('p1', rows => calls.push(rows));
-      expect(calls[0][0].name).toBe('New');
+      expect(calls[0][0].description).toBe('New');
       unsub();
     });
 
     it('deleteProgressPackage removes the record', async () => {
-      const pkg = await adapter.createProgressPackage({ projectId: 'p1', name: 'Doomed' } as any);
+      const pkg = await adapter.createProgressPackage({ projectId: 'p1', description: 'Doomed' } as any);
       await adapter.deleteProgressPackage(pkg.id);
       const calls: any[][] = [];
       const unsub = adapter.subscribeProgressPackages('p1', rows => calls.push(rows));
@@ -48,7 +48,7 @@ describe('MemoryProgressAdapter', () => {
     });
 
     it('packages are isolated by projectId', async () => {
-      await adapter.createProgressPackage({ projectId: 'p1', name: 'Pkg A' } as any);
+      await adapter.createProgressPackage({ projectId: 'p1', description: 'Pkg A' } as any);
       const callsP2: any[][] = [];
       const unsub = adapter.subscribeProgressPackages('p2', rows => callsP2.push(rows));
       expect(callsP2[callsP2.length - 1]).toHaveLength(0);
@@ -107,23 +107,23 @@ describe('MemoryProgressAdapter', () => {
     it('createRuleOfCredit is visible via subscribe', async () => {
       const calls: any[][] = [];
       const unsub = adapter.subscribeRulesOfCredit('p1', rows => calls.push(rows));
-      await adapter.createRuleOfCredit({ projectId: 'p1', name: 'ROC-1', weight: 100 } as any);
+      await adapter.createRuleOfCredit({ projectId: 'p1', description: 'ROC-1', weight: 100 } as any);
       expect(calls[calls.length - 1]).toHaveLength(1);
-      expect(calls[calls.length - 1][0].name).toBe('ROC-1');
+      expect(calls[calls.length - 1][0].description).toBe('ROC-1');
       unsub();
     });
 
     it('updateRuleOfCredit mutates the stored record', async () => {
-      const roc = await adapter.createRuleOfCredit({ projectId: 'p1', name: 'Old ROC' } as any);
-      await adapter.updateRuleOfCredit(roc.id, { name: 'New ROC' });
+      const roc = await adapter.createRuleOfCredit({ projectId: 'p1', description: 'Old ROC' } as any);
+      await adapter.updateRuleOfCredit(roc.id, { description: 'New ROC' });
       const calls: any[][] = [];
       const unsub = adapter.subscribeRulesOfCredit('p1', rows => calls.push(rows));
-      expect(calls[0][0].name).toBe('New ROC');
+      expect(calls[0][0].description).toBe('New ROC');
       unsub();
     });
 
     it('deleteRuleOfCredit removes the record', async () => {
-      const roc = await adapter.createRuleOfCredit({ projectId: 'p1', name: 'Gone' } as any);
+      const roc = await adapter.createRuleOfCredit({ projectId: 'p1', description: 'Gone' } as any);
       await adapter.deleteRuleOfCredit(roc.id);
       const calls: any[][] = [];
       const unsub = adapter.subscribeRulesOfCredit('p1', rows => calls.push(rows));
@@ -132,7 +132,7 @@ describe('MemoryProgressAdapter', () => {
     });
 
     it('rules are isolated by projectId', async () => {
-      await adapter.createRuleOfCredit({ projectId: 'p1', name: 'P1 ROC' } as any);
+      await adapter.createRuleOfCredit({ projectId: 'p1', description: 'P1 ROC' } as any);
       const callsP2: any[][] = [];
       const unsub = adapter.subscribeRulesOfCredit('p2', rows => callsP2.push(rows));
       expect(callsP2[callsP2.length - 1]).toHaveLength(0);

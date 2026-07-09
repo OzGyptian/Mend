@@ -22,7 +22,7 @@ describe('MemorySubcontractAdapter', () => {
       await adapter.createSubcontract({ projectId: 'p2', title: 'SC2' } as any);
       const list = await adapter.listSubcontracts('p1');
       expect(list).toHaveLength(1);
-      expect(list[0].title).toBe('SC1');
+      expect((list[0] as any).title).toBe('SC1');
     });
   });
 
@@ -32,7 +32,7 @@ describe('MemorySubcontractAdapter', () => {
     it('returns a Subcontract with an id set', async () => {
       const sc = await adapter.createSubcontract({ projectId: 'p1', title: 'Test SC' } as any);
       expect(sc.id).toBeTruthy();
-      expect(sc.title).toBe('Test SC');
+      expect((sc as any).title).toBe('Test SC');
     });
 
     it('persists so listSubcontracts can find it', async () => {
@@ -47,9 +47,9 @@ describe('MemorySubcontractAdapter', () => {
   describe('updateSubcontract', () => {
     it('mutates the stored subcontract', async () => {
       const sc = await adapter.createSubcontract({ projectId: 'p1', title: 'Before' } as any);
-      await adapter.updateSubcontract(sc.id, { title: 'After' });
+      await adapter.updateSubcontract(sc.id, { title: 'After' } as any);
       const list = await adapter.listSubcontracts('p1');
-      expect(list[0].title).toBe('After');
+      expect((list[0] as any).title).toBe('After');
     });
   });
 
@@ -109,7 +109,7 @@ describe('MemorySubcontractAdapter', () => {
   describe('updateInvoice', () => {
     it('mutates the stored invoice visible through subscribeInvoices', async () => {
       const inv = await adapter.createInvoice({ projectId: 'p1', subcontractId: 'sc-1', amount: 100 } as any);
-      await adapter.updateInvoice(inv.id, { amount: 200 });
+      await adapter.updateInvoice(inv.id, { amount: 200 } as any);
       const latestInvoices: any[][] = [];
       const unsub = adapter.subscribeInvoices('p1', rows => latestInvoices.push(rows));
       unsub();
