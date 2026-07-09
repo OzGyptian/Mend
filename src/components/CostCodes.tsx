@@ -64,6 +64,7 @@ import {
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { cn, formatCurrency, formatNumber } from '../lib/utils';
+import { computePeriodEndFields } from '../domain/eac';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -3608,42 +3609,27 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     try {
       const updates: any = { [colDef.field]: newValue };
 
-      // Reactive calculations for immediate feedback
-      const baseline = Number(colDef.field === 'baselineBudget' ? newValue : data.baselineBudget) || 0;
-      const changes = Number(colDef.field === 'budgetChanges' ? newValue : data.budgetChanges) || 0;
-      const approvedPrev = Number(colDef.field === 'approvedBudgetPrevious' ? newValue : data.approvedBudgetPrevious) || 0;
-      
-      const approved = baseline + changes;
-      const approvedMovement = approved - approvedPrev;
-
-      const actualsToDate = Number(colDef.field === 'actualCostToDate' ? newValue : data.actualCostToDate) || 0;
-      const eacPrev = Number(colDef.field === 'estimateAtCompletionPrevious' ? newValue : data.estimateAtCompletionPrevious) || 0;
-      
-      let eac = Number(colDef.field === 'estimateAtCompletion' ? newValue : data.estimateAtCompletion) || 0;
-      let etc = Number(data.estimateToComplete) || 0;
-
-      if (data.eacMethod === 'ETC Details') {
-        // ETC is fixed from forecast (already in data), EAC = Actuals + ETC
-        eac = actualsToDate + etc;
-      } else {
-        // ETC = EAC - Actuals
-        etc = eac - actualsToDate;
-      }
-      
-      const eacMovement = eac - eacPrev;
-
-      const variance = approved - eac;
-      const variancePrev = Number(colDef.field === 'costVariancePrevious' ? newValue : data.costVariancePrevious) || 0;
-      const varianceMovement = variance - variancePrev;
+      // Reactive calculations for immediate feedback — all formulas via domain/eac
+      const computed = computePeriodEndFields({
+        baselineBudget: Number(colDef.field === 'baselineBudget' ? newValue : data.baselineBudget) || 0,
+        approvedChanges: Number(colDef.field === 'budgetChanges' ? newValue : data.budgetChanges) || 0,
+        approvedBudgetPrev: Number(colDef.field === 'approvedBudgetPrevious' ? newValue : data.approvedBudgetPrevious) || 0,
+        actualsToDate: Number(colDef.field === 'actualCostToDate' ? newValue : data.actualCostToDate) || 0,
+        eacMethod: data.eacMethod,
+        etcFromForecast: Number(data.estimateToComplete) || 0,
+        manualEac: Number(colDef.field === 'estimateAtCompletion' ? newValue : data.estimateAtCompletion) || 0,
+        eacPrev: Number(colDef.field === 'estimateAtCompletionPrevious' ? newValue : data.estimateAtCompletionPrevious) || 0,
+        costVariancePrev: Number(colDef.field === 'costVariancePrevious' ? newValue : data.costVariancePrevious) || 0,
+      });
 
       // Add calculated fields to updates
-      updates.approvedBudget = approved;
-      updates.approvedBudgetMovement = approvedMovement;
-      updates.estimateAtCompletion = eac;
-      updates.estimateAtCompletionMovement = eacMovement;
-      updates.estimateToComplete = etc;
-      updates.costVariance = variance;
-      updates.costVarianceMovement = varianceMovement;
+      updates.approvedBudget = computed.approvedBudget;
+      updates.approvedBudgetMovement = computed.approvedBudgetMovement;
+      updates.estimateAtCompletion = computed.eac;
+      updates.estimateAtCompletionMovement = computed.eacMovement;
+      updates.estimateToComplete = computed.etc;
+      updates.costVariance = computed.costVariance;
+      updates.costVarianceMovement = computed.costVarianceMovement;
 
       // Update grid data immediately for UI responsiveness
       event.node.setData({ ...data, ...updates });
