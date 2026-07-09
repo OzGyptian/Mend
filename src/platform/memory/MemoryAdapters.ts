@@ -6,10 +6,11 @@ import type {
   Enterprise, Project,
   CostCode, Sheet, ForecastRow, EtcDetail, ActualCostRecord, BaselineBudgetRecord, CostPhasingRecord,
   Change, ChangeRecord,
-  RiskRecord,
+  Risk, RiskRecord,
   Subcontract, Invoice,
   ProgressPackage, ProgressItem, RuleOfCredit,
   ScheduleItem, Calendar,
+  ProcurementItem, ProcurementStepDefinition,
   SavedView,
 } from '../../domain/types';
 
@@ -310,11 +311,50 @@ export class MemoryChangeAdapter {
 
 // ── Risk ──────────────────────────────────────────────────────────────────────
 
+const riskStore = new MemoryStore<Risk>();
 const riskRecordStore = new MemoryStore<RiskRecord>();
 
 export class MemoryRiskAdapter {
+  subscribeRisks(pid: string, cb: (r: Risk[]) => void) {
+    return riskStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+
+  async listRisks(pid: string): Promise<Risk[]> {
+    return riskStore.list(r => r.projectId === pid);
+  }
+
+  async createRisk(data: Omit<Risk, 'id'>) {
+    const id = makeId();
+    const r = { ...data, id, createdAt: now() } as Risk;
+    riskStore.set(id, r);
+    return r;
+  }
+
+  async createManyRisks(items: Omit<Risk, 'id'>[]) {
+    return items.map(data => {
+      const id = makeId();
+      const r = { ...data, id, createdAt: now() } as Risk;
+      riskStore.set(id, r);
+      return r;
+    });
+  }
+
+  async updateRisk(id: string, data: Partial<Risk>) { riskStore.update(id, data); }
+
+  async updateManyRisks(updates: { id: string; data: Partial<Risk> }[]) {
+    updates.forEach(u => riskStore.update(u.id, u.data));
+  }
+
+  async deleteRisk(id: string) { riskStore.delete(id); }
+
+  async deleteManyRisks(ids: string[]) { ids.forEach(id => riskStore.delete(id)); }
+
   subscribeRiskRecords(pid: string, cb: (r: RiskRecord[]) => void) {
     return riskRecordStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+
+  async listRiskRecords(pid: string): Promise<RiskRecord[]> {
+    return riskRecordStore.list(r => r.projectId === pid);
   }
 
   async createRiskRecord(data: Omit<RiskRecord, 'id'>) {
@@ -324,8 +364,24 @@ export class MemoryRiskAdapter {
     return r;
   }
 
+  async createManyRiskRecords(items: Omit<RiskRecord, 'id'>[]) {
+    return items.map(data => {
+      const id = makeId();
+      const r = { ...data, id, createdAt: now() } as RiskRecord;
+      riskRecordStore.set(id, r);
+      return r;
+    });
+  }
+
   async updateRiskRecord(id: string, data: Partial<RiskRecord>) { riskRecordStore.update(id, data); }
+
+  async updateManyRiskRecords(updates: { id: string; data: Partial<RiskRecord> }[]) {
+    updates.forEach(u => riskRecordStore.update(u.id, u.data));
+  }
+
   async deleteRiskRecord(id: string) { riskRecordStore.delete(id); }
+
+  async deleteManyRiskRecords(ids: string[]) { ids.forEach(id => riskRecordStore.delete(id)); }
 }
 
 // ── Subcontract ───────────────────────────────────────────────────────────────
@@ -419,11 +475,60 @@ export class MemoryProgressAdapter {
 
 // ── Procurement ───────────────────────────────────────────────────────────────
 
+const procurementItemStore = new MemoryStore<ProcurementItem>();
+const stepDefinitionStore = new MemoryStore<ProcurementStepDefinition>();
+
 export class MemoryProcurementAdapter {
-  subscribe(_pid: string, cb: (d: any[]) => void) { cb([]); return () => {}; }
-  async create(data: any) { return { ...data, id: makeId(), createdAt: now() }; }
-  async update(_id: string, _data: any) {}
-  async delete(_id: string) {}
+  subscribeProcurementItems(pid: string, cb: (d: ProcurementItem[]) => void) {
+    return procurementItemStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+
+  async createProcurementItem(data: Omit<ProcurementItem, 'id'>) {
+    const id = makeId();
+    const item = { ...data, id, createdAt: now() } as ProcurementItem;
+    procurementItemStore.set(id, item);
+    return item;
+  }
+
+  async createManyProcurementItems(items: Omit<ProcurementItem, 'id'>[]) {
+    return items.map(data => {
+      const id = makeId();
+      const item = { ...data, id, createdAt: now() } as ProcurementItem;
+      procurementItemStore.set(id, item);
+      return item;
+    });
+  }
+
+  async updateProcurementItem(id: string, data: Partial<ProcurementItem>) {
+    procurementItemStore.update(id, data);
+  }
+
+  async updateManyProcurementItems(updates: { id: string; data: Partial<ProcurementItem> }[]) {
+    updates.forEach(u => procurementItemStore.update(u.id, u.data));
+  }
+
+  async deleteManyProcurementItems(ids: string[]) { ids.forEach(id => procurementItemStore.delete(id)); }
+
+  subscribeProjectStepDefinitions(pid: string, cb: (d: ProcurementStepDefinition[]) => void) {
+    return stepDefinitionStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+
+  subscribeEnterpriseStepDefinitions(eid: string, cb: (d: ProcurementStepDefinition[]) => void) {
+    return stepDefinitionStore.subscribe(rows => cb(rows.filter(r => r.enterpriseId === eid)));
+  }
+
+  async createStepDefinition(data: Omit<ProcurementStepDefinition, 'id'>) {
+    const id = makeId();
+    const step = { ...data, id, createdAt: now() } as ProcurementStepDefinition;
+    stepDefinitionStore.set(id, step);
+    return step;
+  }
+
+  async updateStepDefinition(id: string, data: Partial<ProcurementStepDefinition>) {
+    stepDefinitionStore.update(id, data);
+  }
+
+  async deleteStepDefinition(id: string) { stepDefinitionStore.delete(id); }
 }
 
 // ── Schedule ──────────────────────────────────────────────────────────────────
@@ -446,8 +551,33 @@ export class MemoryScheduleAdapter {
   async updateScheduleItem(id: string, data: Partial<ScheduleItem>) { scheduleItemStore.update(id, data); }
   async deleteScheduleItem(id: string) { scheduleItemStore.delete(id); }
 
-  subscribeCalendars(pid: string, cb: (c: Calendar[]) => void) {
+  subscribeProjectCalendars(pid: string, cb: (c: Calendar[]) => void) {
     return calendarStore.subscribe(rows => cb(rows.filter(r => r.projectId === pid)));
+  }
+
+  subscribeEnterpriseCalendars(enterpriseId: string, cb: (c: Calendar[]) => void) {
+    return calendarStore.subscribe(rows => cb(rows.filter(r => r.enterpriseId === enterpriseId)));
+  }
+
+  async listEnterpriseCalendars(enterpriseId: string): Promise<Calendar[]> {
+    return calendarStore.list(r => r.enterpriseId === enterpriseId);
+  }
+
+  getCalendar(id: string): Promise<Calendar | null> {
+    return Promise.resolve(calendarStore.get(id) ?? null);
+  }
+
+  async createManyScheduleItems(items: Omit<ScheduleItem, 'id'>[]) {
+    return items.map(data => {
+      const id = makeId();
+      const s = { ...data, id, createdAt: now() } as ScheduleItem;
+      scheduleItemStore.set(id, s);
+      return s;
+    });
+  }
+
+  async updateManyScheduleItems(updates: { id: string; data: Partial<ScheduleItem> }[]) {
+    updates.forEach(u => scheduleItemStore.update(u.id, u.data));
   }
 
   async createCalendar(data: Omit<Calendar, 'id'>) {
