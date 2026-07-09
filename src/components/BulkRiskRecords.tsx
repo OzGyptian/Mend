@@ -100,7 +100,9 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       minImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.minImpactAmount || 0), 0),
       mostLikelyImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.mostLikelyImpactAmount || 0), 0),
       maxImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.maxImpactAmount || 0), 0),
-      betaPertImpactAmount: allRiskRecords.reduce((sum, r) => sum + (r.betaPertImpactAmount || 0), 0),
+      betaPertImpactAmount: allRiskRecords.reduce((sum, r) => sum + betaPertExposure(
+        r.minImpactAmount || 0, r.mostLikelyImpactAmount || 0, r.maxImpactAmount || 0, r.probability || 0
+      ), 0),
     }];
   }, [allRiskRecords]);
 
@@ -144,7 +146,12 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
   const updateParentTotals = async (riskId: string) => {
     try {
       const records = allRiskRecords.filter(r => r.riskId === riskId);
-      const totalBetaPert = records.reduce((sum, r) => sum + (Number(r.betaPertImpactAmount) || 0), 0);
+      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
+        Number(r.minImpactAmount) || 0,
+        Number(r.mostLikelyImpactAmount) || 0,
+        Number(r.maxImpactAmount) || 0,
+        Number(r.probability) || 0,
+      ), 0);
       const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
       const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
       const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);

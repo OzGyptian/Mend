@@ -374,7 +374,9 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       minImpactAmount: riskRecords.reduce((sum, r) => sum + (r.minImpactAmount || 0), 0),
       mostLikelyImpactAmount: riskRecords.reduce((sum, r) => sum + (r.mostLikelyImpactAmount || 0), 0),
       maxImpactAmount: riskRecords.reduce((sum, r) => sum + (r.maxImpactAmount || 0), 0),
-      betaPertImpactAmount: riskRecords.reduce((sum, r) => sum + (r.betaPertImpactAmount || 0), 0)
+      betaPertImpactAmount: riskRecords.reduce((sum, r) => sum + betaPertExposure(
+        r.minImpactAmount || 0, r.mostLikelyImpactAmount || 0, r.maxImpactAmount || 0, r.probability || 0
+      ), 0)
     }];
   }, [riskRecords]);
 
@@ -524,7 +526,12 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   const updateParentTotals = async (riskId: string) => {
     try {
       const records = await riskRepo.listRiskRecords(project.id, riskId);
-      const totalBetaPert = records.reduce((sum, r) => sum + (Number(r.betaPertImpactAmount) || 0), 0);
+      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
+        Number(r.minImpactAmount) || 0,
+        Number(r.mostLikelyImpactAmount) || 0,
+        Number(r.maxImpactAmount) || 0,
+        Number(r.probability) || 0,
+      ), 0);
       const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
       const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
       const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
