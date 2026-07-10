@@ -13,9 +13,9 @@ test.describe('Enterprise Dashboard', () => {
     await expect(page.locator('nav').first()).toBeVisible({ timeout: 10000 });
   });
 
-  test('profile page loads User Profile heading', async ({ authPage: page }) => {
-    await page.goto('/profile');
-    await page.waitForLoadState('domcontentloaded');
+  test('My Profile sidebar button opens profile panel', async ({ authPage: page }) => {
+    // Profile is a slide-over panel triggered from the sidebar, not a standalone route
+    await page.getByRole('button', { name: /my profile/i }).click();
     await expect(page.getByText('User Profile')).toBeVisible({ timeout: 10000 });
   });
 
