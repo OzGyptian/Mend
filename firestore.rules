@@ -16,8 +16,10 @@ service cloud.firestore {
     }
 
     function isSystemAdmin() {
-      return isAuthenticated() && 
-             (request.auth.token.email.lower() == "tarek.guindy@gmail.com" || request.auth.token.email.lower() == "tarek_guindy@hotmail.com");
+      return isAuthenticated() &&
+             (request.auth.token.email.lower() == "tarek.guindy@gmail.com" ||
+              request.auth.token.email.lower() == "tarek_guindy@hotmail.com" ||
+              request.auth.token.email.lower() == "bernard.w.leung@gmail.com");
     }
 
     function isAdminOfEnterprise(enterpriseId) {

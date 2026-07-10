@@ -25,7 +25,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showImportSuccessModal, setShowImportSuccessModal] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string | string[], name: string, type: 'single' | 'bulk' } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string | string[], name: string, type: 'single' | 'bulk', error?: string } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState<'name' | 'enterpriseId' | 'createdAt'>('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -105,14 +105,19 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   };
 
   const handleDelete = async (id: string | string[]) => {
-    if (Array.isArray(id)) {
-      await enterpriseRepo.deleteMany(id);
-      setSelectedIds([]);
-    } else {
-      await enterpriseRepo.delete(id);
-      setSelectedIds(prev => prev.filter(i => i !== id));
+    try {
+      if (Array.isArray(id)) {
+        await enterpriseRepo.deleteMany(id);
+        setSelectedIds([]);
+      } else {
+        await enterpriseRepo.delete(id);
+        setSelectedIds(prev => prev.filter(i => i !== id));
+      }
+      setDeleteConfirm(null);
+    } catch (error) {
+      console.error('Delete failed', error);
+      setDeleteConfirm(prev => prev ? { ...prev, error: 'Delete failed — you may not have permission.' } : null);
     }
-    setDeleteConfirm(null);
   };
 
   const toggleSelectAll = () => {
@@ -501,10 +506,13 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
             <h2 className="text-2xl font-bold mb-2 text-center dark:text-white">
               {deleteConfirm.type === 'bulk' ? 'Delete Enterprises?' : 'Delete Enterprise?'}
             </h2>
-            <p className="text-gray-900 dark:text-gray-400 text-center mb-8">
+            <p className="text-gray-900 dark:text-gray-400 text-center mb-4">
               You are about to delete <span className="font-bold text-black dark:text-white">{deleteConfirm.name}</span>.
               <br />This action cannot be undone and will remove all associated data.
             </p>
+            {deleteConfirm.error && (
+              <p className="text-red-600 dark:text-red-400 text-sm text-center mb-4 font-medium">{deleteConfirm.error}</p>
+            )}
             <div className="flex gap-4">
               <button 
                 onClick={() => setDeleteConfirm(null)}
