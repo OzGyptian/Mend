@@ -380,11 +380,18 @@ Tarek before starting 13.B2.
       read (log+quarantine) and write (throw); seed script builds from schemas. No migration
       framework on Firestore — schemas become the Postgres DDL spec
 
-## Phase 13.D — Onboarding & error surfaces (~3 days) 🟠 (storage-agnostic)
-- [ ] 13.D.1 (F10) Real create/join-enterprise screen replacing `prompt()` (App.tsx:500); replace
-      ~31 alert()/prompt() sites with shadcn toast/dialog; strip invite token from URL after
-      consumption; surface bootstrapIfEmpty failures in UI
-- [ ] 13.D.2 Top-level React error boundary
+## Phase 13.D — Onboarding & error surfaces (~3 days) 🟠 (storage-agnostic) — COMPLETE
+- [x] 13.D.1 (F10) All done: `prompt()` at App.tsx replaced with an inline create-enterprise form
+      (v1.0.98); 26 `alert()` sites → `toast.success`/`toast.error` (v1.0.99); all 22 `confirm()` sites →
+      a new async `useConfirm()` hook backed by the shadcn Dialog primitive (v1.0.100); invite-token URL
+      cleanup was already done as a side effect of Phase 13.A's server-verified invite rewrite; `bootstrapIfEmpty`
+      failures now surface via `toast.error` instead of only `console.error` (v1.0.101). Zero
+      `alert()`/`confirm()`/`prompt()` calls remain anywhere in `src/` (verified via grep). Not visually
+      verified end-to-end (no browser available this session) — verified via tsc, 203/203 unit tests, and
+      47/47 E2E tests at every step, plus direct diff review of all agent-produced changes.
+- [x] 13.D.2 Top-level React error boundary — **already existed** (`src/components/ErrorBoundary.tsx`,
+      wraps the whole app in `main.tsx`, has a proper fallback UI incl. Firestore-permission-error parsing
+      and a reload button). Nothing to build.
 
 ## Phase 13.E — Enforcement / CI (~1 day) 🟠 (do early — can precede B)
 - [x] 13.E.1/13.E.3 `.github/workflows/ci.yml` (v1.0.96) — 3 parallel jobs on every push + PRs to main:
