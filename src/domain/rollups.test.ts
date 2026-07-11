@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { computeChangeRollup, computeCostCodeRollup, resolveEacSourceValue, type CostCodeLeafTotals } from './rollups';
+import {
+  aggregateCostCodeRollups, computeChangeRollup, computeCostCodeRollup, resolveEacSourceValue, type CostCodeLeafTotals,
+} from './rollups';
+import type {
+  ActualCostRecord, BaselineBudgetRecord, Change, ChangeRecord, CostCode, EtcDetail, Subcontract,
+} from './types';
 
 describe('computeChangeRollup', () => {
   it('returns zeroed totals for no records', () => {
@@ -124,5 +129,125 @@ describe('computeCostCodeRollup', () => {
     expect(result.budgetChanges).toBe(baseLeaves.budgetChanges);
     expect(result.actualCostToDate).toBe(baseLeaves.actualCostToDate);
     expect(result.actualCostThisPeriod).toBe(baseLeaves.actualCostThisPeriod);
+  });
+});
+
+function costCode(overrides: Partial<CostCode>): CostCode {
+  return {
+    id: overrides.id || 'cc1',
+    code: overrides.code || 'C1',
+    eacMethod: 'Manual',
+    estimateAtCompletion: 0,
+    approvedBudgetPrevious: 0,
+    estimateAtCompletionPrevious: 0,
+    costVariancePrevious: 0,
+    ...overrides,
+  } as unknown as CostCode;
+}
+
+describe('aggregateCostCodeRollups', () => {
+  const period = { currentPeriodId: 'p2', periodIds: ['p1', 'p2', 'p3'] };
+
+  it('sums baseline budgets and actuals for a matching costCodeId', () => {
+    const codes = [costCode({ id: 'cc1', code: 'C1' })];
+    const baselines = [
+      { costCodeId: 'cc1', amount: 500_000 },
+      { costCodeId: 'cc1', amount: 50_000 },
+    ] as unknown as BaselineBudgetRecord[];
+    const actuals = [
+      { costCodeId: 'cc1', cost: 200_000, reportingPeriodId: 'p1' },
+      { costCodeId: 'cc1', cost: 40_000, reportingPeriodId: 'p2' },
+    ] as unknown as ActualCostRecord[];
+
+    const result = aggregateCostCodeRollups(
+      codes,
+      { actuals, baselines, etcRows: [], changes: [], changeRecords: [], subcontracts: [] },
+      period,
+    );
+
+    const rollup = result.get('cc1')!;
+    expect(rollup.baselineBudget).toBe(550_000);
+    expect(rollup.actualCostToDate).toBe(240_000);
+    expect(rollup.actualCostThisPeriod).toBe(40_000); // only the current-period (p2) record
+  });
+
+  it('falls back to matching by code when costCodeId is the human code (F5 fallback)', () => {
+    const codes = [costCode({ id: 'cc1', code: 'C1' })];
+    const baselines = [{ costCodeId: 'C1', amount: 100_000 }] as unknown as BaselineBudgetRecord[];
+
+    const result = aggregateCostCodeRollups(
+      codes,
+      { actuals: [], baselines, etcRows: [], changes: [], changeRecords: [], subcontracts: [] },
+      period,
+    );
+    expect(result.get('cc1')!.baselineBudget).toBe(100_000);
+  });
+
+  it('only counts change records for Approved or Pending changes', () => {
+    const codes = [costCode({ id: 'cc1', code: 'C1' })];
+    const changes = [
+      { id: 'chg-approved', status: 'Approved' },
+      { id: 'chg-pending', status: 'Pending' },
+      { id: 'chg-rejected', status: 'Rejected' },
+    ] as unknown as Change[];
+    const changeRecords = [
+      { changeId: 'chg-approved', costCodeId: 'cc1', budgetAmount: 1000, eacAmount: 1100 },
+      { changeId: 'chg-pending', costCodeId: 'cc1', budgetAmount: 2000, eacAmount: 2200 },
+      { changeId: 'chg-rejected', costCodeId: 'cc1', budgetAmount: 5000, eacAmount: 5000 },
+    ] as unknown as ChangeRecord[];
+
+    const result = aggregateCostCodeRollups(
+      codes,
+      { actuals: [], baselines: [], etcRows: [], changes, changeRecords, subcontracts: [] },
+      period,
+    );
+    expect(result.get('cc1')!.budgetChanges).toBe(3000); // approved + pending only, not rejected
+  });
+
+  it('ETC Details: only sums EtcDetail qty for future periods, keyed by costCode string', () => {
+    const codes = [costCode({ id: 'cc1', code: 'C1', eacMethod: 'ETC Details' as CostCode['eacMethod'] })];
+    const etcRows = [
+      { costCode: 'C1', rate: 10, periodValues: { p1: 5, p2: 5, p3: 20 } }, // p1/p2 are past/current, p3 is future
+    ] as unknown as EtcDetail[];
+    const actuals = [{ costCodeId: 'cc1', cost: 100, reportingPeriodId: 'p1' }] as unknown as ActualCostRecord[];
+
+    const result = aggregateCostCodeRollups(
+      codes,
+      { actuals, baselines: [], etcRows, changes: [], changeRecords: [], subcontracts: [] },
+      period,
+    );
+    const rollup = result.get('cc1')!;
+    expect(rollup.estimateToComplete).toBe(20 * 10); // only p3 (future) counted
+    expect(rollup.estimateAtCompletion).toBe(100 + 200);
+  });
+
+  it('Sub-Contract Management: excludes Rejected line items, uses defaultCostCodeId fallback', () => {
+    const codes = [costCode({ id: 'cc1', code: 'C1', eacMethod: 'Sub-Contract Management' as CostCode['eacMethod'] })];
+    const subcontracts = [
+      {
+        defaultCostCodeId: 'cc1',
+        lineItems: [
+          { costCodeId: 'cc1', total: 300_000, status: 'Approved' },
+          { costCodeId: '', total: 999_999, status: 'Rejected' },
+          { total: 50_000, status: 'Approved' }, // no costCodeId -> falls back to defaultCostCodeId
+        ],
+      },
+    ] as unknown as Subcontract[];
+
+    const result = aggregateCostCodeRollups(
+      codes,
+      { actuals: [], baselines: [], etcRows: [], changes: [], changeRecords: [], subcontracts },
+      period,
+    );
+    expect(result.get('cc1')!.estimateAtCompletion).toBe(350_000);
+  });
+
+  it('returns an empty map for no cost codes', () => {
+    const result = aggregateCostCodeRollups(
+      [],
+      { actuals: [], baselines: [], etcRows: [], changes: [], changeRecords: [], subcontracts: [] },
+      period,
+    );
+    expect(result.size).toBe(0);
   });
 });

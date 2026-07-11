@@ -7,6 +7,7 @@
 // Firestore and refreshing only on a manual "Recalculate" click.
 
 import { computePeriodEndFields, type EacMethod } from './eac';
+import type { ActualCostRecord, BaselineBudgetRecord, Change, ChangeRecord, CostCode, EtcDetail, Subcontract } from './types';
 
 export interface ChangeRecordLeaf {
   budgetAmount: number;
@@ -120,4 +121,113 @@ export function computeCostCodeRollup(params: {
     costVariance: fields.costVariance,
     costVarianceMovement: fields.costVarianceMovement,
   };
+}
+
+export interface CostCodeRollupLeafSets {
+  actuals: ActualCostRecord[];
+  baselines: BaselineBudgetRecord[];
+  etcRows: EtcDetail[];
+  changes: Change[];
+  changeRecords: ChangeRecord[];
+  subcontracts: Subcontract[];
+}
+
+export interface ReportingPeriodContext {
+  currentPeriodId?: string;
+  /** Ordered list of all period ids for the project (any order is fine — only the position of currentPeriodId matters). */
+  periodIds: string[];
+}
+
+function addTo(map: Map<string, number>, key: string, amount: number): void {
+  map.set(key, (map.get(key) || 0) + amount);
+}
+
+// Mirrors the id-OR-code reconciliation fallback used throughout the app
+// (see SYSTEM_REVIEW.md F5 — an ambiguous foreign key scheduled for a real
+// fix in Phase 13.B2). Must match that fallback until F5 lands, or this will
+// disagree with write paths elsewhere that still use it.
+function sumByIdOrCode(map: Map<string, number>, id: string, code: string): number {
+  return (map.get(id) || 0) + (map.get(code) || 0);
+}
+
+/**
+ * Aggregates raw leaf collections into a Map<costCodeId, CostCodeRollup> —
+ * pure, no I/O, no React. This is what changes if the leaf-selection rules
+ * change (e.g. which change statuses count); the React hook that wires it to
+ * live Firestore subscriptions (src/lib/costCodeRollups.ts) never needs to.
+ */
+export function aggregateCostCodeRollups(
+  costCodes: CostCode[],
+  leaves: CostCodeRollupLeafSets,
+  period: ReportingPeriodContext,
+): Map<string, CostCodeRollup> {
+  const currentIndex = period.periodIds.findIndex((id) => id === period.currentPeriodId);
+  const futurePeriodIds = new Set(period.periodIds.slice(currentIndex + 1));
+
+  // Approved (or still-pending, forward-looking) changes count toward both
+  // the approved budget and the EAC-forecast change totals.
+  const countableChangeIds = new Set(
+    leaves.changes.filter((c) => c.status === 'Approved' || c.status === 'Pending').map((c) => c.id),
+  );
+
+  const actualsToDateMap = new Map<string, number>();
+  const actualsThisPeriodMap = new Map<string, number>();
+  leaves.actuals.forEach((a) => {
+    const cost = Number(a.cost) || 0;
+    addTo(actualsToDateMap, a.costCodeId, cost);
+    if (a.reportingPeriodId === period.currentPeriodId) addTo(actualsThisPeriodMap, a.costCodeId, cost);
+  });
+
+  const baselineMap = new Map<string, number>();
+  leaves.baselines.forEach((b) => addTo(baselineMap, b.costCodeId, Number(b.amount) || 0));
+
+  const budgetChangeMap = new Map<string, number>();
+  const eacChangeMap = new Map<string, number>();
+  leaves.changeRecords.forEach((r) => {
+    if (!countableChangeIds.has(r.changeId)) return;
+    addTo(budgetChangeMap, r.costCodeId, Number(r.budgetAmount) || 0);
+    addTo(eacChangeMap, r.costCodeId, Number(r.eacAmount) || 0);
+  });
+
+  // EtcDetail keys by costCode (the code string), not costCodeId.
+  const etcMap = new Map<string, number>();
+  leaves.etcRows.forEach((r) => {
+    const periodValues = r.periodValues || {};
+    const futureQty = Object.entries(periodValues)
+      .filter(([periodId]) => futurePeriodIds.has(periodId))
+      .reduce((sum, [, qty]) => sum + (qty || 0), 0);
+    addTo(etcMap, r.costCode, futureQty * (Number(r.rate) || 0));
+  });
+
+  const subcontractTotalMap = new Map<string, number>();
+  leaves.subcontracts.forEach((sub) => {
+    (sub.lineItems || []).forEach((li) => {
+      if (li.status === 'Rejected') return;
+      const assignedId = li.costCodeId || sub.defaultCostCodeId;
+      if (assignedId) addTo(subcontractTotalMap, assignedId, Number(li.total) || 0);
+    });
+  });
+
+  const rollups = new Map<string, CostCodeRollup>();
+  for (const code of costCodes) {
+    const codeLeaves: CostCodeLeafTotals = {
+      baselineBudget: sumByIdOrCode(baselineMap, code.id, code.code),
+      budgetChanges: sumByIdOrCode(budgetChangeMap, code.id, code.code),
+      eacApprovedChanges: sumByIdOrCode(eacChangeMap, code.id, code.code),
+      actualCostToDate: sumByIdOrCode(actualsToDateMap, code.id, code.code),
+      actualCostThisPeriod: sumByIdOrCode(actualsThisPeriodMap, code.id, code.code),
+      etcFromForecast: sumByIdOrCode(etcMap, code.id, code.code),
+      subcontractTotal: sumByIdOrCode(subcontractTotalMap, code.id, code.code),
+    };
+
+    rollups.set(code.id, computeCostCodeRollup({
+      eacMethod: code.eacMethod || 'Manual',
+      leaves: codeLeaves,
+      storedManualEac: Number(code.estimateAtCompletion) || 0,
+      approvedBudgetPrev: Number(code.approvedBudgetPrevious) || 0,
+      estimateAtCompletionPrev: Number(code.estimateAtCompletionPrevious) || 0,
+      costVariancePrev: Number(code.costVariancePrevious) || 0,
+    }));
+  }
+  return rollups;
 }
