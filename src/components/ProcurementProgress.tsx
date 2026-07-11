@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { recalculatePlannedDates, recalculateForecastDates } from '../domain/procurement';
 
 import CreatePackageModal from './CreatePackageModal';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface ProcurementProgressProps {
   project: Project;
@@ -35,6 +36,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
   const procurementRepo = useProcurementRepo();
   const scheduleRepo = useScheduleRepo();
   const projectRepo = useProjectRepo();
+  const confirmDialog = useConfirm();
   const [items, setItems] = useState<ProcurementItem[]>([]);
   const [stepDefinitions, setStepDefinitions] = useState<ProcurementStepDefinition[]>([]);
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
@@ -373,7 +375,7 @@ export default function ProcurementProgress({ project, enterprise, hideTabs = fa
 
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedIds.size} packages?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${selectedIds.size} packages?`))) return;
 
     try {
       await procurementRepo.deleteManyProcurementItems([...selectedIds]);

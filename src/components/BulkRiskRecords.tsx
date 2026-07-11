@@ -6,8 +6,7 @@ import {
   Trash2, 
   Download, 
   Upload,
-  Filter, 
-  RefreshCw,
+  Filter,
   X,
   PlusCircle,
   Database,
@@ -37,6 +36,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
 import { betaPertExposure } from '../domain/risk';
+import { resolveCostCodeId } from '../domain/costCodes';
 import {
   Dialog,
   DialogContent, 
@@ -144,23 +144,6 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
     return () => { unsubR(); unsubRr(); unsubCc(); };
   }, [project.id]);
 
-  const updateParentTotals = async (riskId: string) => {
-    try {
-      const records = allRiskRecords.filter(r => r.riskId === riskId);
-      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
-        Number(r.minImpactAmount) || 0,
-        Number(r.mostLikelyImpactAmount) || 0,
-        Number(r.maxImpactAmount) || 0,
-        Number(r.probability) || 0,
-      ), 0);
-      const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
-      const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
-      const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
-      await riskRepo.updateRisk(riskId, { exposure: totalBetaPert, minImpactTotal: totalMin, mostLikelyImpactTotal: totalLikely, maxImpactTotal: totalMax });
-    } catch (error) {
-      console.error(error);
-    }
-  };
 
   const onRecordCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data, colDef } = params;
@@ -179,9 +162,6 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       }
       
       await riskRepo.updateRiskRecord(data.id, updates);
-      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
-        updateParentTotals(data.riskId);
-      }
     } catch (error) {
       console.error(error); toast.error('Failed to update record.');
     }
@@ -241,16 +221,13 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           const ml = Number(row['Most Likely $']) || 0;
           const max = Number(row['Max Value $']) || 0;
           const prob = (Number(row['Prob %']) || 100) / 100;
-          toCreate.push({ riskId, projectId: project.id, costCodeId: String(row['Cost Code'] || '').trim(), scope: String(row['Scope'] || ''), probability: prob, minImpactAmount: min, mostLikelyImpactAmount: ml, maxImpactAmount: max, betaPertImpactAmount: betaPertExposure(min, ml, max, prob) } as any);
+          const rawCostCode = String(row['Cost Code'] || '').trim();
+          const resolvedCostCodeId = resolveCostCodeId(rawCostCode, costCodes) || rawCostCode;
+          toCreate.push({ riskId, projectId: project.id, costCodeId: resolvedCostCodeId, scope: String(row['Scope'] || ''), probability: prob, minImpactAmount: min, mostLikelyImpactAmount: ml, maxImpactAmount: max, betaPertImpactAmount: betaPertExposure(min, ml, max, prob) } as any);
           addedCount++;
         }
         if (addedCount > 0) {
           await riskRepo.createManyRiskRecords(toCreate as any);
-          // Update all parent totals
-          const affectedRisks = new Set(data.map(row => riskMap.get(String(row['Risk ID'] || '').trim().toLowerCase())).filter(id => id));
-          for (const rid of affectedRisks) {
-            if (rid) await updateParentTotals(rid);
-          }
           toast.success(`Imported ${addedCount} records`);
         }
       } catch (error) { toast.error("Import failed"); }
@@ -434,13 +411,6 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       });
       await riskRepo.updateManyRiskRecords(recordUpdates);
 
-      const affected = new Set<string>();
-      selectedBulkRecordIds.forEach(id => {
-        const r = allRiskRecords.find(x => x.id === id);
-        if (r) affected.add(r.riskId);
-      });
-      for (const rid of affected) await updateParentTotals(rid);
-
       toast.success("Updated Successfully");
       setIsBulkRecordUpdateOpen(false);
       setSelectedBulkRecordIds(new Set());
@@ -449,13 +419,7 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
 
   const handleBulkDeleteRecords = async () => {
     try {
-      const affected = new Set<string>();
-      selectedBulkRecordIds.forEach(id => {
-        const r = allRiskRecords.find(x => x.id === id);
-        if (r) affected.add(r.riskId);
-      });
       await riskRepo.deleteManyRiskRecords([...selectedBulkRecordIds]);
-      for (const rid of affected) await updateParentTotals(rid);
       toast.success("Deleted Successfully");
       setSelectedBulkRecordIds(new Set());
       setIsBulkDeleteOpen(false);
@@ -488,20 +452,6 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           
           <button onClick={() => toggleAllRecordColumnGroups(true)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Expand All Groups"><Maximize2 className="w-4 h-4" /></button>
           <button onClick={() => toggleAllRecordColumnGroups(false)} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Collapse All Groups"><Minimize2 className="w-4 h-4" /></button>
-          
-          <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
-          
-          <button onClick={async () => {
-            const affected = new Set(allRiskRecords.map(r => r.riskId));
-            let count = 0;
-            for (const rid of affected) {
-              await updateParentTotals(rid);
-              count++;
-            }
-            toast.success(`Recalculated totals for ${count} risks`);
-          }} className="p-2 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors" title="Recalculate All Totals">
-            <RefreshCw className="w-5 h-5" />
-          </button>
 
           {selectedBulkRecordIds.size > 0 && (
             <div className="flex gap-2">

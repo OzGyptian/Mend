@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { useEnterpriseRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
 import { 
@@ -68,12 +69,12 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Please upload a valid image file.');
+      toast.error('Please upload a valid image file.');
       return;
     }
 
     if (file.size > 800 * 1024) {
-      alert('File is too large. Please upload an image smaller than 800KB.');
+      toast.error('File is too large. Please upload an image smaller than 800KB.');
       return;
     }
 

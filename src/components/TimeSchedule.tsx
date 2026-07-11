@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { cn } from '../lib/utils';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface ScheduleItem {
   id: string;
@@ -47,6 +48,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
   const progressRepo = useProgressRepo();
   const costRepo = useCostRepo();
   const subcontractRepo = useSubcontractRepo();
+  const confirmDialog = useConfirm();
   const [items, setItems] = useState<ScheduleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -340,7 +342,7 @@ export default function TimeSchedule({ project, enterprise, theme = 'light' }: T
 
   const handleBulkDelete = async () => {
     if (selectedRows.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${selectedRows.length} activities?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${selectedRows.length} activities?`))) return;
 
     try {
       await Promise.all(selectedRows.map(row => scheduleRepo.deleteScheduleItem(row.id)));

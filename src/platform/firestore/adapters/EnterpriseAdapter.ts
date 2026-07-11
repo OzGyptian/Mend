@@ -1,7 +1,7 @@
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch, onSnapshot, query, where, limit,
 } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { fromDoc } from '../converters';
 import type { Enterprise } from '../../../domain/types';
 import type { EnterpriseRepository } from '../../ports/enterprise.port';
@@ -41,23 +41,25 @@ export class EnterpriseAdapter implements EnterpriseRepository {
     }
   }
 
-  async acceptInvitation(token: string, userId: string, userEmail: string, displayName: string): Promise<{ enterpriseName: string } | null> {
-    const q = query(collection(db, 'invitations'), where('token', '==', token), where('status', '==', 'pending'), limit(1));
-    const snap = await getDocs(q);
-    if (snap.empty) return null;
-    const inviteDoc = snap.docs[0];
-    const invite = inviteDoc.data();
-    if (invite.email && userEmail.toLowerCase() !== invite.email.toLowerCase()) throw new Error(`This invitation was sent to ${invite.email}.`);
-    if (new Date(invite.expiresAt) < new Date()) throw new Error('This invitation has expired.');
-    const enterpriseSnap = await getDoc(doc(db, 'enterprises', invite.enterpriseId));
-    if (!enterpriseSnap.exists()) return null;
-    const entData = enterpriseSnap.data();
-    if (!entData.users?.[userId]) {
-      await updateDoc(doc(db, 'enterprises', invite.enterpriseId), { [`users.${userId}`]: { name: displayName, email: userEmail, role: 'Enterprise User', joinedAt: new Date().toISOString() }, adminUsers: [...(entData.adminUsers || []), userId] });
+  // F3 fix: this now calls the server, which verifies the caller's ID token and
+  // an actual pending invitation via the Admin SDK before granting membership.
+  // Firestore rules no longer allow a client to write itself into adminUsers.
+  async acceptInvitation(token: string): Promise<{ enterpriseName: string } | null> {
+    const user = auth.currentUser;
+    if (!user) return null;
+    const idToken = await user.getIdToken();
+
+    const res = await fetch('/api/accept-invite', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken, token }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(body.error || 'Failed to accept invitation.');
     }
-    await updateDoc(inviteDoc.ref, { status: 'accepted', acceptedAt: new Date().toISOString(), acceptedBy: userId });
     window.history.replaceState({}, document.title, window.location.pathname);
-    return { enterpriseName: entData.name };
+    return body.result ?? null;
   }
 
   async update(enterpriseId: string, data: Partial<Enterprise>): Promise<void> {

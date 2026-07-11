@@ -177,7 +177,7 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
         toast.loading('Updating cost codes...', { id: toastId });
         const costCodeUpdates = costCodes.map(code => {
           const codeAccruals = allActuals.filter(
-            a => (a.costCodeId === code.id || a.costCodeId === code.code) &&
+            a => a.costCodeId === code.id &&
                  a.reportingPeriodId === firstOpenPeriod.id && a.source === 'ACC'
           );
           const reversalSum = codeAccruals.reduce((sum, a) => sum + (Number(a.cost) || 0) * -1, 0);
@@ -216,7 +216,7 @@ const CostReportingPeriod: React.FC<CostReportingPeriodProps> = ({ project }) =>
           const codePhasing = allPhasing.filter((p: any) => p.costCodeId === code.code);
           const eacDoc = codePhasing.find((p: any) => p.type === 'eac');
           const actualsByPeriod: Record<string, number> = {};
-          allActuals.filter((a: any) => a.costCodeId === code.id || a.costCodeId === code.code).forEach((a: any) => {
+          allActuals.filter((a: any) => a.costCodeId === code.id).forEach((a: any) => {
             actualsByPeriod[a.reportingPeriodId] = (actualsByPeriod[a.reportingPeriodId] || 0) + (a.cost || 0);
           });
           const etcByPeriod: Record<string, number> = {};

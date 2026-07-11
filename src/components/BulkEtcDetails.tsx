@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { buildEtcColumnDefs, DEFAULT_ETC_CATEGORIES } from './bulk-etc-details/columns';
+import ResourceLibraryModal from './bulk-etc-details/ResourceLibraryModal';
+import EtcBulkUpdateDialog, { EtcBulkUpdatePayload } from './bulk-etc-details/EtcBulkUpdateDialog';
 import { createPortal } from 'react-dom';
 import { Project, Enterprise, CostCode, Calendar as ProjectCalendar, EtcDetail, ResourceRate, ScheduleItem } from '../types';
 import { useCostRepo, useAuthRepo, useScheduleRepo } from '../platform/firestore/hooks';
@@ -104,29 +107,12 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
   // UI State
   const [isSaving, setIsSaving] = useState(false);
   const [isEtcBulkUpdating, setIsEtcBulkUpdating] = useState(false);
-  const [etcBulkUpdateData, setEtcBulkUpdateData] = useState<{
-    category?: string;
-    calendarId?: string;
-    phasingMethod?: 'Manual' | 'Auto-Phase';
-    phasingUnit?: 'Daily' | 'Weekly' | 'Monthly' | 'Total' | 'Profile';
-    enterpriseAttributes: Record<string, string>;
-    projectAttributes: Record<string, string>;
-    userDefined: Record<string, any>;
-  }>({
-    enterpriseAttributes: {},
-    projectAttributes: {},
-    userDefined: {}
-  });
   
   const [isEtcChartVisible, setIsEtcChartVisible] = useState(false);
   const [weekEndingDay] = useState<number>(0); // 0: Sun, 5: Fri, 6: Sat
   const [addRowsCount, setAddRowsCount] = useState(1);
   const [deleteConfirm, setDeleteConfirm] = useState<{ type: 'selected' | 'all'; count: number } | null>(null);
   const [isResourceModalOpen, setIsResourceModalOpen] = useState(false);
-  const [resourceSearch, setResourceSearch] = useState('');
-  const [selectedResourceIds, setSelectedResourceIds] = useState<Set<string>>(new Set());
-  const [resourceLibrarySource, setResourceLibrarySource] = useState<'enterprise' | 'project'>('enterprise');
-  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
 
   const handleFirestoreError = (error: any, operationType: OperationType, path: string | null) => {
     const errInfo = {
@@ -353,9 +339,9 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
     }
   };
 
-  const handleBulkUpdateEtc = async () => {
+  const handleBulkUpdateEtc = async (payload: EtcBulkUpdatePayload) => {
     if (selectedEtcIds.size === 0) return;
-    
+
     setIsSaving(true);
     try {
       const bulkUpdates: Array<{ id: string; data: any }> = [];
@@ -363,19 +349,18 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
         const row = etcRows.find(r => r.id === id);
         const updateObj: any = {};
         const isLibraryResource = (row as any)?.isEnterpriseResource || (row as any)?.source === 'PROJECT';
-        if (etcBulkUpdateData.category && !isLibraryResource) updateObj.category = etcBulkUpdateData.category;
-        if (etcBulkUpdateData.calendarId) updateObj.calendarId = etcBulkUpdateData.calendarId;
-        if (etcBulkUpdateData.phasingMethod) updateObj.phasingMethod = etcBulkUpdateData.phasingMethod;
-        if (etcBulkUpdateData.phasingUnit) updateObj.phasingUnit = etcBulkUpdateData.phasingUnit;
-        if (Object.keys(etcBulkUpdateData.enterpriseAttributes).length > 0) updateObj.enterpriseAttributes = { ...(row as any)?.enterpriseAttributes, ...etcBulkUpdateData.enterpriseAttributes };
-        if (Object.keys(etcBulkUpdateData.projectAttributes).length > 0) updateObj.projectAttributes = { ...(row as any)?.projectAttributes, ...etcBulkUpdateData.projectAttributes };
-        if (Object.keys(etcBulkUpdateData.userDefined || {}).length > 0) updateObj.userDefined = { ...(row as any)?.userDefined, ...etcBulkUpdateData.userDefined };
+        if (payload.category && !isLibraryResource) updateObj.category = payload.category;
+        if (payload.calendarId) updateObj.calendarId = payload.calendarId;
+        if (payload.phasingMethod) updateObj.phasingMethod = payload.phasingMethod;
+        if (payload.phasingUnit) updateObj.phasingUnit = payload.phasingUnit;
+        if (Object.keys(payload.enterpriseAttributes).length > 0) updateObj.enterpriseAttributes = { ...(row as any)?.enterpriseAttributes, ...payload.enterpriseAttributes };
+        if (Object.keys(payload.projectAttributes).length > 0) updateObj.projectAttributes = { ...(row as any)?.projectAttributes, ...payload.projectAttributes };
+        if (Object.keys(payload.userDefined || {}).length > 0) updateObj.userDefined = { ...(row as any)?.userDefined, ...payload.userDefined };
         bulkUpdates.push({ id, data: updateObj });
       });
       await costRepo.updateManyEtcDetails(bulkUpdates);
       setIsEtcBulkUpdating(false);
       setSelectedEtcIds(new Set());
-      setEtcBulkUpdateData({ enterpriseAttributes: {}, projectAttributes: {}, userDefined: {} });
       toast.success(`Updated ${selectedEtcIds.size} rows`);
     } catch (error) {
       console.error("Error bulk updating ETC:", error);
@@ -800,25 +785,6 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
     e.target.value = '';
   };
 
-  const groupedLibraryResources = useMemo(() => {
-    const library = resourceLibrarySource === 'enterprise' ? enterprise.resourceRates : project.resourceRates;
-    const filtered = library?.filter(r => 
-      r.name.toLowerCase().includes(resourceSearch.toLowerCase()) ||
-      r.id.toLowerCase().includes(resourceSearch.toLowerCase()) ||
-      r.category?.toLowerCase().includes(resourceSearch.toLowerCase())
-    ) || [];
-
-    const grouped = filtered.reduce((acc, resource) => {
-      const category = resource.category || 'Uncategorized';
-      if (!acc[category]) {
-        acc[category] = [];
-      }
-      acc[category].push(resource);
-      return acc;
-    }, {} as Record<string, typeof filtered>);
-
-    return Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b));
-  }, [resourceLibrarySource, enterprise.resourceRates, project.resourceRates, resourceSearch]);
 
   const handleAddResources = async (resources: any[], source: 'enterprise' | 'project' = 'enterprise') => {
     if (resources.length === 0) return;
@@ -848,15 +814,12 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
       }
       await costRepo.createManyEtcDetails(resourcesToCreate);
       setIsResourceModalOpen(false);
-      setSelectedResourceIds(new Set());
       toast.success(`${resources.length * count} row(s) added successfully`);
     } catch (error) {
       console.error("Error adding resources:", error);
       toast.error("Failed to add resources");
     }
   };
-
-  const DEFAULT_CATEGORIES = ['Labour', 'Plant', 'Material', 'Subcontractor', 'Sundries', 'Staff'];
 
   const pinnedBottomRowData = useMemo(() => {
     if (etcRows.length === 0) return [];
@@ -900,563 +863,8 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
   }, [etcRows, project.reportingPeriods]);
 
   const etcColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
-    const allPeriods = project.reportingPeriods?.periods || [];
-    const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-    const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
-    const periods = allPeriods.slice(currentIndex + 1);
-
-    const defs: (ColDef | ColGroupDef)[] = [
-      {
-        headerName: 'Item Details',
-        pinned: 'left',
-        openByDefault: true,
-        children: [
-          {
-            headerName: 'Cost Code ID',
-            field: 'costCode',
-            width: 150,
-            pinned: 'left',
-            editable: true,
-            cellEditor: 'agRichSelectCellEditor',
-            cellEditorParams: {
-              values: ['', ...costCodes.map(c => c.code)],
-              searchType: 'match',
-              allowTyping: true,
-              filterList: true
-            },
-            cellClass: (params) => cn(
-              'font-bold',
-              params.node.rowPinned === 'bottom' ? 'bg-amber-100 dark:bg-amber-900/30' : 'bg-blue-50/50 dark:bg-blue-900/10'
-            )
-          },
-          { 
-            field: 'item', 
-            headerName: 'Item', 
-            width: 150, 
-            checkboxSelection: true, 
-            headerCheckboxSelection: true,
-            headerCheckboxSelectionFilteredOnly: true,
-            editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
-            cellStyle: (params: any) => {
-              const isReadOnly = params.data?.isEnterpriseResource || params.data?.source === 'PROJECT';
-              return {
-                backgroundColor: isReadOnly ? '#f3f4f6' : 'white',
-                fontWeight: isReadOnly ? 'bold' : 'normal',
-                color: 'black'
-              };
-            }
-          },
-          { 
-            field: 'description', 
-            headerName: 'Description', 
-            width: 250, 
-            editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
-            cellStyle: (params: any) => {
-              const isReadOnly = params.data?.isEnterpriseResource || params.data?.source === 'PROJECT';
-              return {
-                backgroundColor: isReadOnly ? '#f3f4f6' : 'white',
-                fontWeight: isReadOnly ? 'bold' : 'normal',
-                color: 'black'
-              };
-            }
-          },
-          { 
-            field: 'category', 
-            headerName: 'Resource Category', 
-            width: 150, 
-            editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
-            cellEditor: 'agSelectCellEditor',
-            cellEditorParams: {
-              values: (enterprise.categories && enterprise.categories.length > 0) ? enterprise.categories : DEFAULT_CATEGORIES
-            },
-            cellStyle: (params: any) => {
-              const isReadOnly = params.data?.isEnterpriseResource || params.data?.source === 'PROJECT';
-              return {
-                backgroundColor: isReadOnly ? (theme === 'dark' ? '#1e293b' : '#f3f4f6') : (theme === 'dark' ? '#0f172a' : 'white'),
-                fontWeight: isReadOnly ? 'bold' : 'normal',
-                color: theme === 'dark' ? 'white' : 'black'
-              };
-            }
-          }
-        ]
-      }
-    ];
-
-    if (enterpriseLineItemAttrs.length > 0) {
-      defs.push({
-        headerName: 'Enterprise Line-Item Attributes',
-        openByDefault: true,
-        children: enterpriseLineItemAttrs.map((attr, index) => ({
-          headerName: attr.title,
-          field: `enterpriseAttributes.${attr.id}`,
-          width: 150,
-          columnGroupShow: index === 0 ? undefined : 'open',
-          editable: (params: any) => params.node.rowPinned !== 'top',
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: attr.values.map(v => v.id),
-          },
-          valueSetter: (params: any) => {
-            if (!params.data || params.newValue === undefined) return false;
-            if (!params.data.enterpriseAttributes) {
-              params.data.enterpriseAttributes = {};
-            }
-            let val = params.newValue;
-            if (typeof val === 'string' && val.includes(' - ')) {
-              val = val.split(' - ')[0];
-            }
-            params.data.enterpriseAttributes[attr.id] = val;
-            return true;
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
-          }
-        }))
-      });
-    }
-
-    if (projectLineItemAttrs.length > 0) {
-      defs.push({
-        headerName: 'Project Line-Item Attributes',
-        openByDefault: true,
-        children: projectLineItemAttrs.map((attr, index) => ({
-          headerName: attr.title,
-          field: `projectAttributes.${attr.id}`,
-          width: 150,
-          columnGroupShow: index === 0 ? undefined : 'open',
-          editable: (params: any) => params.node.rowPinned !== 'top',
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: attr.values.map(v => v.id),
-          },
-          valueSetter: (params: any) => {
-            if (!params.data || params.newValue === undefined) return false;
-            if (!params.data.projectAttributes) {
-              params.data.projectAttributes = {};
-            }
-            let val = params.newValue;
-            if (typeof val === 'string' && val.includes(' - ')) {
-              val = val.split(' - ')[0];
-            }
-            params.data.projectAttributes[attr.id] = val;
-            return true;
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
-          }
-        }))
-      });
-    }
-
-    // 4. User Defined Attributes
-    defs.push({
-      headerName: 'User Defined',
-      openByDefault: true,
-      children: [
-        ...Array.from({ length: 5 }).map((_, i) => ({
-          headerName: `Numeric ${i + 1}`,
-          field: `userDefined.num${i + 1}`,
-          width: 120,
-          type: 'numericColumn',
-          columnGroupShow: (i === 0 ? undefined : 'open') as any,
-          editable: (params: any) => params.node.rowPinned !== 'top',
-          valueParser: (params: any) => Number(params.newValue) || 0,
-          valueSetter: (params: any) => {
-            if (!params.data.userDefined) params.data.userDefined = {};
-            params.data.userDefined[`num${i + 1}`] = params.newValue;
-            return true;
-          }
-        })),
-        ...Array.from({ length: 5 }).map((_, i) => ({
-          headerName: `Text ${i + 1}`,
-          field: `userDefined.text${i + 1}`,
-          width: 150,
-          columnGroupShow: 'open' as any,
-          editable: (params: any) => params.node.rowPinned !== 'top',
-          valueParser: (params: any) => {
-            if (typeof params.newValue === 'string') {
-              return params.newValue.substring(0, 100);
-            }
-            return params.newValue;
-          },
-          valueSetter: (params: any) => {
-            if (!params.data.userDefined) params.data.userDefined = {};
-            params.data.userDefined[`text${i + 1}`] = params.newValue;
-            return true;
-          }
-        }))
-      ]
-    });
-
-    defs.push({
-      headerName: 'Pricing',
-      pinned: 'left',
-      openByDefault: true,
-      children: [
-        { 
-          field: 'qty', 
-          headerName: 'Qty', 
-          width: 100, 
-          type: 'numericColumn',
-          aggFunc: 'sum',
-          editable: false,
-          valueGetter: (params) => {
-            if (!params.data) return 0;
-            const periodValues = (params.data.periodValues || {}) as Record<string, number>;
-            const total = periods.reduce((acc: number, p: any) => acc + (periodValues[p.id] || 0), 0);
-            return Math.round(total * 100) / 100;
-          },
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellStyle: (params) => {
-            return { 
-              backgroundColor: params.node?.rowPinned === 'bottom' ? '#fef3c7' : '#f3f4f6', 
-              fontWeight: 'bold', 
-              color: 'black' 
-            };
-          }
-        },
-        { 
-          field: 'unit', 
-          headerName: 'Unit', 
-          width: 100, 
-          editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
-          cellStyle: (params: any) => {
-            const isReadOnly = params.data?.isEnterpriseResource || params.data?.source === 'PROJECT';
-            return {
-              backgroundColor: isReadOnly ? '#f3f4f6' : 'white',
-              fontWeight: isReadOnly ? 'bold' : 'normal',
-              color: 'black'
-            };
-          }
-        },
-        { 
-          field: 'rate', 
-          headerName: 'Rate', 
-          width: 100, 
-          type: 'numericColumn', 
-          editable: (params) => !params.data.isEnterpriseResource && params.data.source !== 'PROJECT',
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellStyle: (params: any) => {
-            const isReadOnly = params.data?.isEnterpriseResource || params.data?.source === 'PROJECT';
-            return {
-              backgroundColor: isReadOnly ? '#f3f4f6' : 'white',
-              fontWeight: isReadOnly ? 'bold' : 'normal',
-              color: 'black'
-            };
-          }
-        },
-        { 
-          headerName: 'Total ETC', 
-          width: 120, 
-          type: 'numericColumn',
-          aggFunc: 'sum',
-          valueGetter: (params) => {
-            if (params.node?.group) return undefined;
-            if (params.node?.rowPinned === 'bottom') return params.data.totalEtc;
-            const periodValues = (params.data.periodValues || {}) as Record<string, number>;
-            const qty = periods.reduce((acc: number, p: any) => acc + (periodValues[p.id] || 0), 0);
-            return qty * (params.data.rate || 0);
-          },
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellStyle: (params) => {
-            return { 
-              backgroundColor: params.node?.rowPinned === 'bottom' ? '#fef3c7' : '#f3f4f6', 
-              fontWeight: 'bold', 
-              color: 'black' 
-            };
-          }
-        },
-        { 
-          headerName: 'Total ETC Previous', 
-          width: 140, 
-          type: 'numericColumn',
-          aggFunc: 'sum',
-          editable: false,
-          valueGetter: (params) => {
-            if (params.node?.group) return undefined;
-            if (params.node?.rowPinned === 'bottom') return params.data.totalEtcPrevious;
-            return params.data.totalEtcPrevious || 0;
-          },
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellStyle: (params) => ({
-            backgroundColor: params.node?.rowPinned === 'bottom' ? '#fef3c7' : '#f3f4f6',
-            fontWeight: 'bold',
-            color: 'black'
-          })
-        },
-        { 
-          headerName: 'ETC Mvmt', 
-          width: 120, 
-          type: 'numericColumn',
-          aggFunc: 'sum',
-          editable: false,
-          valueGetter: (params) => {
-            if (params.node?.group) return undefined;
-            if (params.node?.rowPinned === 'bottom') return params.data.etcMvmt;
-            
-            const periodValues = (params.data.periodValues || {}) as Record<string, number>;
-            const qty = periods.reduce((acc: number, p: any) => acc + (periodValues[p.id] || 0), 0);
-            const totalEtc = qty * (params.data.rate || 0);
-            const previous = params.data.totalEtcPrevious || 0;
-            return totalEtc - previous;
-          },
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellStyle: (params) => {
-            const isPinned = params.node?.rowPinned === 'bottom';
-            const val = params.value || 0;
-            return {
-              backgroundColor: isPinned ? '#fef3c7' : '#f3f4f6',
-              fontWeight: 'bold',
-              color: val > 0 ? '#ef4444' : (val < 0 ? '#10b981' : 'black')
-            };
-          }
-        },
-      ]
-    });
-
-    defs.push({
-      headerName: 'Auto-Phasing',
-      pinned: 'left',
-      openByDefault: true,
-      children: [
-        {
-          field: 'calendarId',
-          headerName: 'Calendar',
-          width: 150,
-          columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase',
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: [null, ...calendars.map(c => c.id)],
-            formatValue: (val: string) => calendars.find(c => c.id === val)?.name || 'None'
-          },
-          valueFormatter: (params) => calendars.find(c => c.id === params.value)?.name || 'None',
-          cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
-        },
-        {
-          field: 'phasingMethod',
-          headerName: 'Method',
-          width: 120,
-          editable: true,
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: ['Manual', 'Auto-Phase']
-          },
-          cellClass: 'font-medium'
-        },
-        {
-          headerName: 'Activity ID',
-          field: 'activityId',
-          width: 150,
-          editable: true,
-          cellEditor: 'agRichSelectCellEditor',
-          cellEditorParams: {
-            values: [null, ...scheduleItems.map(item => item.activityId).sort()],
-            formatValue: (val: string) => {
-              const item = scheduleItems.find(i => i.activityId === val);
-              return item ? `${item.activityId} - ${item.description}` : val || 'None';
-            },
-            searchType: 'match',
-            allowTyping: true,
-            filterList: true,
-            highlightMatch: true
-          },
-          onCellValueChanged: (params) => {
-            const newActivityId = params.newValue;
-            if (newActivityId) {
-              const scheduleItem = scheduleItems.find(s => s.activityId === newActivityId);
-              if (scheduleItem) {
-                params.data.phasingStartDate = scheduleItem.currentStartDate;
-                params.data.phasingEndDate = scheduleItem.currentEndDate;
-                params.data.phasingMethod = 'Auto-Phase';
-                // Force refresh of the row to update UI
-                params.api.refreshCells({ rowNodes: [params.node], force: true });
-                handleUpdateEtcRow(params.data.id, params.data);
-              }
-            } else {
-              handleUpdateEtcRow(params.data.id, params.data);
-            }
-          },
-          cellClass: 'bg-emerald-50/10 dark:bg-emerald-900/10'
-        },
-        {
-          field: 'phasingStartDate',
-          headerName: 'Start Date',
-          width: 120,
-          columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase' && !params.data.activityId,
-          cellEditor: 'agDateCellEditor',
-          valueGetter: (params) => {
-            const val = params.data.phasingStartDate;
-            if (!val) return null;
-            const d = new Date(val);
-            return isNaN(d.getTime()) ? null : d;
-          },
-          valueSetter: (params) => {
-            if (!params.newValue) {
-              params.data.phasingStartDate = '';
-              return true;
-            }
-            const val = params.newValue;
-            if (val instanceof Date) {
-              params.data.phasingStartDate = val.toISOString();
-              return true;
-            }
-            params.data.phasingStartDate = val;
-            return true;
-          },
-          valueFormatter: (params) => {
-            if (!params.value) return '';
-            const date = params.value instanceof Date ? params.value : new Date(params.value);
-            if (isNaN(date.getTime())) return params.value;
-            const day = String(date.getDate()).padStart(2, '0');
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const year = date.getFullYear();
-            return `${day}/${month}/${year}`;
-          },
-          cellClass: (params) => {
-            if (params.data.phasingMethod !== 'Auto-Phase') return 'bg-gray-100 dark:bg-white/5 text-gray-400';
-            if (params.data.activityId) return 'bg-amber-50/30 dark:bg-amber-900/10 text-gray-500 italic';
-            return 'bg-white dark:bg-transparent';
-          }
-        },
-        {
-          field: 'phasingEndDate',
-          headerName: 'End Date',
-          width: 120,
-          columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase' && !params.data.activityId,
-          cellEditor: 'agDateCellEditor',
-          valueGetter: (params) => {
-            const val = params.data.phasingEndDate;
-            if (!val) return null;
-            const d = new Date(val);
-            return isNaN(d.getTime()) ? null : d;
-          },
-          valueSetter: (params) => {
-            if (!params.newValue) {
-              params.data.phasingEndDate = '';
-              return true;
-            }
-            const val = params.newValue;
-            if (val instanceof Date) {
-              params.data.phasingEndDate = val.toISOString();
-              return true;
-            }
-            params.data.phasingEndDate = val;
-            return true;
-          },
-          valueFormatter: (params) => {
-            if (!params.value) return '';
-            const date = params.value instanceof Date ? params.value : new Date(params.value);
-            if (isNaN(date.getTime())) return params.value;
-            const day = String(date.getDate()).padStart(2, '0');
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const year = date.getFullYear();
-            return `${day}/${month}/${year}`;
-          },
-          cellClass: (params) => {
-            if (params.data.phasingMethod !== 'Auto-Phase') return 'bg-gray-100 dark:bg-white/5 text-gray-400';
-            if (params.data.activityId) return 'bg-amber-50/30 dark:bg-amber-900/10 text-gray-500 italic';
-            return 'bg-white dark:bg-transparent';
-          }
-        },
-        {
-          field: 'phasingUnit',
-          headerName: 'Phasing Unit',
-          width: 120,
-          columnGroupShow: 'open',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase',
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: ['Daily', 'Weekly', 'Monthly', 'Total', 'Profile']
-          },
-          cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
-        },
-        {
-          field: 'phasingQty',
-          headerName: 'Phasing Qty',
-          width: 110,
-          columnGroupShow: 'open',
-          type: 'numericColumn',
-          editable: (params) => params.data.phasingMethod === 'Auto-Phase',
-          valueFormatter: (params) => formatNumber(params.value, 2),
-          cellClass: (params) => params.data.phasingMethod === 'Auto-Phase' ? 'bg-white dark:bg-transparent' : 'bg-gray-100 dark:bg-white/5 text-gray-400'
-        }
-      ]
-    });
-
-    if (periods.length > 0) {
-      defs.push({
-        headerName: 'Resource Forecasting',
-        openByDefault: true,
-        children: periods.map((p, idx) => {
-          const date = new Date(p.endDate);
-          const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-          const monthName = monthNames[date.getUTCMonth()];
-          const year = date.getUTCFullYear().toString().slice(-2);
-          const periodNumber = allPeriods.findIndex(per => per.id === p.id) + 1;
-          const headerName = `P${periodNumber}\n(${monthName}'${year})`;
-
-          return {
-            headerName,
-            field: `periodValues.${p.id}`,
-            width: 120,
-            minWidth: 110,
-            type: 'numericColumn',
-            aggFunc: 'sum',
-            editable: (params: any) => params.data?.phasingMethod !== 'Auto-Phase',
-            cellStyle: (params: any) => {
-              const isPinned = params.node?.rowPinned === 'bottom';
-              const isAuto = params.data?.phasingMethod === 'Auto-Phase';
-              return {
-                backgroundColor: isPinned ? '#fef3c7' : (isAuto ? '#f3f4f6' : 'white'),
-                fontWeight: (isPinned || isAuto) ? 'bold' : 'normal',
-                color: 'black'
-              };
-            },
-            valueGetter: (params: any) => {
-              if (!params.data) return 0;
-              return params.data.periodValues?.[p.id] || 0;
-            },
-            valueFormatter: (params: any) => formatNumber(params.value, 2),
-            valueSetter: (params: any) => {
-              if (!params.data) return false;
-              const val = Number(params.newValue);
-              if (isNaN(val)) return false;
-              const periodValues = { ...(params.data.periodValues || {}), [p.id]: val };
-              params.data.periodValues = periodValues;
-              return true;
-            }
-          };
-        })
-      });
-    }
-
-    defs.push({
-      headerName: 'Actions',
-      width: 80,
-      pinned: 'right',
-      cellRenderer: (params: any) => {
-        if (params.node.rowPinned) return null;
-        return (
-          <div className="flex items-center justify-center h-full">
-            <button 
-              onClick={() => handleDeleteEtcRow(params.data.id)}
-              className="p-1 hover:bg-gray-100 dark:hover:bg-white/10 rounded text-gray-400 hover:text-red-600 transition-colors"
-              title="Delete"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        );
-      }
-    });
-
-    return defs;
-  }, [project.reportingPeriods, enterprise.resourceRates, calendars, enterpriseLineItemAttrs, projectLineItemAttrs, costCodes]);
+    return buildEtcColumnDefs({ project, enterprise, calendars, enterpriseLineItemAttrs, projectLineItemAttrs, costCodes, scheduleItems, theme, handleUpdateEtcRow, handleDeleteEtcRow });
+  }, [project.reportingPeriods, enterprise.resourceRates, calendars, enterpriseLineItemAttrs, projectLineItemAttrs, costCodes, scheduleItems, theme, handleUpdateEtcRow, handleDeleteEtcRow]);
 
   if (loading) {
     return (
@@ -1661,224 +1069,24 @@ export default function BulkEtcDetails({ project, enterprise, theme = 'light' }:
       />
 
       {/* Bulk Update Dialog */}
-      <Dialog open={isEtcBulkUpdating} onOpenChange={setIsEtcBulkUpdating}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Bulk Update ETC Details</DialogTitle>
-            <DialogDescription>
-              Update {selectedEtcIds.size} selected rows simultaneously.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="grid grid-cols-2 gap-6 py-4">
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Resource Category</label>
-                <select
-                  className="w-full h-10 px-3 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
-                  value={etcBulkUpdateData.category || ''}
-                  onChange={(e) => setEtcBulkUpdateData(prev => ({ ...prev, category: e.target.value }))}
-                >
-                  <option value="">No Change</option>
-                  {((enterprise.categories && enterprise.categories.length > 0) ? enterprise.categories : DEFAULT_CATEGORIES).map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Calendar</label>
-                <select
-                  className="w-full h-10 px-3 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
-                  value={etcBulkUpdateData.calendarId || ''}
-                  onChange={(e) => setEtcBulkUpdateData(prev => ({ ...prev, calendarId: e.target.value }))}
-                >
-                  <option value="">No Change</option>
-                  {calendars.map(cal => (
-                    <option key={cal.id} value={cal.id}>{cal.name}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Phasing Method</label>
-                <select
-                  className="w-full h-10 px-3 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
-                  value={etcBulkUpdateData.phasingMethod || ''}
-                  onChange={(e) => setEtcBulkUpdateData(prev => ({ ...prev, phasingMethod: e.target.value as any }))}
-                >
-                  <option value="">No Change</option>
-                  <option value="Manual">Manual</option>
-                  <option value="Auto-Phase">Auto-Phase</option>
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Phasing Unit</label>
-                <select
-                  className="w-full h-10 px-3 rounded-md border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950"
-                  value={etcBulkUpdateData.phasingUnit || ''}
-                  onChange={(e) => setEtcBulkUpdateData(prev => ({ ...prev, phasingUnit: e.target.value as any }))}
-                >
-                  <option value="">No Change</option>
-                  <option value="Daily">Daily</option>
-                  <option value="Weekly">Weekly</option>
-                  <option value="Monthly">Monthly</option>
-                  <option value="Total">Total</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEtcBulkUpdating(false)}>Cancel</Button>
-            <Button onClick={handleBulkUpdateEtc} disabled={isSaving}>
-              {isSaving ? 'Updating...' : 'Apply Changes'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EtcBulkUpdateDialog
+        isOpen={isEtcBulkUpdating}
+        onClose={() => setIsEtcBulkUpdating(false)}
+        onSubmit={handleBulkUpdateEtc}
+        enterprise={enterprise}
+        calendars={calendars}
+        selectedCount={selectedEtcIds.size}
+        isSaving={isSaving}
+      />
 
       {/* Resource Library Modal */}
-      <Dialog open={isResourceModalOpen} onOpenChange={setIsResourceModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[85vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Database className="w-5 h-5 text-blue-600" />
-              Resource Library
-            </DialogTitle>
-            <DialogDescription>
-              Select resources to add to your ETC details.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="flex items-center gap-4 py-4 border-b border-slate-100 dark:border-slate-800">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input
-                placeholder="Search resources..."
-                value={resourceSearch}
-                onChange={(e) => setResourceSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-              <button
-                onClick={() => setResourceLibrarySource('enterprise')}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
-                  resourceLibrarySource === 'enterprise' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500"
-                )}
-              >
-                Enterprise
-              </button>
-              <button
-                onClick={() => setResourceLibrarySource('project')}
-                className={cn(
-                  "px-3 py-1.5 text-xs font-semibold rounded-md transition-all",
-                  resourceLibrarySource === 'project' ? "bg-white dark:bg-slate-700 shadow-sm text-blue-600" : "text-slate-500"
-                )}
-              >
-                Project
-              </button>
-            </div>
-          </div>
-
-          <ScrollArea className="flex-1 pr-4">
-            <div className="space-y-6 py-4">
-              {groupedLibraryResources.length === 0 ? (
-                <div className="text-center py-12">
-                  <Database className="w-12 h-12 text-slate-200 mx-auto mb-4" />
-                  <p className="text-slate-500">No resources found matching your search.</p>
-                </div>
-              ) : (
-                groupedLibraryResources.map(([category, resources]) => (
-                  <div key={category} className="space-y-2">
-                    <button
-                      onClick={() => setCollapsedCategories(prev => {
-                        const next = new Set(prev);
-                        if (next.has(category)) next.delete(category);
-                        else next.add(category);
-                        return next;
-                      })}
-                      className="w-full flex items-center justify-between p-2 hover:bg-slate-50 dark:hover:bg-white/5 rounded-lg transition-colors group"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-blue-50 dark:bg-blue-900/20 rounded flex items-center justify-center">
-                          <Briefcase className="w-4 h-4 text-blue-600" />
-                        </div>
-                        <span className="font-bold text-slate-900 dark:text-white">{category}</span>
-                        <Badge variant="secondary" className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
-                          {resources.length}
-                        </Badge>
-                      </div>
-                      {collapsedCategories.has(category) ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronUp className="w-4 h-4 text-slate-400" />}
-                    </button>
-
-                    {!collapsedCategories.has(category) && (
-                      <div className="grid grid-cols-1 gap-2 pl-10">
-                        {resources.map(resource => (
-                          <div
-                            key={resource.id}
-                            onClick={() => setSelectedResourceIds(prev => {
-                              const next = new Set(prev);
-                              if (next.has(resource.id)) next.delete(resource.id);
-                              else next.add(resource.id);
-                              return next;
-                            })}
-                            className={cn(
-                              "flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer group",
-                              selectedResourceIds.has(resource.id)
-                                ? "bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800"
-                                : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-200 dark:hover:border-blue-800"
-                            )}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className={cn(
-                                "w-5 h-5 rounded border flex items-center justify-center transition-colors",
-                                selectedResourceIds.has(resource.id) ? "bg-blue-600 border-blue-600" : "border-slate-300 dark:border-slate-700"
-                              )}>
-                                {selectedResourceIds.has(resource.id) && <RefreshCw className="w-3 h-3 text-white animate-spin" />}
-                              </div>
-                              <div>
-                                <div className="text-sm font-bold text-slate-900 dark:text-white">{resource.name}</div>
-                                <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{resource.id}</div>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <div className="text-sm font-bold text-blue-600 dark:text-blue-400">{formatCurrency(resource.rate || 0)}</div>
-                              <div className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">{resource.unit || 'HR'}</div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-
-          <DialogFooter className="border-t border-slate-100 dark:border-slate-800 pt-4">
-            <div className="flex-1 flex items-center gap-2 text-sm text-slate-500">
-              {selectedResourceIds.size} resources selected
-            </div>
-            <Button variant="outline" onClick={() => setIsResourceModalOpen(false)}>Cancel</Button>
-            <Button 
-              disabled={selectedResourceIds.size === 0}
-              onClick={() => {
-                const library = resourceLibrarySource === 'enterprise' ? enterprise.resourceRates : project.resourceRates;
-                const selected = library?.filter(r => selectedResourceIds.has(r.id)) || [];
-                handleAddResources(selected, resourceLibrarySource);
-              }}
-            >
-              Add Selected Resources
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ResourceLibraryModal
+        isOpen={isResourceModalOpen}
+        onClose={() => setIsResourceModalOpen(false)}
+        onAdd={handleAddResources}
+        enterprise={enterprise}
+        project={project}
+      />
 
       {/* Delete Confirmation Modal */}
       <AnimatePresence>

@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useChangeRepo, useCostRepo, useAuthRepo } from '../platform/firestore/hooks';
 import { Project, Enterprise, Change, ChangeRecord, CostCode } from '../types';
-import { 
-  Search, 
-  Plus, 
-  Trash2, 
-  Edit2, 
-  Download, 
+import {
+  Search,
+  Plus,
+  Trash2,
+  Edit2,
+  Download,
   Upload,
-  Filter, 
+  Filter,
   RefreshCw,
   ChevronRight,
   ChevronDown,
@@ -32,11 +32,9 @@ import {
   Save,
   Layout,
   Columns,
-  RotateCcw,
   History,
   Activity,
   Briefcase,
-  ClipboardList
 } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
 import { 
@@ -57,6 +55,13 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { useChangeRollups } from '../lib/changeRollups';
+import {
+  buildChangeColumnDefs,
+  buildChangeRecordColumnDefs,
+} from './change-management/columns';
+import ChangeRecordsPanel from './change-management/panels/ChangeRecordsPanel';
+import ChangeFormDialog from './change-management/panels/ChangeFormDialog';
 import { 
   BarChart, 
   Bar, 
@@ -103,53 +108,42 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   const [changes, setChanges] = useState<Change[]>([]);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+
+  // Phase 13.B1.6: compute-on-read budget/eac totals (SYSTEM_REVIEW.md v2 / PLAN.md F1).
+  // Replaces the stored budget/eac fields and updateParentTotals() (duplicated in
+  // BulkChangeRecords.tsx too). Neither field was ever editable in this grid.
+  const changeRollups = useChangeRollups(project.id, changes);
+  const changesWithRollups = useMemo(
+    () => changes.map((c) => ({ ...c, ...changeRollups.get(c.id) })),
+    [changes, changeRollups],
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
   const [quickFilterText, setQuickFilterText] = useState('');
-  const [recordsQuickFilterText, setRecordsQuickFilterText] = useState('');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
   const [isChartsVisible, setIsChartsVisible] = useState(false);
   const [chartMetric, setChartMetric] = useState<'budget' | 'eac'>('budget');
-  const [isBulkRecordUpdateOpen, setIsBulkRecordUpdateOpen] = useState(false);
-  const [bulkRecordUpdateData, setBulkRecordUpdateData] = useState<{
-    costCodeId: string;
-    scope: string;
-    budgetAmount: string;
-    eacAmount: string;
-    enterpriseAttributes: Record<string, any>;
-    projectAttributes: Record<string, any>;
-  }>({
-    costCodeId: '',
-    scope: '',
-    budgetAmount: '',
-    eacAmount: '',
-    enterpriseAttributes: {},
-    projectAttributes: {}
-  });
-  
+
   // Modal States
   const [isCreateChangeOpen, setIsCreateChangeOpen] = useState(false);
   const [isDeleteChangeOpen, setIsDeleteChangeOpen] = useState(false);
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const [changeToDelete, setChangeToDelete] = useState<Change | null>(null);
-  
+
   const [newChange, setNewChange] = useState({
     changeId: '',
     description: '',
     status: 'Pending' as Change['status'],
     initiator: '',
     reference: '',
-    periodId: ''
+    periodId: '',
   });
 
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
 
   const gridRef = useRef<AgGridReact>(null);
-  const recordsGridRef = useRef<AgGridReact>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recordFileInputRef = useRef<HTMLInputElement>(null);
 
   const sideBar: SideBarDef = {
     toolPanels: [
@@ -191,7 +185,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     let cumulativeEac = 0;
 
     const data = periods.map((p, index) => {
-      const periodChanges = changes.filter(c => c.periodId === p.id);
+      const periodChanges = changesWithRollups.filter(c => c.periodId === p.id);
       const budget = periodChanges.reduce((sum, c) => sum + (c.budget || 0), 0);
       const eac = periodChanges.reduce((sum, c) => sum + (c.eac || 0), 0);
       
@@ -214,7 +208,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     });
 
     return data;
-  }, [changes, project.reportingPeriods]);
+  }, [changesWithRollups, project.reportingPeriods]);
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
@@ -342,43 +336,20 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     api.setColumnGroupState(newState);
   };
 
-  const toggleAllRecordColumnGroups = (opened: boolean) => {
-    if (!recordsGridRef.current) return;
-    const api = recordsGridRef.current.api;
-    const groups = api.getColumnGroupState();
-    const newState = groups.map(g => ({
-      groupId: g.groupId,
-      open: opened
-    }));
-    api.setColumnGroupState(newState);
-  };
-
-  const recordPinnedBottomRowData = useMemo(() => {
-    if (changeRecords.length === 0) return [];
-    const totalBudget = changeRecords.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
-    const totalEac = changeRecords.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-    return [{
-      costCodeId: 'Total',
-      budgetAmount: totalBudget,
-      eacAmount: totalEac,
-      isTotalRow: true
-    }];
-  }, [changeRecords]);
-
   const changesPinnedBottomRowData = useMemo(() => {
-    if (changes.length === 0) return [];
-    const totalBudget = changes.reduce((sum, c) => sum + (Number(c.budget) || 0), 0);
-    const totalEac = changes.reduce((sum, c) => sum + (Number(c.eac) || 0), 0);
+    if (changesWithRollups.length === 0) return [];
+    const totalBudget = changesWithRollups.reduce((sum, c) => sum + (Number(c.budget) || 0), 0);
+    const totalEac = changesWithRollups.reduce((sum, c) => sum + (Number(c.eac) || 0), 0);
     return [{
       changeId: 'Total',
       budget: totalBudget,
       eac: totalEac,
       isTotalRow: true
     }];
-  }, [changes]);
+  }, [changesWithRollups]);
 
   const handleExport = () => {
-    const exportData = changes.map(c => {
+    const exportData = changesWithRollups.map(c => {
       const row: any = {
         'Change ID': c.changeId,
         'Description': c.description,
@@ -465,136 +436,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     e.target.value = '';
   };
 
-  const handleExportRecords = () => {
-    if (changeRecords.length === 0) {
-      toast.error("No records to export");
-      return;
-    }
-    const exportData = changeRecords.map(r => {
-      const row: any = {
-        'Change ID': changes.find(c => c.id === r.changeId)?.changeId || 'Unknown',
-        'Cost Code': r.costCodeId,
-        'Scope': r.scope,
-        'Budget Amount': r.budgetAmount,
-        'EAC Amount': r.eacAmount
-      };
-      // Add attributes
-      enterprise.lineItemAttributes?.forEach(a => {
-        row[a.title] = r.enterpriseAttributes?.[a.id] || '';
-      });
-      project.lineItemAttributes?.forEach(a => {
-        row[a.title] = r.projectAttributes?.[a.id] || '';
-      });
-      return row;
-    });
-    const ws = XLSX.utils.json_to_sheet(exportData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Change Records");
-    XLSX.writeFile(wb, `${project.projectName}_Change_Records_${new Date().toISOString().split('T')[0]}.xlsx`);
-  };
-
-  const handleBulkUpdateRecords = async () => {
-    if (selectedRecordIds.size === 0) return;
-
-    try {
-      const updates: any = {};
-      if (bulkRecordUpdateData.costCodeId) updates.costCodeId = bulkRecordUpdateData.costCodeId;
-      if (bulkRecordUpdateData.scope) updates.scope = bulkRecordUpdateData.scope.slice(0, 100);
-      if (bulkRecordUpdateData.budgetAmount !== '') updates.budgetAmount = Number(bulkRecordUpdateData.budgetAmount);
-      if (bulkRecordUpdateData.eacAmount !== '') updates.eacAmount = Number(bulkRecordUpdateData.eacAmount);
-      Object.entries(bulkRecordUpdateData.enterpriseAttributes).forEach(([id, val]) => { if (val !== undefined && val !== '') updates[`enterpriseAttributes.${id}`] = val; });
-      Object.entries(bulkRecordUpdateData.projectAttributes).forEach(([id, val]) => { if (val !== undefined && val !== '') updates[`projectAttributes.${id}`] = val; });
-
-      await changeRepo.updateManyChangeRecords([...selectedRecordIds].map(id => ({ id, data: updates })));
-
-      const affectedChangeIds = new Set<string>();
-      selectedRecordIds.forEach(id => { const record = changeRecords.find(r => r.id === id); if (record) affectedChangeIds.add(record.changeId); });
-      for (const changeId of affectedChangeIds) { await updateParentTotals(changeId); }
-
-      toast.success(`Updated ${selectedRecordIds.size} records`);
-      setIsBulkRecordUpdateOpen(false);
-      setBulkRecordUpdateData({ costCodeId: '', scope: '', budgetAmount: '', eacAmount: '', enterpriseAttributes: {}, projectAttributes: {} });
-      setSelectedRecordIds(new Set());
-    } catch (error) {
-      console.error(error);
-      toast.error("Failed to update records");
-    }
-  };
-
-  const handleImportRecords = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!selectedChangeId) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as any[];
-
-        const importCreatesR: any[] = [];
-        let addedCount = 0;
-        const affectedChangeIds = new Set<string>();
-
-        for (const row of data) {
-          const costCode = String(row['Cost Code'] || '').trim();
-          if (!costCode) continue;
-
-          const entAttrs: Record<string, string> = {};
-          enterprise.lineItemAttributes?.forEach(a => { if (row[a.title]) entAttrs[a.id] = String(row[a.title]); });
-
-          const prjAttrs: Record<string, string> = {};
-          project.lineItemAttributes?.forEach(a => { if (row[a.title]) prjAttrs[a.id] = String(row[a.title]); });
-
-          importCreatesR.push({ changeId: selectedChangeId, projectId: project.id, costCodeId: costCode, scope: String(row['Scope'] || '').slice(0, 100), enterpriseAttributes: entAttrs, projectAttributes: prjAttrs, budgetAmount: Number(row['Budget Amount']) || 0, eacAmount: Number(row['EAC Amount']) || 0 });
-          addedCount++;
-          affectedChangeIds.add(selectedChangeId);
-        }
-
-        if (addedCount > 0) {
-          await Promise.all(importCreatesR.map(r => changeRepo.createChangeRecord(r)));
-          for (const cid of affectedChangeIds) { await updateParentTotals(cid); }
-          toast.success(`Imported ${addedCount} records`);
-        }
-      } catch (error) {
-        toast.error("Failed to import Excel file");
-      }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = '';
-  };
-
-  const handleAddRecord = async () => {
-    if (!selectedChangeId) {
-      toast.error("Please select a change first");
-      return;
-    }
-    const toastId = toast.loading("Adding new record...");
-    try {
-      const newRecord: Omit<ChangeRecord, 'id'> = {
-        changeId: selectedChangeId,
-        projectId: project.id,
-        costCodeId: '',
-        scope: '',
-        enterpriseAttributes: {},
-        projectAttributes: {},
-        budgetAmount: 0,
-        eacAmount: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      await changeRepo.createChangeRecord(newRecord as any);
-      toast.success("Record added", { id: toastId });
-    } catch (error) {
-      toast.dismiss(toastId);
-      console.error(error);
-      toast.error("Failed to add record");
-    }
-  };
-
   const enterpriseLineItemAttrs = useMemo(() => 
     (enterprise.lineItemAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0),
     [enterprise.lineItemAttributes]
@@ -649,318 +490,38 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       }
       if (colDef.field === 'scope') updates.scope = String(params.newValue).slice(0, 100);
       await changeRepo.updateChangeRecord(data.id, updates);
-      if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') updateParentTotals(data.changeId);
     } catch (error) {
       console.error(error);
       toast.error("Failed to update record");
     }
   };
 
-  const updateParentTotals = async (changeId: string) => {
-    try {
-      const records = allChangeRecords.filter(r => r.changeId === changeId);
-      const totalBudget = records.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
-      const totalEac = records.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-      await changeRepo.updateChange(changeId, { budget: totalBudget, eac: totalEac });
-    } catch (error) {
-      console.error(error);
-    }
-  };
+  const enterpriseChangeAttrs = (enterprise.changeAttributes || []).filter(
+    attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0
+  );
+  const projectChangeAttrs = (project.changeAttributes || []).filter(
+    attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0
+  );
 
-  const changeColumnDefs: (ColDef | ColGroupDef)[] = [
-    {
-      headerName: '',
-      headerCheckboxSelection: true,
-      checkboxSelection: true,
-      headerCheckboxSelectionFilteredOnly: true,
-      width: 50,
-      pinned: 'left',
-      sortable: false,
-      filter: false
-    },
-    {
-      headerName: 'Change ID',
-      field: 'changeId',
-      pinned: 'left',
-      width: 150,
-      sort: 'asc',
-      cellRenderer: (params: any) => {
-        if (params.node.rowPinned) return params.value;
-        return (
-          <button 
-            onClick={() => setSelectedChangeId(params.data.id)}
-            className="text-blue-600 hover:text-blue-800 hover:underline font-bold text-left transition-colors"
-          >
-            {params.value}
-          </button>
-        );
-      },
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Period',
-      field: 'periodId',
-      editable: true,
-      width: 150,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: project.reportingPeriods?.periods.map(p => p.id) || []
-      },
-      valueFormatter: (p: any) => {
-        const period = project.reportingPeriods?.periods.find(per => per.id === p.value);
-        return period ? period.name : p.value;
-      },
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Description',
-      field: 'description',
-      editable: true,
-      width: 300,
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Status',
-      field: 'status',
-      editable: true,
-      width: 150,
-      cellEditor: 'agSelectCellEditor',
-      cellEditorParams: {
-        values: ['Approved', 'Pending', 'Rejected', 'Withdrawn']
-      },
-      cellClassRules: {
-        'text-emerald-600 font-bold': (p: any) => p.value === 'Approved',
-        'text-amber-600 font-bold': (p: any) => p.value === 'Pending',
-        'text-red-600 font-bold': (p: any) => p.value === 'Rejected',
-        'text-gray-500 font-bold': (p: any) => p.value === 'Withdrawn',
-      },
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Initiator',
-      field: 'initiator',
-      editable: true,
-      width: 150,
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Reference',
-      field: 'reference',
-      editable: true,
-      width: 150,
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Budget',
-      field: 'budget',
-      width: 150,
-      valueFormatter: (p) => formatCurrency(p.value),
-      type: 'numericColumn',
-      cellStyle: { fontWeight: 'bold' },
-      aggFunc: 'sum'
-    },
-    {
-      headerName: 'EAC',
-      field: 'eac',
-      width: 150,
-      valueFormatter: (p) => formatCurrency(p.value),
-      type: 'numericColumn',
-      cellStyle: { fontWeight: 'bold' },
-      aggFunc: 'sum'
-    },
-      {
-        headerName: 'Actions',
-        width: 100,
-        pinned: 'right',
-        cellRenderer: (p: any) => {
-          if (p.node.rowPinned) return null;
-          return (
-            <div className="flex items-center gap-2 h-full">
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setChangeToDelete(p.data);
-                  setIsDeleteChangeOpen(true);
-                }}
-                className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          );
-        }
-      }
-  ];
+  const changeColumnDefs = buildChangeColumnDefs({
+    reportingPeriodsList: project.reportingPeriods?.periods || [],
+    enterpriseChangeAttrs,
+    projectChangeAttrs,
+    setSelectedChangeId,
+    setChangeToDelete,
+    setIsDeleteChangeOpen,
+  });
 
-  // Dynamically add enterprise change attributes
-  const enterpriseChangeAttrs = (enterprise.changeAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
-  if (enterpriseChangeAttrs.length > 0) {
-    changeColumnDefs.splice(changeColumnDefs.length - 1, 0, {
-      headerName: 'Enterprise Change Attributes',
-      openByDefault: true,
-      children: enterpriseChangeAttrs.map((attr, index) => ({
-        headerName: attr.title,
-        field: `enterpriseAttributes.${attr.id}`,
-        width: 200,
-        columnGroupShow: index === 0 ? undefined : 'open',
-        editable: true,
-        cellEditor: 'agRichSelectCellEditor',
-        cellEditorParams: {
-          values: (attr.values || [])
-            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-            .map(v => `${v.id} | ${v.description}`),
-          searchType: 'matchAny',
-          allowTyping: true,
-          filterList: true
-        },
-        enableRowGroup: true
-      }))
-    });
-  }
-
-  // Dynamically add project change attributes
-  const projectChangeAttrs = (project.changeAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
-  if (projectChangeAttrs.length > 0) {
-    changeColumnDefs.splice(changeColumnDefs.length - 1, 0, {
-      headerName: 'Project Change Attributes',
-      openByDefault: true,
-      children: projectChangeAttrs.map((attr, index) => ({
-        headerName: attr.title,
-        field: `projectAttributes.${attr.id}`,
-        width: 200,
-        columnGroupShow: index === 0 ? undefined : 'open',
-        editable: true,
-        cellEditor: 'agRichSelectCellEditor',
-        cellEditorParams: {
-          values: (attr.values || [])
-            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-            .map(v => `${v.id} | ${v.description}`),
-          searchType: 'matchAny',
-          allowTyping: true,
-          filterList: true
-        },
-        enableRowGroup: true
-      }))
-    });
-  }
-
-  const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => [
-    {
-      headerName: '',
-      headerCheckboxSelection: true,
-      checkboxSelection: true,
-      headerCheckboxSelectionFilteredOnly: true,
-      width: 50,
-      pinned: 'left',
-      sortable: false,
-      filter: false
-    },
-    {
-      headerName: 'Cost Code',
-      field: 'costCodeId',
-      editable: true,
-      width: 200,
-      cellEditor: 'agRichSelectCellEditor',
-      cellEditorParams: {
-        values: costCodes.map(c => c.code),
-        searchType: 'match',
-        allowTyping: true,
-        filterList: true
-      },
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Scope',
-      field: 'scope',
-      editable: true,
-      width: 250,
-      enableRowGroup: true
-    },
-    {
-      headerName: 'Enterprise Line-Item Attributes',
-      openByDefault: true,
-      children: enterpriseLineItemAttrs.map((attr, index) => ({
-        headerName: attr.title,
-        field: `enterpriseAttributes.${attr.id}`,
-        width: 200,
-        columnGroupShow: index === 0 ? undefined : 'open',
-        editable: true,
-        cellEditor: 'agRichSelectCellEditor',
-        cellEditorParams: {
-          values: (attr.values || [])
-            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-            .map(v => `${v.id} | ${v.description}`),
-          searchType: 'matchAny',
-          allowTyping: true,
-          filterList: true
-        },
-        enableRowGroup: true
-      }))
-    },
-    {
-      headerName: 'Project Line-Item Attributes',
-      openByDefault: true,
-      children: projectLineItemAttrs.map((attr, index) => ({
-        headerName: attr.title,
-        field: `projectAttributes.${attr.id}`,
-        width: 200,
-        columnGroupShow: index === 0 ? undefined : 'open',
-        editable: true,
-        cellEditor: 'agRichSelectCellEditor',
-        cellEditorParams: {
-          values: (attr.values || [])
-            .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-            .map(v => `${v.id} | ${v.description}`),
-          searchType: 'matchAny',
-          allowTyping: true,
-          filterList: true
-        },
-        enableRowGroup: true
-      }))
-    },
-    {
-      headerName: 'Budget Amount',
-      field: 'budgetAmount',
-      editable: true,
-      width: 150,
-      type: 'numericColumn',
-      valueFormatter: (p) => formatCurrency(p.value),
-      cellEditor: 'agNumberCellEditor',
-      aggFunc: 'sum'
-    },
-    {
-      headerName: 'EAC Amount',
-      field: 'eacAmount',
-      editable: true,
-      width: 150,
-      type: 'numericColumn',
-      valueFormatter: (p) => formatCurrency(p.value),
-      cellEditor: 'agNumberCellEditor',
-      aggFunc: 'sum'
-    },
-    {
-      headerName: 'Actions',
-      width: 100,
-      pinned: 'right',
-      cellRenderer: (p: any) => {
-        if (p.node.rowPinned) return null;
-        return (
-          <div className="flex items-center gap-2 h-full">
-            <button 
-              onClick={async (e) => {
-                e.stopPropagation();
-                await changeRepo.deleteChangeRecord(p.data.id);
-                updateParentTotals(p.data.changeId);
-              }}
-              className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        );
-      }
-    }
-  ], [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, changes]);
+  const recordColumnDefs = useMemo(
+    () =>
+      buildChangeRecordColumnDefs({
+        costCodes,
+        enterpriseLineItemAttrs,
+        projectLineItemAttrs,
+        deleteChangeRecord: (id) => changeRepo.deleteChangeRecord(id),
+      }),
+    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]
+  );
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-white dark:bg-[#141414] border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
@@ -1224,7 +785,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             <AgGridReact
               theme="legacy"
               ref={gridRef}
-              rowData={changes}
+              rowData={changesWithRollups}
               columnDefs={changeColumnDefs}
               pinnedTopRowData={changesPinnedBottomRowData}
               groupDefaultExpanded={-1}
@@ -1275,231 +836,28 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         </div>
       </div>
 
-      {/* Records Section */}
-      <AnimatePresence>
-        {selectedChangeId && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ 
-              height: isMainTableCollapsed ? 'calc(100% - 60px)' : '60%', 
-              opacity: 1 
-            }}
-            exit={{ height: 0, opacity: 0 }}
-            className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0a0a0a] flex flex-col overflow-hidden"
-          >
-            <div className="p-4 flex items-center justify-between bg-white dark:bg-[#141414] border-b border-gray-200 dark:border-white/10">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <ClipboardList className="w-5 h-5 text-emerald-600" />
-                  <h3 className="font-bold dark:text-white">Change Records: <span className="text-emerald-600">{changes.find(c => c.id === selectedChangeId)?.changeId}</span></h3>
-                </div>
-                <div className="h-4 w-px bg-gray-200 dark:bg-white/10" />
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Search records..."
-                    value={recordsQuickFilterText}
-                    onChange={(e) => setRecordsQuickFilterText(e.target.value)}
-                    className="pl-9 pr-4 py-1.5 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-lg text-xs focus:ring-2 focus:ring-emerald-500 outline-none w-48 dark:text-white"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="file" ref={recordFileInputRef} className="hidden" accept=".xlsx,.xls,.csv" onChange={handleImportRecords} />
-                <button onClick={() => recordFileInputRef.current?.click()} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Import Records"><Upload className="w-4 h-4" /></button>
-                <button onClick={handleExportRecords} className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Export Records"><Download className="w-4 h-4" /></button>
-                
-                <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
+      <ChangeRecordsPanel
+        project={project}
+        enterprise={enterprise}
+        theme={theme}
+        selectedChangeId={selectedChangeId}
+        onClose={() => setSelectedChangeId(null)}
+        changes={changes}
+        changeRecords={changeRecords}
+        costCodes={costCodes}
+        isMainTableCollapsed={isMainTableCollapsed}
+        recordColumnDefs={recordColumnDefs}
+        onCellValueChanged={onRecordCellValueChanged}
+      />
 
-                <button 
-                  onClick={() => toggleAllRecordColumnGroups(true)}
-                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                  title="Expand All Groups"
-                >
-                  <Maximize2 className="w-4 h-4" />
-                </button>
-                <button 
-                  onClick={() => toggleAllRecordColumnGroups(false)}
-                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                  title="Collapse All Groups"
-                >
-                  <Minimize2 className="w-4 h-4" />
-                </button>
-
-                <div className="w-px h-6 bg-gray-200 dark:bg-white/10 mx-1" />
-
-                {selectedRecordIds.size > 0 && (
-                  <div className="flex items-center gap-2">
-                    <button 
-                      onClick={() => setIsBulkRecordUpdateOpen(true)}
-                      className="flex items-center gap-2 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-blue-700 transition-all shadow-sm"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" /> Update ({selectedRecordIds.size})
-                    </button>
-                    <button 
-                      onClick={async () => {
-                        if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
-                          await Promise.all([...selectedRecordIds].map(id => changeRepo.deleteChangeRecord(id)));
-                          updateParentTotals(selectedChangeId);
-                          setSelectedRecordIds(new Set());
-                          toast.success(`Deleted ${selectedRecordIds.size} records`);
-                        }
-                      }}
-                      className="flex items-center gap-2 bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-red-700 transition-all shadow-sm"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete ({selectedRecordIds.size})
-                    </button>
-                  </div>
-                )}
-
-                <button 
-                  onClick={handleAddRecord}
-                  className="flex items-center gap-2 px-4 py-2 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold hover:bg-black/90 dark:hover:bg-white/90 transition-all shadow-lg shadow-black/10"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add
-                </button>
-                <button 
-                  onClick={() => setSelectedChangeId(null)}
-                  className="p-2 text-gray-400 hover:text-black dark:hover:text-white transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 relative">
-              <div className={cn(
-                "absolute inset-0 ag-theme-quartz",
-                theme === 'dark' ? "ag-theme-quartz-dark" : ""
-              )}>
-                <AgGridReact
-                  theme="legacy"
-                  ref={recordsGridRef}
-                  rowData={changeRecords}
-                  columnDefs={recordColumnDefs}
-                  pinnedTopRowData={recordPinnedBottomRowData}
-                  getRowClass={(params) => {
-                    if (params.node.rowPinned) return 'pinned-row-highlight';
-                    return '';
-                  }}
-                  quickFilterText={recordsQuickFilterText}
-                  onCellValueChanged={onRecordCellValueChanged}
-                  onSelectionChanged={(p) => {
-                    const selectedRows = p.api.getSelectedRows();
-                    const displayedSelected = selectedRows.filter(row => {
-                      const node = p.api.getRowNode(row.id);
-                      return node && node.displayed;
-                    });
-                    setSelectedRecordIds(new Set(displayedSelected.map(r => r.id)));
-                  }}
-                  onFilterChanged={(p) => {
-                    const selectedRows = p.api.getSelectedRows();
-                    const displayedSelected = selectedRows.filter(row => {
-                      const node = p.api.getRowNode(row.id);
-                      return node && node.displayed;
-                    });
-                    setSelectedRecordIds(new Set(displayedSelected.map(r => r.id)));
-                  }}
-                  getRowId={(params) => params.data.id}
-                  rowSelection="multiple"
-                  suppressRowClickSelection={true}
-                  sideBar={sideBar}
-                  statusBar={statusBar}
-                  rowGroupPanelShow="always"
-                  pivotPanelShow="always"
-                  groupDisplayType="multipleColumns"
-                  enableRangeSelection={true}
-                  enableFillHandle={true}
-                  undoRedoCellEditing={true}
-                  animateRows={true}
-                  defaultColDef={{
-                    sortable: true,
-                    filter: true,
-                    resizable: true,
-                    enableRowGroup: true,
-                    enablePivot: true,
-                    enableValue: true,
-                  }}
-                />
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Create Change Modal */}
-      <Dialog open={isCreateChangeOpen} onOpenChange={setIsCreateChangeOpen}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle>Create New Change</DialogTitle>
-            <DialogDescription>Enter the details for the new project change.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateChange} className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Change ID</label>
-                <Input 
-                  required
-                  maxLength={20}
-                  value={newChange.changeId}
-                  onChange={e => setNewChange({...newChange, changeId: e.target.value})}
-                  placeholder="e.g. CHG-001"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Period</label>
-                <Select 
-                  value={newChange.periodId} 
-                  onValueChange={v => setNewChange({...newChange, periodId: v})}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Period" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(project.reportingPeriods?.periods || []).map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Description</label>
-              <Input 
-                value={newChange.description}
-                onChange={e => setNewChange({...newChange, description: e.target.value})}
-                placeholder="Brief description of the change"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Initiator</label>
-                <Input 
-                  maxLength={50}
-                  value={newChange.initiator}
-                  onChange={e => setNewChange({...newChange, initiator: e.target.value})}
-                  placeholder="Person who initiated"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold uppercase tracking-widest text-gray-500">Reference</label>
-                <Input 
-                  maxLength={50}
-                  value={newChange.reference}
-                  onChange={e => setNewChange({...newChange, reference: e.target.value})}
-                  placeholder="External reference #"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setIsCreateChangeOpen(false)}>Cancel</Button>
-              <Button type="submit" className="bg-black text-white dark:bg-white dark:text-black">Create Change</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <ChangeFormDialog
+        project={project}
+        isOpen={isCreateChangeOpen}
+        onOpenChange={setIsCreateChangeOpen}
+        newChange={newChange}
+        setNewChange={setNewChange}
+        onSubmit={handleCreateChange}
+      />
 
       {/* Delete Confirmation */}
       <Dialog open={isDeleteChangeOpen} onOpenChange={setIsDeleteChangeOpen}>
@@ -1535,127 +893,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsBulkDeleteOpen(false)}>Cancel</Button>
             <Button variant="destructive" onClick={handleBulkDelete}>Delete Selected</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      {/* Bulk Update Records Modal */}
-      <Dialog open={isBulkRecordUpdateOpen} onOpenChange={setIsBulkRecordUpdateOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Bulk Update Records</DialogTitle>
-            <DialogDescription>
-              Update selected fields for {selectedRecordIds.size} records.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Cost Code</label>
-              <Select 
-                value={bulkRecordUpdateData.costCodeId} 
-                onValueChange={(v) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, costCodeId: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Cost Code" />
-                </SelectTrigger>
-                <SelectContent>
-                  {costCodes.map(c => (
-                    <SelectItem key={c.id} value={c.code}>{c.code} - {c.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Scope</label>
-              <Input 
-                value={bulkRecordUpdateData.scope}
-                onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, scope: e.target.value })}
-                placeholder="Enter scope..."
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Budget Amount</label>
-                <Input 
-                  type="number"
-                  value={bulkRecordUpdateData.budgetAmount}
-                  onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, budgetAmount: e.target.value })}
-                  placeholder="0.00"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">EAC Amount</label>
-                <Input 
-                  type="number"
-                  value={bulkRecordUpdateData.eacAmount}
-                  onChange={(e) => setBulkRecordUpdateData({ ...bulkRecordUpdateData, eacAmount: e.target.value })}
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-
-            {/* Enterprise Attributes */}
-            {enterprise.lineItemAttributes && enterprise.lineItemAttributes.length > 0 && (
-              <div className="space-y-4 pt-2 border-t border-gray-100 dark:border-white/10">
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Enterprise Attributes</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  {enterprise.lineItemAttributes.map(attr => (
-                    <div key={attr.id} className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{attr.title}</label>
-                      <Select 
-                        value={bulkRecordUpdateData.enterpriseAttributes[attr.id] || ''} 
-                        onValueChange={val => setBulkRecordUpdateData(prev => ({
-                          ...prev,
-                          enterpriseAttributes: { ...prev.enterpriseAttributes, [attr.id]: val }
-                        }))}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {attr.values.map(v => (
-                            <SelectItem key={v.id} value={v.id}>{v.id} - {v.description}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Project Attributes */}
-            {project.lineItemAttributes && project.lineItemAttributes.length > 0 && (
-              <div className="space-y-4 pt-2 border-t border-gray-100 dark:border-white/10">
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Project Attributes</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  {project.lineItemAttributes.map(attr => (
-                    <div key={attr.id} className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{attr.title}</label>
-                      <Select 
-                        value={bulkRecordUpdateData.projectAttributes[attr.id] || ''} 
-                        onValueChange={val => setBulkRecordUpdateData(prev => ({
-                          ...prev,
-                          projectAttributes: { ...prev.projectAttributes, [attr.id]: val }
-                        }))}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Select..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {attr.values.map(v => (
-                            <SelectItem key={v.id} value={v.id}>{v.id} - {v.description}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsBulkRecordUpdateOpen(false)}>Cancel</Button>
-            <Button onClick={handleBulkUpdateRecords}>Update Records</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

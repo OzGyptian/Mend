@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Project, Enterprise, CostCode } from '../types';
 import { 
-  DollarSign, 
-  Plus, 
-  Filter, 
-  Search, 
-  Download, 
-  Trash2, 
+  DollarSign,
+  Plus,
+  Filter,
+  Search,
+  Download,
   Save,
   ChevronDown,
   FileSpreadsheet,
@@ -25,14 +24,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AgGridReact } from 'ag-grid-react';
-import { 
-  ColDef, 
-  ColGroupDef, 
-  CellValueChangedEvent, 
-  GridReadyEvent,
-  ValueFormatterParams,
-  GridApi
-} from 'ag-grid-community';
+import { CellValueChangedEvent } from 'ag-grid-community';
 import { format, parseISO } from 'date-fns';
 import { 
   BarChart, 
@@ -57,6 +49,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from 'next-themes';
 import DataGridModule from './DataGridModule';
+import { buildActualCostColumnDefs } from './actual-cost/columns';
 import {
   Dialog,
   DialogContent,
@@ -144,7 +137,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     try {
       const ccData = costCodes.find(c => c.id === costCodeId);
       if (!ccData) return;
-      const codeActuals = records.filter(r => r.costCodeId === costCodeId || r.costCodeId === ccData.code);
+      const codeActuals = records.filter(r => r.costCodeId === costCodeId);
       const totalToDate = codeActuals.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
@@ -480,177 +473,17 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     }
   };
 
-  const columnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
-    const periods = project.reportingPeriods?.periods || [];
-    const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-    const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
-    const allowedPeriods = periods.slice(0, currentPeriodIndex + 1);
-
-    const enterpriseAttrs = (enterprise.lineItemAttributes || []).filter(a => a.title);
-    const projectAttrs = (project.lineItemAttributes || []).filter(a => a.title);
-
-    const defs: (ColDef | ColGroupDef)[] = [
-      {
-        headerName: 'Core Information',
-        children: [
-          {
-            headerName: 'Cost Code ID',
-            field: 'costCodeId',
-            sort: 'asc',
-            width: 180,
-            checkboxSelection: true,
-            headerCheckboxSelection: true,
-            headerCheckboxSelectionFilteredOnly: true,
-            editable: isProjectAdmin,
-            cellEditor: 'agRichSelectCellEditor',
-            cellEditorParams: {
-              values: ['', ...costCodes.map(c => c.id)],
-              formatValue: (id: string) => {
-                if (!id) return '';
-                const cc = costCodes.find(c => c.id === id);
-                return cc ? `${cc.code} - ${cc.name}` : id;
-              },
-              searchType: 'match',
-              allowTyping: true,
-              filterList: true
-            },
-            valueFormatter: (params) => {
-              if (!params.value) return '';
-              return costCodes.find(c => c.id === params.value)?.code || params.value;
-            },
-            filter: 'agSetColumnFilter',
-          },
-          {
-            headerName: 'Item',
-            field: 'item',
-            width: 150,
-            editable: isProjectAdmin,
-            filter: 'agTextColumnFilter',
-          },
-          {
-            headerName: 'Description',
-            field: 'description',
-            width: 250,
-            editable: isProjectAdmin,
-            filter: 'agTextColumnFilter',
-          },
-          {
-            headerName: 'Source',
-            field: 'source',
-            width: 100,
-            editable: isProjectAdmin,
-            cellEditor: 'agSelectCellEditor',
-            cellEditorParams: {
-              values: ['MAN', 'ACC', 'FIN', 'REV'],
-            },
-            filter: 'agSetColumnFilter',
-          },
-          {
-            headerName: 'Cost',
-            field: 'cost',
-            width: 120,
-            type: 'numericColumn',
-            editable: isProjectAdmin,
-            valueFormatter: (params) => formatCurrency(params.value),
-            aggFunc: 'sum',
-          },
-          {
-            headerName: 'Reporting Period',
-            field: 'reportingPeriodId',
-            width: 180,
-            editable: isProjectAdmin,
-            cellEditor: 'agSelectCellEditor',
-            cellEditorParams: {
-              values: allowedPeriods.map(p => p.id),
-            },
-            valueFormatter: (params) => {
-              const index = periods.findIndex(p => p.id === params.value);
-              return index !== -1 ? (index + 1).toString() : '';
-            },
-            filter: 'agSetColumnFilter',
-            filterParams: {
-              valueFormatter: (params: any) => {
-                const index = periods.findIndex(p => p.id === params.value);
-                return index !== -1 ? (index + 1).toString() : params.value;
-              }
-            }
-          },
-        ]
-      }
-    ];
-
-    if (enterpriseAttrs.length > 0) {
-      defs.push({
-        headerName: 'Enterprise Attributes',
-        children: enterpriseAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `enterpriseAttributes.${attr.id}`,
-          width: 150,
-          editable: isProjectAdmin,
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: attr.values.map(v => v.id),
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
-          },
-          valueSetter: (params: any) => {
-            if (!params.data.enterpriseAttributes) params.data.enterpriseAttributes = {};
-            params.data.enterpriseAttributes[attr.id] = params.newValue;
-            return true;
-          }
-        }))
-      });
-    }
-
-    if (projectAttrs.length > 0) {
-      defs.push({
-        headerName: 'Project Attributes',
-        children: projectAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `projectAttributes.${attr.id}`,
-          width: 150,
-          editable: isProjectAdmin,
-          cellEditor: 'agSelectCellEditor',
-          cellEditorParams: {
-            values: attr.values.map(v => v.id),
-          },
-          valueFormatter: (params: any) => {
-            const v = attr.values.find(v => v.id === params.value);
-            return v ? `${v.id} - ${v.description}` : params.value;
-          },
-          valueSetter: (params: any) => {
-            if (!params.data.projectAttributes) params.data.projectAttributes = {};
-            params.data.projectAttributes[attr.id] = params.newValue;
-            return true;
-          }
-        }))
-      });
-    }
-
-    defs.push({
-      headerName: 'Actions',
-      width: 80,
-      pinned: 'right',
-      cellRenderer: (params: any) => {
-        if (params.node.rowPinned) return null;
-        return (
-          <div className="flex items-center justify-center h-full">
-            <button 
-              onClick={() => handleDeleteRecord(params.data.id, params.data.costCodeId)}
-              className="p-1 hover:bg-red-50 text-gray-400 hover:text-red-600 rounded transition-colors"
-              disabled={!isProjectAdmin}
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          </div>
-        );
-      }
-    });
-
-    return defs;
-  }, [costCodes, project.reportingPeriods?.periods, enterprise.lineItemAttributes, project.lineItemAttributes, isProjectAdmin]);
+  const columnDefs = useMemo(
+    () => buildActualCostColumnDefs({
+      costCodes,
+      reportingPeriods: project.reportingPeriods,
+      enterpriseLineItemAttributes: enterprise.lineItemAttributes,
+      projectLineItemAttributes: project.lineItemAttributes,
+      isProjectAdmin,
+      onDeleteRecord: handleDeleteRecord,
+    }),
+    [costCodes, project.reportingPeriods, enterprise.lineItemAttributes, project.lineItemAttributes, isProjectAdmin, handleDeleteRecord]
+  );
 
   const sideBar = useMemo(() => ({
     toolPanels: [

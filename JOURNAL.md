@@ -310,3 +310,461 @@ Phase 11.8 — Identity unification: `hooks.ts isPlatformAdmin` is now the singl
 3. **Create branch `refactor/platform-seam`**.
 4. **Phase 1 — Complete Chunk 0 recon:** Map Gemini AI usage, confirm all Firestore collection names, confirm auth patterns, finalise folder structure proposal for Bernard's approval.
 5. Then **Phase 2 — Chunk 1: Scaffold & Move**.
+
+---
+
+## 2026-07-11 — SYSTEM_REVIEW.md v2 + Phase 13.A (security remediation)
+
+Branch: `refactor/phase-12-file-splits` · v1.0.86 → v1.0.87. (Note: the "what to
+do next" tail above is stale — left as historical record; see PLAN.md Phase 13
+for current status, and the "STATUS CORRECTION" note above Phase 13 for what
+Phase 11 items actually shipped vs. what the old checkboxes still claim.)
+
+Re-inspected the codebase against the 2026-07-09 SYSTEM_REVIEW.md, verified
+every prior finding against current code (177 unit tests, `tsc --noEmit`,
+grep counts), and rewrote it as v2. Confirmed fixed since v1: F11/F12 rule
+holes, F2 mostly (self-write restricted to admin-or-self, residue below), god
+components halved, domain layer real (eac/phasing/procurement/progress/risk/
+roles, all tested). Confirmed still open: F1 (stored roll-ups, 9 Recalculate
+buttons), F3 (invitation hole), F5 (11 `id OR code` FK sites), no CI. Wrote
+the v2 findings into PLAN.md as Phase 13, superseding the remainder of stale
+Phase 11 checkboxes.
+
+Discussed platform direction: Supabase *is* Postgres (not a stepping stone to
+it) — recommended finishing 13.A (security) + 13.B1 (compute-on-read
+roll-ups, storage-agnostic) on Firestore, then migrating to Supabase instead
+of building 13.B2 (FK migration)/13.C (cascade + schema) by hand on
+Firestore, since the SQL schema gives FK constraints, cascades, and
+migrations natively. Flagged as an open decision (§13.X in PLAN.md) pending
+Tarek's sign-off — not yet started.
+
+**Phase 13.A executed (F3 critical, F2 residue):**
+- Added `POST /api/accept-invite` on the Express server using `firebase-admin`
+  (new dependency): verifies the caller's ID token, looks up a real
+  pending/non-expired invitation matching the token+email, grants enterprise
+  membership server-side in one batch (uses `FieldValue.arrayUnion` instead
+  of the old client's read-modify-write array spread — closes a lost-update
+  race as a side effect).
+- Deleted `isJoiningViaInvitation()` from `firestore.rules` entirely —
+  `enterprises` update is now admin-only, `invitations` update is
+  system-admin-only. A client can no longer write itself into `adminUsers`
+  under any circumstance; the Admin SDK route is the only path.
+- `userRoles` rule split into `create`/`update`: self-writes can never set or
+  change `platformRole` (only `isSystemAdmin()` can). Confirmed no live UI
+  flow depends on self-writing `platformRole` (`setEnterpriseRole`/
+  `setProjectRole` exist on the adapter but are unused — dead code today).
+- `EnterpriseAdapter.acceptInvitation` signature dropped client-supplied
+  `userId`/`userEmail`/`displayName` — identity now comes only from the
+  verified ID token server-side.
+- Added `tests/security/firestore.rules.test.ts` (7 cases) run against the
+  actual rules text via the Firestore emulator — proves both negative cases
+  (attacker rejected on all three rule changes) and that legitimate
+  admin/self writes still succeed. Kept out of the default `vitest run` via
+  a separate `vitest.rules.config.ts` (needs the emulator); wired as
+  `npm run test:rules` (`firebase emulators:exec --only firestore ...`).
+  Required installing Java (`brew install openjdk`, no `sudo`/symlink step
+  needed — resolves via `/opt/homebrew/bin/java`) since the Firestore
+  emulator is JVM-based; this env is now emulator-capable for Phase 13.E CI
+  design too.
+- Documented the new required `FIREBASE_SERVICE_ACCOUNT_KEY` env var in
+  CLAUDE.md — missing key degrades `/api/accept-invite` to a clear 500
+  (same pattern as the existing `RESEND_API_KEY` guard), doesn't crash the
+  server.
+
+Verified clean: `tsc --noEmit`, `vitest run` (177/177), `npm run test:rules`
+(7/7), `npm run build`, `npm run lint:boundary` (5 pre-existing errors in
+untouched files only — react-hooks/exhaustive-deps config gap, not a
+boundary violation, not introduced by this session).
+
+**Deferred within Phase 13.A (not done this session):**
+- **13.A.4 — custom claim `platformAdmin`.** Requires an admin script run
+  against the *live* Firebase project with real service-account credentials
+  to set the claim on Tarek/Bernard's actual accounts, plus a
+  `firebase deploy --only firestore:rules` to ship the rule change. Neither
+  is something to do unattended — flagged as the next slice, needs Bernard
+  (has Firebase CLI access) to run the deploy/script step explicitly.
+- **13.A.5 — enterprise-create policy.** Explicitly a "decide with Tarek"
+  item per the plan; left as `allow create: if isAuthenticated()` (unchanged)
+  pending that conversation.
+- **Rules not yet deployed to production.** All changes are local/committed
+  on the branch. `firebase.json` points at project `gen-lang-client-0160759254`,
+  database `ai-studio-160b29f2-f546-4213-8031-e29afba8c034`; CLI is logged in
+  as bernard.w.leung@gmail.com in this environment, but deploying rules to a
+  shared production system is a confirm-first action, not a silent one.
+
+### What to do next
+1. Confirm with Bernard: deploy `firestore.rules` to production
+   (`firebase deploy --only firestore:rules`) — the F3/F2 fixes have zero
+   effect on real users until this ships.
+2. Set `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel env vars (see CLAUDE.md) so
+   `/api/accept-invite` works in production — currently the invite flow will
+   405/500 in prod without it.
+3. Phase 13.A.4 (custom claims) as its own slice — needs a live admin-script
+   run, coordinate with Bernard before executing.
+4. Phase 13.A.5 — enterprise-create policy decision with Tarek.
+5. Then Phase 13.B1 (compute-on-read roll-ups) — the core fragility fix,
+   storage-agnostic, should proceed regardless of the Supabase timing
+   decision.
+
+---
+
+## 2026-07-11 (continued, same day) — Phase 13.A deploy, 13.B1 complete, 13.E complete, 13.D complete, 13.C.2 (schemas only)
+
+Branch: `refactor/phase-12-file-splits` · v1.0.87 → v1.0.102, 23 commits. This
+continues directly from the entry above — same session, picked back up after
+Bernard stepped away from his computer partway through, worked everything
+that didn't need him present, deployed what he explicitly approved.
+
+### ⚠️ ACTION NEEDED FROM BERNARD (read this first)
+
+1. **Run the FK audit report** (safe, read-only, any time):
+   `npx tsx scripts/normalize-costcode-fk.ts --all-projects`
+   Tells you how many `costCodeId` values are actually ambiguous across
+   `actualCosts`/`baselineBudgets`/`changeRecords`/`subcontracts[].lineItems`.
+   If near-zero, 13.B2.2 (deleting the `id||code` fallbacks) and the whole
+   Supabase-timing conversation matter a lot less than the plan assumed.
+2. **Review and push `.github/workflows/ci.yml`** — built, every command
+   verified green locally, but deliberately not pushed to
+   `github.com/OzGyptian/Mend`. First CI run should be something you watch.
+3. **Decide on the 5 untracked `scripts/*.ts` admin tools** and the docx/md
+   docs at `Mend/` root — see the "repo hygiene" section below. Not touched
+   without your say-so; at least one script has a real production UID
+   hardcoded in it.
+4. **Set `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel** if not already done —
+   still the one thing blocking `/api/accept-invite` from working in prod
+   (flagged in the entry above, still outstanding as far as I know).
+5. Whenever you're ready: **13.A.4** (custom-claim admin model — needs a
+   live admin-script run with real credentials) and **13.A.5**
+   (enterprise-create policy — needs a decision, possibly with Tarek) are
+   the only remaining pieces of Phase 13.A.
+
+Everything else below is done, committed, and verified — nothing else is
+waiting on you specifically.
+
+### Phase 13.A — rules deployed
+
+`firebase deploy --only firestore:rules --project gen-lang-client-0160759254`
+— ran with Bernard's explicit go-ahead. The F3 (invitation hole) and F2
+residue (platformRole self-grant) fixes are **live in production** as of
+this session.
+
+### Phase 13.B1 — compute-on-read for all three financial roll-ups (F1 CLOSED)
+
+The core fragility fix from SYSTEM_REVIEW.md v2. Re-scoped during inventory:
+of the original "9 Recalculate sites," only 3 were genuine single-source-of-
+truth violations — the other 6 (GlobalTimephasing/LineItemsPanel phasing
+regen, BulkSubcontractInvoiceItems % fill, ProcurementProgress calendar date
+recalc, CostReportingPeriod's period-close snapshot) are legitimate
+user-triggered bulk actions, not passively-stale reads — left alone.
+
+- **Domain layer** (`src/domain/rollups.ts`, extended `risk.ts`): pure
+  aggregation functions taking raw leaf arrays, returning computed roll-ups.
+  `computeCostCodeRollup` delegates to the existing `computePeriodEndFields`
+  in `eac.ts` rather than reimplementing it. 44 new unit tests, every
+  formula cross-checked line-by-line against the real inline arithmetic
+  before it was deleted.
+- While tracing the exact live write path, found `CostCodes.tsx` had **two**
+  "recalculate" functions: `handleRecalculateAll` was dead code (never wired
+  to any button, wrote a stale field name that doesn't match the current
+  type) sitting alongside the real live handler `calculateCosts`. Deleted
+  the dead one, replaced the real one.
+- **E2E verification problem solved**: AG Grid virtualizes off-screen
+  columns (don't exist in the DOM until scrolled into view) and some render
+  with non-semantic auto-generated col-ids, so scroll-and-read-text
+  assertions were unreliable. Exposed the AG Grid API on
+  `window.__costCodesGridApi`, gated strictly to `VITE_ADAPTER === 'memory'`
+  (never present in a real build) — `tests/e2e/cost-report.characterization.spec.ts`
+  now reads exact cell values via `api.getCellValue()`.
+- Migrated all three screens — **CostCodes.tsx** (v1.0.91), **RiskManagement.tsx**
+  (v1.0.92, also fixed the duplicate in BulkRiskRecords.tsx), **ChangeManagement.tsx**
+  (v1.0.93, also fixed the duplicate in BulkChangeRecords.tsx) — to
+  compute-on-read. Deleted 3 Recalculate buttons and ~400 lines of
+  duplicated recalculation logic across 9 files. Confirmed safe to swap the
+  grid data source without touching column defs: every roll-up field was
+  already `editable: false` except `estimateAtCompletion` (only editable
+  when `eacMethod === 'Manual'`, where it's a genuine leaf, not derived).
+
+**F1 from SYSTEM_REVIEW.md v2 is closed** — no financial roll-up in the app
+is stored-and-manually-refreshed anymore.
+
+### Phase 13.B2.1 — FK audit script (built, NOT run against real data)
+
+`scripts/normalize-costcode-fk.ts` — see "ACTION NEEDED" above. Report-only
+by default, requires `--apply` to write, never auto-fixes orphaned records.
+Caught and fixed a real bug before it ever ran: the first draft's
+batch-write loop didn't actually split at Firestore's 500-write-per-batch
+limit. Re-scoped during investigation: the real ambiguity is 4 collections
+(`actualCosts`, `baselineBudgets`, `changeRecords`, embedded
+`subcontracts[].lineItems[].costCodeId`), not the "11 sites/8 files" the
+original review counted (some of those were false positives — unrelated
+UI-selection-state comparisons).
+
+### Phase 13.E — CI, lint, hygiene (all done, CI not pushed)
+
+- **`.github/workflows/ci.yml`** — 3 parallel jobs (lint+test+build, Firestore
+  rules emulator, 47-test Playwright suite) on every push + PRs to main. See
+  "ACTION NEEDED" above — not pushed yet.
+- **`npm run lint` genuinely green** — folded `lint:boundary` in (now runs
+  `tsc --noEmit && eslint`), which surfaced 5 pre-existing errors: stale
+  `eslint-disable-line react-hooks/exhaustive-deps` comments referencing a
+  rule that was never actually installed in this project's `eslint.config.js`
+  — dead no-ops, just triggering a "rule not found" error. Removed all 5
+  (plus one similarly-stale `no-explicit-any` disable in Header.tsx). Zero
+  errors, zero warnings now.
+- **Repo hygiene**: deleted 15 verified-safe Finder/iCloud-sync duplicate
+  artifacts (6 in `src/domain/`, 7 in `tests/e2e/`, `.git/index 2`, two empty
+  duplicated directories) — each one diffed/verified before deletion, not
+  assumed. One (`dashboard.spec 2.ts`) actually differed from its tracked
+  counterpart — turned out to be the pre-fix version from before v1.0.84's
+  "dashboard spec fix," confirmed safe to remove. Tracked `.firebaserc` +
+  `firestore.indexes.json` (standard non-secret Firebase config, previously
+  untracked). **Left alone, needs Bernard's decision**: 5 untracked
+  `scripts/*.ts` admin tools (`audit-user-access.ts`, `audit2.ts`,
+  `check-data.ts`, `check-procurement.ts`, `fix-enterprise-membership.ts` —
+  the last one hardcodes Bernard's real Firebase UID and an enterprise doc
+  id, session-specific, not generic tooling) and the docx/md/UUID/html
+  personal documents at `Mend/` root.
+- Added `firebase-tools` and `zod` as real devDependencies/dependencies
+  (both were previously either absent or only present transitively).
+
+### Phase 13.D — onboarding & error surfaces (F10 CLOSED)
+
+- **The `prompt()` dead-end** at App.tsx (a brand-new user with zero
+  enterprises hit a bare browser `prompt('Enter your Enterprise Name:')`)
+  replaced with an inline expand-to-form in the existing "Welcome to Mend"
+  card. While wiring this up, found a real bug: `<Toaster/>` was mounted
+  deep inside `AuthenticatedApp`'s main-shell render branch — only reached
+  once authenticated AND enterprise-selected — meaning toast calls during
+  login/registration or the pre-enterprise screen had no host to render
+  into and would have silently done nothing. Moved `<Toaster/>` and a new
+  `<ConfirmDialogProvider/>` to wrap the entire app.
+- Added `src/components/ConfirmDialogProvider.tsx` — async replacement for
+  `window.confirm()`, backed by the existing shadcn Dialog primitive.
+- **26 `alert()` calls** across 12 files → `toast.success`/`toast.error`
+  (delegated the mechanical sweep to an agent, independently verified every
+  diff myself before trusting it). **22 `confirm()` calls** across 16 files
+  → the new async `useConfirm()` hook (also agent-assisted, also
+  independently verified) — one site required real restructuring
+  (`subcontracts/columns.tsx`'s confirm lives in a plain builder function,
+  not a component, so `useConfirm()` had to be threaded through as a dep
+  from `LineItemsPanel.tsx` instead of called directly, to respect Rules of
+  Hooks).
+- `bootstrapIfEmpty` failures now surface via `toast.error`, not just
+  `console.error`.
+- Invite-token URL cleanup was already done as a side effect of the Phase
+  13.A invite rewrite (confirmed still in place, not redone).
+- **13.D.2 (top-level error boundary) was already done** before this
+  session — `src/components/ErrorBoundary.tsx` already wraps the whole app
+  in `main.tsx` with a proper fallback UI. Nothing to build.
+
+Zero `alert()`/`confirm()`/`prompt()` calls remain anywhere in `src/`
+(verified via grep). Not visually verified in an actual browser (none
+available this session) — verified via tsc, unit tests, and the full E2E
+suite at every step, plus direct diff review of every agent-produced change.
+
+### Phase 13.C.2 — zod schemas (definitions only, NOT wired into adapters)
+
+`src/domain/schemas/` — 40 zod schemas across 8 files, one per type in
+`domain/types.ts`, plus 49 runtime parse tests. Deliberately scoped down
+from the full 13.C.2 item: **adapter wiring (parse-on-read with
+log+quarantine, parse-on-write with throw) is NOT done** — that's a much
+larger, higher-risk change touching ~10 adapters' read/write paths
+(parse-on-write-throws could reject currently-tolerated real production
+data), left as its own clearly-separate follow-up rather than rushed
+through at the end of an already-long session.
+
+Caught a real problem before committing: the schemas were originally
+written as `const XSchema: z.ZodType<X> = z.object({...})` — the standard
+pattern for a compile-time guarantee that the zod shape matches the TS
+interface exactly. That guarantee silently doesn't work in this repo
+because `tsconfig.json` has no `strictNullChecks` — without it, TS treats
+every zod-object field as optional regardless of the interface, producing
+36 false-positive errors that would have broken `npm run lint` (the same
+command CI runs). Verified this directly before it shipped. Enabling
+`strictNullChecks` repo-wide to make the pattern work is a much bigger,
+separate initiative (surfaces ~132 unrelated pre-existing errors elsewhere
+when tested — did not pursue). Removed the `z.ZodType<T>` annotations;
+correctness now rests on the 49 runtime tests plus manual cross-referencing
+against the raw `types.ts` source (spot-checked several of the more complex
+ones — `Project`, `Risk`, `RiskRecord` — directly against the interface
+text).
+
+**13.C.1 (cascade-delete registry) deliberately skipped** — unlike the
+schemas, this one is genuinely throwaway if the Supabase migration starts
+(Postgres gives `ON DELETE CASCADE` for free), so not worth building on
+Firestore right now.
+
+### Verified clean throughout (every commit, not just at the end)
+
+`tsc --noEmit`, `npm run lint` (tsc + eslint boundary), `npx vitest run`
+(252/252 by the end), `npm run test:rules` (7/7, Firestore emulator),
+`npm run build`, `npx playwright test` (47/47).
+
+### What to do next
+
+See "ACTION NEEDED FROM BERNARD" at the top of this entry. After those:
+wire the zod schemas into the Firestore adapters (rest of 13.C.2), then
+either the Supabase migration conversation or 13.B2.2 depending on what the
+FK audit report shows.
+
+## 2026-07-11 (continued, same day) — FK audit applied + 13.B2.2 (id||code fallback removal)
+
+Acted on the "ACTION NEEDED FROM BERNARD" item #1 from the prior entry: ran
+`scripts/normalize-costcode-fk.ts --all-projects` for real (report mode
+first, then `--apply` on Bernard's go-ahead — test data, minimal risk).
+
+**Audit result: ambiguity was real, not near-zero** (this matters — the plan
+had assumed near-zero would deprioritize 13.B2.2 and the Supabase-timing
+conversation). 575 ambiguous `costCodeId` values found across 3 projects
+(12 / 535 / 28), all fixed via `--apply`. 535 collapsed to 49 document
+writes for the subcontract-lineItems-heavy project — `lineItems` is an
+array field, so multiple ambiguous entries in the same subcontract doc are
+one write, not one each.
+
+**6 orphaned records left untouched** in project `E9h5Oh9kLsIoIoxjBarT` —
+`costCodeId="E3 - E3"` / `"E2 - E2"` (doubled code string, not a normal
+id/code mismatch). Not investigated yet — the write path producing this
+malformed shape is still unknown. Follow-up, not done this session.
+
+**Given the audit wasn't near-zero, proceeded with 13.B2.2 properly** rather
+than just deleting the read-side fallback in isolation. Found the real risk
+first: 4 CSV bulk-import write paths (`BulkRiskRecords.tsx`,
+`LineItemsPanel.tsx`, `ProgressItemsPanel.tsx`, `BulkChangeRecords.tsx`)
+wrote whatever a user typed in a spreadsheet cell straight into
+`costCodeId` with zero resolution to the actual doc id — unlike
+`ActualCost.tsx`/`BaselineBudget.tsx`, which already resolved correctly.
+Deleting the read-side fallback before fixing these would have made bad
+data disappear silently instead of erroring. Fixed all 4 to resolve
+code-or-id input via `costCodes.find(c => c.id === raw || c.code === raw)`
+(same pattern `ActualCost.tsx` already used) before writing.
+`BulkChangeRecords.tsx` was the interesting case — it already validated the
+cost code existed via a lookup, just wasn't using the resolved id.
+
+Then removed the now-dead read-side `id||code` fallback comparisons in 8
+sites: `ActualCost.tsx`, `BaselineBudget.tsx`, `CostCodes.tsx` (×3),
+`CostReportingPeriod.tsx` (×2), `GlobalTimephasing.tsx`.
+
+**Found a 9th, different bug while in `CostCodes.tsx`**: the "Changes"
+drill-down filter (`selectedChangesCode`) compared `changeRecords.costCodeId`
+(a doc id) directly against a raw `.code` string with *no* resolution at
+all — unlike its 3 sibling filters (baseline/actuals/timephasing) in the
+same file, which all resolve through a `costCodeObj` lookup first. This
+looks like a pre-existing bug (the Changes drill-down likely never filtered
+correctly), not something this session's changes caused. Fixed it to match
+the sibling pattern.
+
+Deliberately left `costPhasing`/`etcDetails` alone — confirmed via
+`domain/rollups.ts`'s own comment that `EtcDetail` is intentionally keyed by
+the code string, not the id. Different design, not a fallback bug; out of
+scope of the FK audit's 4 target collections.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 252/252,
+`npm run test:rules` 7/7, `npx playwright test` 47/47. Re-ran the audit
+script (report-only) as a regression check afterward: **0 ambiguous**
+across every project with cost codes. One project (`YYAvcfIxOuu4BSz3eYai`)
+hit a Firestore free-tier daily-read-quota error mid-scan on the regression
+run — unrelated to this change, just quota exhausted from two full scans in
+one session. Worth re-running that single project once quota resets if full
+coverage confirmation matters.
+
+### What to do next
+
+- Re-scan `YYAvcfIxOuu4BSz3eYai` once Firestore quota resets, to confirm 0
+  ambiguous there too (wasn't reached in the regression check).
+- Investigate the 6 orphaned `"E3 - E3"`/`"E2 - E2"` records' write path —
+  still unknown, still untouched.
+- Everything else from the prior entry's "ACTION NEEDED FROM BERNARD" list
+  is still open (CI push, untracked scripts/docs decision,
+  `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel, 13.A.4/13.A.5).
+
+## 2026-07-11 (continued, same day #2) — root cause of the orphan bug found and fixed
+
+Continued from the FK audit session. Went looking for the write path
+producing the `"E3 - E3"` / `"E2 - E2"` orphaned records and found something
+bigger than expected: the actual root cause of most of today's ambiguity,
+not just the orphan pattern.
+
+**Root cause:** `src/components/subcontracts/columns.tsx` had two AG Grid
+columns — `costCodeId` (subcontract line items) and `defaultCostCodeId`
+(subcontract-level default) — using `agRichSelectCellEditor` with
+`values: sortedCostCodes.map(c => c.code)` (the underlying value list was
+the CODE, not the id) and `allowTyping: true`, with **no `valueSetter`**.
+AG Grid's default behavior with no valueSetter writes `newValue` straight
+to the field, so this column has been storing the raw code in `costCodeId`
+by design — contradicting `domain/rollups.ts`, which trusts `costCodeId` as
+an id with no fallback. This is the everyday interactive editing path for
+subcontract line items, far more heavily used than CSV import, so it's the
+most likely dominant source of the 535 ambiguous records fixed earlier. It
+also explains the orphan pattern: `allowTyping` with no validation lets a
+user leave the *formatted display label itself* (`"E3 - E3"`, when a cost
+code's `name` happens to equal its `code`) in the cell, which then gets
+committed verbatim.
+
+Two more instances of the identical bug found while tracing this:
+`Subcontracts.tsx` and `SubcontractFormDialog.tsx` both have a plain HTML
+`<select><option value={c.code}>` for setting a subcontract's
+`defaultCostCodeId` on create/edit — same root cause, simpler fix (native
+select only allows listed options, no free-typing risk).
+
+**Fix, after checking with Bernard on the failure-mode design (reject
+silently, keep old value — matches the audit script's philosophy of never
+guessing on bad data):**
+- `columns.tsx`: both columns' `values`/`formatValue`/`valueFormatter`
+  switched from matching `.code` to matching `.id`. Added a `valueSetter`
+  to each that resolves the entered value (by id, by code, or by parsing a
+  `"CODE - NAME"` label back to its code) to the cost code's `.id`, and
+  returns `false` (rejects the edit, keeps the old value) if nothing
+  resolves — closing off future orphans at the source instead of just
+  cleaning them up after the fact.
+- `Subcontracts.tsx` / `SubcontractFormDialog.tsx`: `<option value={c.code}>`
+  → `<option value={c.id}>`.
+- Confirmed via grep that every other read site for `defaultCostCodeId`
+  (`CostCodes.tsx`, `GlobalTimephasing.tsx`, `domain/rollups.ts`) already
+  treated it as an id — only the write paths were wrong, so this closes the
+  loop rather than opening a new inconsistency.
+
+**Extended the audit script** (`scripts/normalize-costcode-fk.ts`) to also
+check `subcontracts.defaultCostCodeId` (a scalar field on the subcontract
+doc, separate from the already-audited `lineItems[].costCodeId` array) —
+this field was never in scope of the original audit, so any pre-existing
+bad data there is still live and unconfirmed. Generalized
+`auditTopLevelCollection` to accept a field name instead of hardcoding
+`costCodeId`. **Could not run it today** — hit the Firestore free-tier
+daily read quota (exhausted from today's two earlier full scans across all
+projects). The script change itself is inert until run, so safe to commit;
+the actual data check is still pending.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 252/252,
+`npx playwright test` 47/47 — all after the `columns.tsx` change (no
+existing test exercises editing a subcontract line item's cost code cell or
+the subcontract create/edit forms directly, so this fix is confirmed by
+type-check/lint only; genuinely untested at the interaction level, and no
+browser session was available this session to check manually).
+
+### What to do next
+
+- Run `npx tsx scripts/normalize-costcode-fk.ts --all-projects` once the
+  Firestore free daily quota resets, to check `defaultCostCodeId` for
+  existing bad data (never previously audited) and to finish the
+  `YYAvcfIxOuu4BSz3eYai` regression check from the prior entry.
+- Consider adding E2E/unit coverage for the `columns.tsx` valueSetter logic
+  and the subcontract create/edit cost-code dropdowns — currently
+  unexercised by any automated test.
+- Everything else from the prior two entries' outstanding items is still
+  open and unchanged.
+
+## 2026-07-11 (continued, same day #3) — DRY cleanup + test coverage for the cost code fix
+
+Noticed after the columns.tsx fix: the same "resolve raw id/code/label
+input to the cost code's canonical id" logic had been independently
+written 5 times across today's session (3 CSV import fixes, 2 columns.tsx
+valueSetters) - a DRY violation per the project's own coding standards.
+Extracted to `src/domain/costCodes.ts::resolveCostCodeId`, a pure function,
+and refactored all 5 call sites to use it. Added 10 unit tests covering id
+passthrough, code lookup, "CODE - NAME" label parsing, the doubled
+"E3 - E3" case specifically (the shape that caused today's orphaned
+records), whitespace trimming, and no-match. This also closes the test
+coverage gap flagged in the prior entry - the valueSetter logic was
+previously verified by type-check only.
+
+Verified: tsc+eslint clean, 262/262 unit (252 + 10 new), 47/47 E2E.

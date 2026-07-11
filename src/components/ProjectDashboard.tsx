@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import { Project, Sheet, Enterprise } from '../types';
 import { useCostRepo } from '../platform/firestore/hooks';
 import CostManagement from './CostManagement';
@@ -105,7 +106,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
       setSheetToDelete(null);
     } catch (error) {
       console.error('Failed to delete sheet', error);
-      alert('Failed to delete sheet. Check console for details.');
+      toast.error('Failed to delete sheet. Check console for details.');
     } finally {
       setIsDeleting(false);
     }

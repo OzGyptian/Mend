@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { AgGridReact } from 'ag-grid-react';
 import { ColDef, ICellRendererParams } from 'ag-grid-community';
 import * as XLSX from 'xlsx';
+import { useConfirm } from './ConfirmDialogProvider';
 
 enum OperationType {
   CREATE = 'create',
@@ -39,6 +40,7 @@ interface FlattenedStep extends RuleOfCreditStep {
 
 export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRulesOfCreditProps) {
   const progressRepo = useProgressRepo();
+  const confirmDialog = useConfirm();
   const [rules, setRules] = useState<RuleOfCredit[]>([]);
   const [loading, setLoading] = useState(true);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -89,7 +91,7 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
   };
 
   const deleteStepFromRoC = async (parentRoCId: string, stepId: string) => {
-    if (!window.confirm('Delete this step?')) return;
+    if (!(await confirmDialog('Delete this step?'))) return;
     const rule = rules.find(r => r.id === parentRoCId);
     if (!rule) return;
     const newSteps = (rule.steps || []).filter(s => s.id !== stepId);
@@ -105,7 +107,7 @@ export default function BulkRulesOfCredit({ project, theme = 'light' }: BulkRule
 
   const handleBulkDeleteSteps = async () => {
     if (selectedSteps.length === 0) return;
-    if (!window.confirm(`Delete ${selectedSteps.length} selected steps from their respective Rules of Credit?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedSteps.length} selected steps from their respective Rules of Credit?`))) return;
 
     const groupedByRoC: Record<string, string[]> = {};
     selectedSteps.forEach(s => {

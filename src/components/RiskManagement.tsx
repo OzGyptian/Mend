@@ -59,6 +59,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { useRiskRollups } from '../lib/riskRollups';
 import { betaPertExposure } from '../domain/risk';
 import { 
   BarChart, 
@@ -92,6 +93,9 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select';
+import { buildRiskColumnDefs, buildRiskRecordColumnDefs } from './risk-management/columns';
+import RiskRecordsPanel from './risk-management/panels/RiskRecordsPanel';
+import RiskFormDialog from './risk-management/panels/RiskFormDialog';
 
 
 interface RiskManagementProps {
@@ -105,10 +109,21 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   const [risks, setRisks] = useState<Risk[]>([]);
   const [riskRecords, setRiskRecords] = useState<RiskRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+
+  // Phase 13.B1.6: compute-on-read exposure/impact totals (SYSTEM_REVIEW.md v2 / PLAN.md F1).
+  // Replaces the stored exposure/minImpactTotal/mostLikelyImpactTotal/maxImpactTotal fields and
+  // the updateParentTotals() write-after-every-edit pattern (duplicated in BulkRiskRecords.tsx
+  // too) — those fields are always live-computed from RiskRecord leaves now. None of these
+  // columns were ever editable (see risk-management/columns.tsx), so this changes nothing about
+  // what users can type into cells.
+  const riskRollups = useRiskRollups(project.id, risks);
+  const risksWithRollups = useMemo(
+    () => risks.map((r) => ({ ...r, ...riskRollups.get(r.id) })),
+    [risks, riskRollups],
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRiskId, setSelectedRiskId] = useState<string | null>(null);
   const [quickFilterText, setQuickFilterText] = useState('');
-  const [recordsQuickFilterText, setRecordsQuickFilterText] = useState('');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
@@ -186,17 +201,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   const [isDeleteRiskOpen, setIsDeleteRiskOpen] = useState(false);
   const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState(false);
   const [riskToDelete, setRiskToDelete] = useState<Risk | null>(null);
-  
-  const [newRisk, setNewRisk] = useState({
-    riskId: '',
-    description: '',
-    type: '',
-    status: 'Open' as Risk['status'],
-    strategy: 'Mitigate' as Risk['strategy'],
-    initiator: '',
-    reference: '',
-    periodId: ''
-  });
 
   const [isMainTableCollapsed, setIsMainTableCollapsed] = useState(false);
 
@@ -211,24 +215,11 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   );
 
   const gridRef = useRef<AgGridReact>(null);
-  const recordsGridRef = useRef<AgGridReact>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recordFileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleAllRiskColumnGroups = (opened: boolean) => {
     if (!gridRef.current) return;
     const api = gridRef.current.api;
-    const groups = api.getColumnGroupState();
-    const newState = groups.map(g => ({
-      groupId: g.groupId,
-      open: opened
-    }));
-    api.setColumnGroupState(newState);
-  };
-
-  const toggleAllRecordColumnGroups = (opened: boolean) => {
-    if (!recordsGridRef.current) return;
-    const api = recordsGridRef.current.api;
     const groups = api.getColumnGroupState();
     const newState = groups.map(g => ({
       groupId: g.groupId,
@@ -267,14 +258,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     };
     reader.readAsBinaryString(file);
     e.target.value = '';
-  };
-
-  const handleExportRecords = () => {
-    if (recordsGridRef.current?.api) {
-      recordsGridRef.current.api.exportDataAsExcel({
-        fileName: `${project.projectCode}_Risk_Records_${selectedRiskId}_${new Date().toISOString().split('T')[0]}.xlsx`
-      });
-    }
   };
 
   const handleImportRecords = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -346,7 +329,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
         }
         if (toCreate.length > 0) await riskRepo.createManyRiskRecords(toCreate);
-        await updateParentTotals(selectedRiskId);
         toast.success(`Imported ${toCreate.length} records`);
       }
     } catch (error) {
@@ -357,15 +339,15 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   };
 
   const riskPinnedBottomRowData = useMemo(() => {
-    if (risks.length === 0) return [];
+    if (risksWithRollups.length === 0) return [];
     return [{
       riskId: 'TOTALS',
-      minImpactTotal: risks.reduce((sum, r) => sum + (r.minImpactTotal || 0), 0),
-      mostLikelyImpactTotal: risks.reduce((sum, r) => sum + (r.mostLikelyImpactTotal || 0), 0),
-      maxImpactTotal: risks.reduce((sum, r) => sum + (r.maxImpactTotal || 0), 0),
-      exposure: risks.reduce((sum, r) => sum + (r.exposure || 0), 0)
+      minImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.minImpactTotal || 0), 0),
+      mostLikelyImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.mostLikelyImpactTotal || 0), 0),
+      maxImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.maxImpactTotal || 0), 0),
+      exposure: risksWithRollups.reduce((sum, r) => sum + (r.exposure || 0), 0)
     }];
-  }, [risks]);
+  }, [risksWithRollups]);
 
   const recordPinnedBottomRowData = useMemo(() => {
     if (riskRecords.length === 0) return [];
@@ -421,7 +403,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     let cumulativeResidual = 0;
 
     const data = periods.map((p, index) => {
-      const periodRisks = risks.filter(r => r.periodId === p.id);
+      const periodRisks = risksWithRollups.filter(r => r.periodId === p.id);
       const exposure = periodRisks.reduce((sum, r) => sum + (r.exposure || 0), 0);
       
       cumulativeExposure += exposure;
@@ -439,7 +421,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     });
 
     return data;
-  }, [risks, project.reportingPeriods]);
+  }, [risksWithRollups, project.reportingPeriods]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -469,38 +451,11 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     });
   }, [project.id]);
 
-  const handleCreateRisk = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newRisk.riskId.trim()) { toast.error("Risk ID is required"); return; }
-    if (newRisk.riskId.length > 20) { toast.error("Risk ID must be max 20 characters"); return; }
-    if (risks.some(r => r.riskId.toLowerCase() === newRisk.riskId.toLowerCase())) { toast.error("Risk ID must be unique"); return; }
-
+  const handleCreateRisk = async (riskData: Omit<Risk, 'id'>) => {
     try {
-      const riskData: Omit<Risk, 'id'> = {
-        projectId: project.id,
-        riskId: newRisk.riskId.trim(),
-        description: newRisk.description,
-        type: newRisk.type || (enterprise.riskTypes?.[0] || ''),
-        status: newRisk.status,
-        strategy: newRisk.strategy,
-        initiator: newRisk.initiator.slice(0, 50),
-        reference: newRisk.reference.slice(0, 50),
-        exposure: 0,
-        minImpactTotal: 0,
-        mostLikelyImpactTotal: 0,
-        maxImpactTotal: 0,
-        mitigation: 0,
-        residualExposure: 0,
-        periodId: newRisk.periodId,
-        enterpriseAttributes: {},
-        projectAttributes: {},
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
       await riskRepo.createRisk(riskData as Omit<Risk, 'id' | 'createdAt' | 'updatedAt'>);
       toast.success("Risk created successfully");
       setIsCreateRiskOpen(false);
-      setNewRisk({ riskId: '', description: '', type: '', status: 'Open', strategy: 'Mitigate', initiator: '', reference: '', periodId: '' });
     } catch (error) {
       console.error('Create risk error:', error);
       toast.error('Failed to create risk.');
@@ -523,128 +478,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     }
   };
 
-  const updateParentTotals = async (riskId: string) => {
-    try {
-      const records = await riskRepo.listRiskRecords(project.id, riskId);
-      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
-        Number(r.minImpactAmount) || 0,
-        Number(r.mostLikelyImpactAmount) || 0,
-        Number(r.maxImpactAmount) || 0,
-        Number(r.probability) || 0,
-      ), 0);
-      const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
-      const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
-      const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
-
-      await riskRepo.updateRisk(riskId, {
-        exposure: totalBetaPert,
-        minImpactTotal: totalMin,
-        mostLikelyImpactTotal: totalLikely,
-        maxImpactTotal: totalMax,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error(`Error updating risk totals for ${riskId}:`, error);
-    }
-  };
-
-  const riskColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
-    const defs: (ColDef | ColGroupDef)[] = [
-      {
-        headerName: '', headerCheckboxSelection: true, checkboxSelection: true, headerCheckboxSelectionFilteredOnly: true, width: 50, pinned: 'left',
-      },
-      {
-        headerName: 'Risk ID', field: 'riskId', pinned: 'left', width: 150, sort: 'asc',
-        cellRenderer: (params: any) => {
-          if (params.node.rowPinned) return <span className="font-bold">{params.value}</span>;
-          return (
-            <button onClick={() => setSelectedRiskId(params.data.id)} className="text-blue-600 hover:text-blue-800 hover:underline font-bold text-left capitalize truncate">
-              {params.value}
-            </button>
-          );
-        }
-      },
-      { headerName: 'Period', field: 'periodId', editable: true, width: 120, cellEditor: 'agSelectCellEditor', cellEditorParams: { values: project.reportingPeriods?.periods.map(p => p.id) || [] }, valueFormatter: (p: any) => project.reportingPeriods?.periods.find(per => per.id === p.value)?.name || p.value },
-      { headerName: 'Description', field: 'description', editable: true, width: 250 },
-      { headerName: 'Type', field: 'type', editable: true, width: 150, cellEditor: 'agSelectCellEditor', cellEditorParams: { values: enterprise.riskTypes || [] } },
-      {
-        headerName: 'Status', field: 'status', editable: true, width: 130,
-        cellEditor: 'agSelectCellEditor', cellEditorParams: { values: ['Open', 'Mitigated', 'Closed', 'Realized'] },
-        cellClassRules: {
-          'text-amber-600 font-bold': (p: any) => p.value === 'Open',
-          'text-blue-600 font-bold': (p: any) => p.value === 'Mitigated',
-          'text-gray-500 font-bold': (p: any) => p.value === 'Closed',
-          'text-red-600 font-bold': (p: any) => p.value === 'Realized',
-        }
-      },
-      {
-        headerName: 'Strategy', field: 'strategy', editable: true, width: 130,
-        cellEditor: 'agSelectCellEditor', cellEditorParams: { values: ['Avoid', 'Mitigate', 'Transfer', 'Accept'] }
-      },
-      { headerName: 'Min Value $', field: 'minImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
-      { headerName: 'Most Likely $', field: 'mostLikelyImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
-      { headerName: 'Max Value $', field: 'maxImpactTotal', width: 130, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn' },
-      { headerName: 'Beta Pert Exposure', field: 'exposure', width: 160, valueFormatter: (p) => formatCurrency(p.value), type: 'numericColumn', cellStyle: { fontWeight: 'bold', color: '#dc2626' } },
-      {
-        headerName: 'Actions', width: 80, pinned: 'right',
-        cellRenderer: (p: any) => p.node.rowPinned ? null : (
-          <button onClick={() => { setRiskToDelete(p.data); setIsDeleteRiskOpen(true); }} className="p-1.5 text-gray-400 hover:text-red-600">
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )
-      }
-    ];
-
-    // Enterprise Risk Attributes
-    const enterpriseRiskAttrs = (enterprise.riskAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
-    if (enterpriseRiskAttrs.length > 0) {
-      defs.splice(defs.length - 1, 0, {
-        headerName: 'Enterprise Risk Attributes',
-        openByDefault: true,
-        children: enterpriseRiskAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `enterpriseAttributes.${attr.id}`,
-          width: 200,
-          editable: true,
-          cellEditor: 'agRichSelectCellEditor',
-          cellEditorParams: {
-            values: (attr.values || [])
-              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-              .map(v => `${v.id} | ${v.description}`),
-            searchType: 'matchAny',
-            allowTyping: true,
-            filterList: true
-          }
-        }))
-      });
-    }
-
-    // Project Risk Attributes
-    const projectRiskAttrs = (project.riskAttributes || []).filter(attr => attr.title && attr.title.trim() !== '' && attr.values && attr.values.length > 0);
-    if (projectRiskAttrs.length > 0) {
-      defs.splice(defs.length - 1, 0, {
-        headerName: 'Project Risk Attributes',
-        openByDefault: true,
-        children: projectRiskAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `projectAttributes.${attr.id}`,
-          width: 200,
-          editable: true,
-          cellEditor: 'agRichSelectCellEditor',
-          cellEditorParams: {
-            values: (attr.values || [])
-              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-              .map(v => `${v.id} | ${v.description}`),
-            searchType: 'matchAny',
-            allowTyping: true,
-            filterList: true
-          }
-        }))
-      });
-    }
-
-    return defs;
-  }, [project, enterprise, risks]);
+  const riskColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
+    buildRiskColumnDefs({ project, enterprise, setSelectedRiskId, setRiskToDelete, setIsDeleteRiskOpen }),
+    [project, enterprise, risks]
+  );
 
   // Handle cell value changes
   const onCellValueChanged = async (params: CellValueChangedEvent) => {
@@ -665,132 +502,10 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     }
   };
 
-  const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
-    const defs: (ColDef | ColGroupDef)[] = [
-      { headerName: '', checkboxSelection: true, headerCheckboxSelection: true, headerCheckboxSelectionFilteredOnly: true, width: 50, pinned: 'left' },
-      {
-        headerName: 'Cost Code', field: 'costCodeId', editable: true, width: 180,
-        cellEditor: 'agSelectCellEditor', 
-        cellEditorParams: { 
-          values: ['', ...costCodes.map(c => c.id)],
-          valueListGap: 0,
-          formatValue: (id: string) => {
-            if (!id) return 'Select Cost Code...';
-            const cc = costCodes.find(c => c.id === id);
-            return cc ? `${cc.code} - ${cc.name}` : id;
-          }
-        },
-        valueFormatter: (params) => {
-          if (!params.value) return '';
-          const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
-          return cc ? cc.code : params.value;
-        },
-        tooltipValueGetter: (params) => {
-          const cc = costCodes.find(c => c.id === params.value || c.code === params.value);
-          return cc ? `${cc.code} - ${cc.name}` : params.value;
-        }
-      },
-      { headerName: 'Scope', field: 'scope', editable: true, width: 250 },
-      {
-        headerName: 'Risk Impact Analysis',
-        openByDefault: true,
-        children: [
-          {
-            headerName: 'Prob %', field: 'probability', editable: true, width: 100,
-            valueFormatter: (p) => p.value === null ? '' : `${((p.value || 0) * 100).toFixed(0)}%`,
-            cellEditor: 'agNumberCellEditor',
-            cellEditorParams: { min: 0, max: 1 },
-            valueParser: (p) => Number(p.newValue) > 1 ? Number(p.newValue) / 100 : Number(p.newValue)
-          },
-          {
-            headerName: 'Min Value $', field: 'minImpactAmount', editable: true, width: 130, type: 'numericColumn',
-            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-          },
-          {
-            headerName: 'Most Likely $', field: 'mostLikelyImpactAmount', editable: true, width: 130, type: 'numericColumn',
-            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-          },
-          {
-            headerName: 'Maximum Value $', field: 'maxImpactAmount', editable: true, width: 130, type: 'numericColumn',
-            valueFormatter: (p) => formatCurrency(p.value), cellEditor: 'agNumberCellEditor'
-          },
-          {
-            headerName: 'Beta Pert', width: 120, type: 'numericColumn',
-            field: 'betaPertImpactAmount',
-            valueGetter: (p) => {
-              if (p.node.rowPinned) return p.data.betaPertImpactAmount;
-              const prob = Number(p.data.probability) || 0;
-              const min = Number(p.data.minImpactAmount) || 0;
-              const ml = Number(p.data.mostLikelyImpactAmount) || 0;
-              const max = Number(p.data.maxImpactAmount) || 0;
-              return betaPertExposure(min, ml, max, prob);
-            },
-            valueFormatter: (p) => formatCurrency(p.value),
-            cellStyle: { backgroundColor: 'rgba(220, 38, 38, 0.05)', fontWeight: 'bold' }
-          }
-        ]
-      },
-      {
-         headerName: 'Actions', width: 80, pinned: 'right',
-         cellRenderer: (p: any) => p.node.rowPinned ? null : (
-           <button onClick={async () => {
-             await riskRepo.deleteRiskRecord(p.data.id);
-             updateParentTotals(p.data.riskId);
-           }} className="p-1.5 text-gray-400 hover:text-red-600">
-             <Trash2 className="w-4 h-4" />
-           </button>
-         )
-      }
-    ];
-
-    // Enterprise Line Item Attributes
-    if (enterpriseLineItemAttrs.length > 0) {
-      defs.splice(defs.length - 1, 0, {
-        headerName: 'Enterprise Line-Item Attributes',
-        openByDefault: true,
-        children: enterpriseLineItemAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `enterpriseAttributes.${attr.id}`,
-          width: 200,
-          editable: true,
-          cellEditor: 'agRichSelectCellEditor',
-          cellEditorParams: {
-            values: (attr.values || [])
-              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-              .map(v => `${v.id} | ${v.description}`),
-            searchType: 'matchAny',
-            allowTyping: true,
-            filterList: true
-          }
-        }))
-      });
-    }
-
-    // Project Line Item Attributes
-    if (projectLineItemAttrs.length > 0) {
-      defs.splice(defs.length - 1, 0, {
-        headerName: 'Project Line-Item Attributes',
-        openByDefault: true,
-        children: projectLineItemAttrs.map(attr => ({
-          headerName: attr.title,
-          field: `projectAttributes.${attr.id}`,
-          width: 200,
-          editable: true,
-          cellEditor: 'agRichSelectCellEditor',
-          cellEditorParams: {
-            values: (attr.values || [])
-              .sort((a, b) => (a.id || '').localeCompare(b.id || ''))
-              .map(v => `${v.id} | ${v.description}`),
-            searchType: 'matchAny',
-            allowTyping: true,
-            filterList: true
-          }
-        }))
-      });
-    }
-
-    return defs;
-  }, [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]);
+  const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
+    buildRiskRecordColumnDefs({ costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo }),
+    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]
+  );
 
   const onRecordCellValueChanged = async (params: CellValueChangedEvent) => {
     const { data, colDef } = params;
@@ -809,9 +524,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       }
       
       await riskRepo.updateRiskRecord(data.id, updates);
-      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
-        updateParentTotals(data.riskId);
-      }
     } catch (error) {
       console.error(`Error updating risk record ${data.id}:`, error);
       toast.error('Failed to update record.');
@@ -825,7 +537,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         riskId: selectedRiskId, projectId: project.id, costCodeId: '', scope: '',
         probability: 1.0, minImpactAmount: 0, mostLikelyImpactAmount: 0, maxImpactAmount: 0, betaPertImpactAmount: 0,
       } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
-      await updateParentTotals(selectedRiskId);
       toast.success("Record added (Default Prob 100%)");
     } catch (error) {
       console.error('Add record error:', error);
@@ -874,7 +585,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         return [{ id, data: finalUpdates }];
       });
       await riskRepo.updateManyRiskRecords(recordUpdates);
-      await updateParentTotals(selectedRiskId);
       toast.success("Updated Successfully");
       setIsBulkRecordUpdateOpen(false);
       setSelectedRecordIds(new Set());
@@ -888,7 +598,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     if (selectedRecordIds.size === 0 || !selectedRiskId) return;
     try {
       await riskRepo.deleteManyRiskRecords([...selectedRecordIds]);
-      await updateParentTotals(selectedRiskId);
       toast.success("Deleted Successfully");
       setIsBulkRecordDeleteOpen(false);
       setSelectedRecordIds(new Set());
@@ -1005,7 +714,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
             <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Beta Pert Exposure</h4>
             <div className="flex items-center justify-between">
-              <span className="text-xl font-bold text-red-600">{formatCurrency(risks.reduce((sum, r) => sum + (r.exposure || 0), 0))}</span>
+              <span className="text-xl font-bold text-red-600">{formatCurrency(risksWithRollups.reduce((sum, r) => sum + (r.exposure || 0), 0))}</span>
               <AlertTriangle className="w-5 h-5 text-red-500 opacity-20" />
             </div>
           </div>
@@ -1022,7 +731,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           <div className={cn("absolute inset-0 ag-theme-quartz", theme === 'dark' ? "ag-theme-quartz-dark" : "")}>
             <AgGridReact
               theme="legacy"
-              ref={gridRef} rowData={risks} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
+              ref={gridRef} rowData={risksWithRollups} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
               onCellValueChanged={onCellValueChanged} rowSelection="multiple" animateRows={true}
               pinnedBottomRowData={riskPinnedBottomRowData}
               onSelectionChanged={(p) => setSelectedIds(new Set(p.api.getSelectedRows().map(r => r.id)))}
@@ -1034,60 +743,24 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
 
       <AnimatePresence>
         {selectedRiskId && (
-          <motion.div initial={{ height: 0 }} animate={{ height: isMainTableCollapsed ? 'calc(100% - 60px)' : '60%' }} exit={{ height: 0 }} className="border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#0a0a0a] flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2 bg-gray-100 dark:bg-white/5 border-b border-gray-200 dark:border-white/10 shrink-0">
-              <div className="flex items-center gap-6">
-                <div className="flex items-center gap-2">
-                  <Database className="w-4 h-4 text-blue-600" />
-                  <span className="text-xs font-bold uppercase tracking-wider dark:text-white">
-                    Risk Impacts: <span className="text-blue-600 ml-1">{risks.find(r => r.id === selectedRiskId)?.riskId}</span>
-                  </span>
-                </div>
-                <div className="relative">
-                  <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input 
-                    type="text" placeholder="Search records..." value={recordsQuickFilterText} onChange={(e) => setRecordsQuickFilterText(e.target.value)}
-                    className="pl-8 pr-3 py-1 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-white/10 rounded-lg text-[10px] w-48 dark:text-white outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="file" ref={recordFileInputRef} className="hidden" accept=".xlsx,.xls" onChange={handleImportRecords} />
-                <button onClick={() => recordFileInputRef.current?.click()} className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Import Records"><Upload className="w-4 h-4" /></button>
-                <button onClick={handleExportRecords} className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Export Records"><Download className="w-4 h-4" /></button>
-                
-                <div className="w-px h-4 bg-gray-200 dark:bg-white/10 mx-1" />
-                
-                <button onClick={() => toggleAllRecordColumnGroups(true)} className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Expand All"><Maximize2 className="w-3.5 h-3.5" /></button>
-                <button onClick={() => toggleAllRecordColumnGroups(false)} className="p-1.5 text-gray-400 hover:text-black dark:hover:text-white transition-colors" title="Collapse All"><Minimize2 className="w-3.5 h-3.5" /></button>
-
-                <div className="w-px h-4 bg-gray-200 dark:border-white/10 mx-1" />
-
-                {selectedRecordIds.size > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <button onClick={() => setIsBulkRecordUpdateOpen(true)} className="px-2 py-1 bg-blue-600 text-white rounded text-[10px] font-bold shadow-lg shadow-blue-600/20 hover:bg-blue-700">Update ({selectedRecordIds.size})</button>
-                    <button onClick={() => setIsBulkRecordDeleteOpen(true)} className="px-2 py-1 bg-red-600 text-white rounded text-[10px] font-bold shadow-lg shadow-red-600/20 hover:bg-red-700">Delete ({selectedRecordIds.size})</button>
-                  </div>
-                )}
-                <button onClick={() => updateParentTotals(selectedRiskId!)} className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800 transition-colors">
-                  <RefreshCw className="w-3 h-3" />
-                  Recalculate
-                </button>
-                <button onClick={handleAddRecord} className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"><Plus className="w-3 h-3" /> Add Impact</button>
-                <button onClick={() => setSelectedRiskId(null)} className="p-1.5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-lg transition-colors"><X className="w-4 h-4 dark:text-white" /></button>
-              </div>
-            </div>
-            <div className="flex-1 relative ag-theme-quartz-dark">
-              <AgGridReact theme="legacy"
-                ref={recordsGridRef} rowData={riskRecords} columnDefs={recordColumnDefs}
-                onCellValueChanged={onRecordCellValueChanged} quickFilterText={recordsQuickFilterText}
-                pinnedBottomRowData={recordPinnedBottomRowData}
-                rowSelection="multiple"
-                onSelectionChanged={(p) => setSelectedRecordIds(new Set(p.api.getSelectedRows().map(r => r.id)))}
-                defaultColDef={{ sortable: true, filter: true, resizable: true }}
-              />
-            </div>
-          </motion.div>
+          <RiskRecordsPanel
+            selectedRiskId={selectedRiskId}
+            risks={risks}
+            riskRecords={riskRecords}
+            recordColumnDefs={recordColumnDefs}
+            recordPinnedBottomRowData={recordPinnedBottomRowData}
+            isMainTableCollapsed={isMainTableCollapsed}
+            onClose={() => setSelectedRiskId(null)}
+            onAddRecord={handleAddRecord}
+            onCellValueChanged={onRecordCellValueChanged}
+            onImportRecords={handleImportRecords}
+            onBulkUpdateOpen={() => setIsBulkRecordUpdateOpen(true)}
+            onBulkDeleteOpen={() => setIsBulkRecordDeleteOpen(true)}
+            onSelectionChanged={setSelectedRecordIds}
+            selectedRecordCount={selectedRecordIds.size}
+            theme={theme}
+            projectCode={project.projectCode}
+          />
         )}
       </AnimatePresence>
 
@@ -1135,36 +808,14 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCreateRiskOpen} onOpenChange={setIsCreateRiskOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Add New Risk</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <Input placeholder="Risk ID (e.g. RSK-001)" value={newRisk.riskId} onChange={e => setNewRisk({...newRisk, riskId: e.target.value})} />
-            <Input placeholder="Description" value={newRisk.description} onChange={e => setNewRisk({...newRisk, description: e.target.value})} />
-            <div className="grid grid-cols-2 gap-4">
-              <Select onValueChange={v => setNewRisk({...newRisk, status: v as any})} defaultValue="Open">
-                <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Open">Open</SelectItem>
-                  <SelectItem value="Mitigated">Mitigated</SelectItem>
-                  <SelectItem value="Closed">Closed</SelectItem>
-                  <SelectItem value="Realized">Realized</SelectItem>
-                </SelectContent>
-              </Select>
-              <Select onValueChange={v => setNewRisk({...newRisk, strategy: v as any})} defaultValue="Mitigate">
-                <SelectTrigger><SelectValue placeholder="Strategy" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Avoid">Avoid</SelectItem>
-                  <SelectItem value="Mitigate">Mitigate</SelectItem>
-                  <SelectItem value="Transfer">Transfer</SelectItem>
-                  <SelectItem value="Accept">Accept</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Button className="w-full" onClick={handleCreateRisk}>Create</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <RiskFormDialog
+        isOpen={isCreateRiskOpen}
+        onClose={() => setIsCreateRiskOpen(false)}
+        onSubmit={handleCreateRisk}
+        enterprise={enterprise}
+        existingRisks={risks}
+        projectId={project.id}
+      />
 
       <Dialog open={isBulkRecordUpdateOpen} onOpenChange={setIsBulkRecordUpdateOpen}>
         <DialogContent>

@@ -51,6 +51,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { calculatePhasing } from '../domain/phasing';
+import { buildColumnDefs } from './global-timephasing/columns';
+import { TimephasingChart } from './global-timephasing/TimephasingChart';
 
 interface GlobalTimephasingProps {
   project: Project;
@@ -161,7 +163,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           const approvedDoc = codePhasing.find((p: any) => p.type === 'approved');
           const eacDoc = codePhasing.find((p: any) => p.type === 'eac');
 
-          const filteredActuals = allActuals.filter((a: any) => a.costCodeId === code.id || a.costCodeId === code.code);
+          const filteredActuals = allActuals.filter((a: any) => a.costCodeId === code.id);
           const actualsByPeriod: Record<string, number> = {};
           filteredActuals.forEach((a: any) => {
             actualsByPeriod[a.reportingPeriodId] = (actualsByPeriod[a.reportingPeriodId] || 0) + (a.cost || 0);
@@ -540,207 +542,15 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
   const columnDefs = useMemo<(ColDef | ColGroupDef)[]>(() => {
     const periods = project.reportingPeriods?.periods || [];
     const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-    const currentPeriodIndex = periods.findIndex(p => p.id === currentPeriodId);
-
-    return [
-      {
-        headerName: 'Cost Code',
-        field: 'costCode',
-        sort: 'asc',
-        width: 150,
-        pinned: 'left',
-        lockPosition: 'left',
-        suppressMovable: true,
-        rowSpan: (params) => {
-          if (params.data.rowType === 'baseline') return 3;
-          return 1;
-        },
-        cellStyle: (params) => {
-          if (params.data.rowType === 'baseline') {
-            return { 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              textAlign: 'center',
-              fontWeight: 'bold',
-              backgroundColor: theme === 'dark' ? '#1a1a1a' : '#f8fafc',
-              borderBottom: theme === 'dark' ? '1px solid rgba(255,255,255,0.1)' : '1px solid #e2e8f0',
-            };
-          }
-          return {};
-        },
-        cellClassRules: {
-          'hidden': (params) => params.data.rowType !== 'baseline'
-        },
-        valueGetter: (params) => `${params.data.costCode} - ${params.data.costCodeName}`,
-        tooltipValueGetter: (params) => params.value,
-      },
-      {
-        headerName: 'Type',
-        field: 'type',
-        width: 180,
-        pinned: 'left',
-        lockPosition: 'left',
-        suppressMovable: true,
-        checkboxSelection: true,
-        headerCheckboxSelection: true,
-        headerCheckboxSelectionFilteredOnly: true,
-        cellClass: 'font-bold bg-slate-50 dark:bg-slate-900',
-      },
-      {
-        headerName: 'Activity ID',
-        field: 'activityId',
-        width: 150,
-        editable: (params: any) => params.data.phasingSource === 'Auto',
-        cellEditor: 'agRichSelectCellEditor',
-        cellEditorParams: {
-          values: scheduleItems.map(item => item.activityId).sort(),
-          formatValue: (val: string) => {
-            const item = scheduleItems.find(i => i.activityId === val);
-            return item ? `${item.activityId} - ${item.description}` : val;
-          },
-          searchType: 'match',
-          allowTyping: true,
-          filterList: true,
-          highlightMatch: true
-        },
-        cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900 border-l-2 border-l-emerald-500' : 'bg-slate-50 dark:bg-slate-900/50',
-      },
-      {
-        headerName: 'Phasing Source',
-        field: 'phasingSource',
-        width: 130,
-        editable: true,
-        cellEditor: 'agSelectCellEditor',
-        cellEditorParams: (params: any) => {
-          if (params.data.rowType === 'eac') {
-            return { values: ['ETC Details', 'SubContract', 'Manual', 'Auto'] };
-          }
-          return { values: ['Manual', 'Auto'] };
-        },
-        cellClass: 'bg-white dark:bg-slate-900',
-      },
-      {
-        headerName: 'Start Date',
-        field: 'startDate',
-        width: 120,
-        editable: (params: any) => params.data.phasingSource === 'Auto' && !params.data.activityId,
-        valueGetter: (params) => {
-          const val = params.data.startDate;
-          if (!val) return null;
-          const d = val instanceof Date ? val : new Date(val);
-          return isNaN(d.getTime()) ? null : d;
-        },
-        valueFormatter: dateFormatter,
-        valueSetter: safeDateSetter('startDate'),
-        cellEditor: 'agDateCellEditor',
-        cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
-      },
-      {
-        headerName: 'End Date',
-        field: 'endDate',
-        width: 120,
-        editable: (params: any) => params.data.phasingSource === 'Auto' && !params.data.activityId,
-        valueGetter: (params) => {
-          const val = params.data.endDate;
-          if (!val) return null;
-          const d = val instanceof Date ? val : new Date(val);
-          return isNaN(d.getTime()) ? null : d;
-        },
-        valueFormatter: dateFormatter,
-        valueSetter: safeDateSetter('endDate'),
-        cellEditor: 'agDateCellEditor',
-        cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
-      },
-      {
-        headerName: 'Distribution',
-        field: 'distribution',
-        width: 130,
-        editable: (params: any) => params.data.phasingSource === 'Auto',
-        cellEditor: 'agSelectCellEditor',
-        cellEditorParams: {
-          values: ['Even', 'Bell Curve', 'Front load', 'Back load', 'S-Curve', 'Profile']
-        },
-        cellClass: (params: any) => params.data.phasingSource === 'Auto' ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50',
-      },
-      {
-        headerName: 'Total Phased',
-        width: 130,
-        type: 'numericColumn',
-        valueFormatter: currencyFormatter,
-        valueGetter: (params) => {
-          if (!params.data?.periodValues) return 0;
-          return Object.values(params.data.periodValues).reduce((acc: number, val: any) => acc + (Number(val) || 0), 0);
-        },
-        cellClass: 'font-bold bg-slate-100 dark:bg-slate-800',
-      },
-      {
-        headerName: 'Total',
-        field: 'totalFromCode',
-        width: 130,
-        type: 'numericColumn',
-        valueFormatter: currencyFormatter,
-        cellClass: 'font-bold bg-slate-50 dark:bg-slate-900 text-blue-600',
-      },
-      {
-        headerName: 'Difference',
-        width: 130,
-        type: 'numericColumn',
-        valueFormatter: currencyFormatter,
-        valueGetter: (params) => {
-          const totalPhased = Object.values(params.data?.periodValues || {}).reduce((acc: number, val: any) => acc + (Number(val) || 0), 0) as number;
-          const totalFromCode = (params.data?.totalFromCode || 0) as number;
-          return totalPhased - totalFromCode;
-        },
-        cellClassRules: {
-          'text-red-600 font-bold': (params: any) => Math.abs(Number(params.value)) > 0.01,
-          'text-emerald-600 font-bold': (params: any) => Math.abs(Number(params.value)) <= 0.01,
-        },
-        cellClass: 'bg-slate-50 dark:bg-slate-900',
-      },
-      {
-        headerName: 'Periods',
-        children: periods.map(p => {
-          const date = new Date(p.endDate);
-          const month = date.toLocaleString('default', { month: 'short' });
-          const year = date.getFullYear().toString().slice(-2);
-          const periodNumber = periods.findIndex(per => per.id === p.id) + 1;
-          const headerName = `P${periodNumber}\n(${month}'${year})`;
-          const periodIndex = periods.findIndex(per => per.id === p.id);
-
-          return {
-            headerName,
-            field: `periodValues.${p.id}`,
-            width: 120,
-            minWidth: 110,
-            type: 'numericColumn',
-            valueFormatter: currencyFormatter,
-            editable: (params: any) => {
-              if (params.data.rowType === 'baseline' || params.data.rowType === 'approved') {
-                return params.data.phasingSource === 'Manual';
-              }
-              if (params.data.rowType === 'eac') {
-                return params.data.phasingSource === 'Manual' && periodIndex > currentPeriodIndex;
-              }
-              return false;
-            },
-            cellClass: (params: any) => {
-              const isEditable = (params.data.rowType === 'baseline' || params.data.rowType === 'approved') 
-                ? params.data.phasingSource === 'Manual'
-                : params.data.phasingSource === 'Manual' && periodIndex > currentPeriodIndex;
-              return isEditable ? 'bg-white dark:bg-slate-900' : 'bg-slate-50 dark:bg-slate-900/50 text-gray-500';
-            },
-            valueGetter: (params: any) => params.data.periodValues?.[p.id] || 0,
-            valueSetter: (params: any) => {
-              const val = Number(params.newValue);
-              if (isNaN(val)) return false;
-              params.data.periodValues = { ...params.data.periodValues, [p.id]: val };
-              return true;
-            }
-          };
-        })
-      }
-    ];
+    return buildColumnDefs({
+      periods,
+      currentPeriodId,
+      currencyFormatter,
+      dateFormatter,
+      safeDateSetter,
+      scheduleItems,
+      theme,
+    });
   }, [project.reportingPeriods, currencyFormatter]);
 
   const handleExport = () => {
@@ -984,100 +794,13 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           </Button>
         }
         topContent={isChartVisible ? (
-          <AnimatePresence mode="wait">
-            <motion.div
-              key="global-phasing-chart"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="bg-slate-50 dark:bg-white/5 rounded-2xl border border-slate-200 dark:border-white/10">
-                <div className="p-6">
-                  <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-4">
-                    <h3 className="text-sm font-bold dark:text-white">Project Cashflow Profile</h3>
-                    <div className="flex bg-white dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10">
-                      <button
-                        onClick={() => setChartMode('value')}
-                        className={cn(
-                          "px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-md transition-all",
-                          chartMode === 'value' ? "bg-black dark:bg-white text-white dark:text-black" : "text-gray-400 hover:text-gray-600"
-                        )}
-                      >
-                        Value
-                      </button>
-                      <button
-                        onClick={() => setChartMode('percent')}
-                        className={cn(
-                          "px-3 py-1 text-[10px] font-bold uppercase tracking-widest rounded-md transition-all",
-                          chartMode === 'percent' ? "bg-black dark:bg-white text-white dark:text-black" : "text-gray-400 hover:text-gray-600"
-                        )}
-                      >
-                        Percent
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-[300px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? '#333' : '#eee'} />
-                      <XAxis 
-                        dataKey="name" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 10, fill: theme === 'dark' ? '#666' : '#999' }}
-                      />
-                      <YAxis 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fontSize: 10, fill: theme === 'dark' ? '#666' : '#999' }}
-                        tickFormatter={(val) => chartMode === 'percent' ? `${val}%` : formatCurrency(val)}
-                      />
-                      <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: theme === 'dark' ? '#1a1a1a' : '#fff',
-                          border: 'none',
-                          borderRadius: '12px',
-                          boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)'
-                        }}
-                        formatter={(val: any) => chartMode === 'percent' ? `${val.toFixed(1)}%` : formatCurrency(val)}
-                      />
-                      <Legend verticalAlign="top" align="right" iconType="circle" />
-                      <Bar dataKey="baseline" name="Baseline (Periodic)" fill="#3b82f6" radius={[4, 4, 0, 0]} opacity={0.3} />
-                      <Bar dataKey="approved" name="Approved (Periodic)" fill="#10b981" radius={[4, 4, 0, 0]} opacity={0.3} />
-                      <Bar dataKey="eac" name="EAC (Periodic)" fill="#f59e0b" radius={[4, 4, 0, 0]} opacity={0.3} />
-                      <Area type="monotone" dataKey="cumulativeBaseline" name="Baseline (Cumulative)" stroke="#3b82f6" fill="url(#colorBaseline)" strokeWidth={3} dot={false} />
-                      <Area type="monotone" dataKey="cumulativeApproved" name="Approved (Cumulative)" stroke="#10b981" fill="url(#colorApproved)" strokeWidth={3} dot={false} />
-                      <Area type="monotone" dataKey="cumulativeEac" name="EAC (Cumulative)" stroke="#f59e0b" fill="url(#colorEac)" strokeWidth={3} dot={false} />
-                      <Area type="monotone" dataKey="cumulativeEacPrevious" name="EAC Previous (Cumulative)" stroke="#94a3b8" fill="url(#colorEacPrev)" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                      <defs>
-                        <linearGradient id="colorBaseline" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorApproved" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorEac" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
-                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                        </linearGradient>
-                        <linearGradient id="colorEacPrev" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.05}/>
-                          <stop offset="95%" stopColor="#94a3b8" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        </AnimatePresence>
-      ) : null}
+          <TimephasingChart
+            chartData={chartData}
+            chartMode={chartMode}
+            setChartMode={setChartMode}
+            theme={theme}
+          />
+        ) : null}
         gridRef={gridRef}
         rowData={timephasingRows}
         columnDefs={columnDefs}
