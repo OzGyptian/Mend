@@ -9,7 +9,6 @@ import {
   Maximize2,
   Minimize2,
   X,
-  RefreshCw,
   Database,
 } from 'lucide-react';
 import { AgGridReact } from 'ag-grid-react';
@@ -29,7 +28,6 @@ interface RiskRecordsPanelProps {
   onImportRecords: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onBulkUpdateOpen: () => void;
   onBulkDeleteOpen: () => void;
-  onRecalculate: () => void;
   onSelectionChanged: (selectedIds: Set<string>) => void;
   selectedRecordCount: number;
   theme: 'light' | 'dark';
@@ -49,7 +47,6 @@ export default function RiskRecordsPanel({
   onImportRecords,
   onBulkUpdateOpen,
   onBulkDeleteOpen,
-  onRecalculate,
   onSelectionChanged,
   selectedRecordCount,
   theme,
@@ -159,13 +156,6 @@ export default function RiskRecordsPanel({
               </button>
             </div>
           )}
-          <button
-            onClick={onRecalculate}
-            className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800 transition-colors"
-          >
-            <RefreshCw className="w-3 h-3" />
-            Recalculate
-          </button>
           <button
             onClick={onAddRecord}
             className="flex items-center gap-1.5 px-3 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold hover:bg-blue-700 transition-colors shadow-lg shadow-blue-600/20"

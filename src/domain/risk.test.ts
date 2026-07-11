@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { betaPertImpact, betaPertExposure, computeRiskRollup } from './risk';
+import { betaPertImpact, betaPertExposure, computeRiskRollup, aggregateRiskRollups } from './risk';
+import type { Risk, RiskRecord } from './types';
 
 describe('betaPertImpact', () => {
   it('computes (min + 4×mostLikely + max) / 6', () => {
@@ -70,5 +71,37 @@ describe('computeRiskRollup', () => {
     const result = computeRiskRollup(records);
     expect(result.minImpactTotal).toBe(0);
     expect(Number.isFinite(result.exposure)).toBe(true);
+  });
+});
+
+describe('aggregateRiskRollups', () => {
+  const risks = [{ id: 'risk-1' }, { id: 'risk-2' }] as unknown as Risk[];
+
+  it('groups records by riskId and computes each risk independently', () => {
+    const records = [
+      { riskId: 'risk-1', minImpactAmount: 10, mostLikelyImpactAmount: 50, maxImpactAmount: 90, probability: 0.4 },
+      { riskId: 'risk-1', minImpactAmount: 100, mostLikelyImpactAmount: 200, maxImpactAmount: 300, probability: 1 },
+      { riskId: 'risk-2', minImpactAmount: 5, mostLikelyImpactAmount: 5, maxImpactAmount: 5, probability: 1 },
+    ] as unknown as RiskRecord[];
+
+    const result = aggregateRiskRollups(risks, records);
+    expect(result.get('risk-1')!.minImpactTotal).toBe(110);
+    expect(result.get('risk-2')!.minImpactTotal).toBe(5);
+    expect(result.get('risk-2')!.exposure).toBe(5);
+  });
+
+  it('returns zeroed totals for a risk with no records', () => {
+    const result = aggregateRiskRollups(risks, []);
+    expect(result.get('risk-1')).toEqual({ exposure: 0, minImpactTotal: 0, mostLikelyImpactTotal: 0, maxImpactTotal: 0 });
+    expect(result.get('risk-2')).toEqual({ exposure: 0, minImpactTotal: 0, mostLikelyImpactTotal: 0, maxImpactTotal: 0 });
+  });
+
+  it('ignores records belonging to a risk not in the input list', () => {
+    const records = [
+      { riskId: 'orphan-risk', minImpactAmount: 999, mostLikelyImpactAmount: 999, maxImpactAmount: 999, probability: 1 },
+    ] as unknown as RiskRecord[];
+    const result = aggregateRiskRollups(risks, records);
+    expect(result.size).toBe(2);
+    expect(result.get('risk-1')!.minImpactTotal).toBe(0);
   });
 });

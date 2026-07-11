@@ -126,11 +126,10 @@ export interface RiskRecordColumnDeps {
   enterpriseLineItemAttrs: any[];
   projectLineItemAttrs: any[];
   riskRepo: any;
-  updateParentTotals: (riskId: string) => Promise<void>;
 }
 
 export function buildRiskRecordColumnDefs(deps: RiskRecordColumnDeps): (ColDef | ColGroupDef)[] {
-  const { costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo, updateParentTotals } = deps;
+  const { costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo } = deps;
 
   const defs: (ColDef | ColGroupDef)[] = [
     { headerName: '', checkboxSelection: true, headerCheckboxSelection: true, headerCheckboxSelectionFilteredOnly: true, width: 50, pinned: 'left' },
@@ -201,7 +200,6 @@ export function buildRiskRecordColumnDefs(deps: RiskRecordColumnDeps): (ColDef |
        cellRenderer: (p: any) => p.node.rowPinned ? null : (
          <button onClick={async () => {
            await riskRepo.deleteRiskRecord(p.data.id);
-           updateParentTotals(p.data.riskId);
          }} className="p-1.5 text-gray-400 hover:text-red-600">
            <Trash2 className="w-4 h-4" />
          </button>

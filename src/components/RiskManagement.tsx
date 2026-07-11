@@ -59,6 +59,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { useRiskRollups } from '../lib/riskRollups';
 import { betaPertExposure } from '../domain/risk';
 import { 
   BarChart, 
@@ -108,6 +109,18 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   const [risks, setRisks] = useState<Risk[]>([]);
   const [riskRecords, setRiskRecords] = useState<RiskRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+
+  // Phase 13.B1.6: compute-on-read exposure/impact totals (SYSTEM_REVIEW.md v2 / PLAN.md F1).
+  // Replaces the stored exposure/minImpactTotal/mostLikelyImpactTotal/maxImpactTotal fields and
+  // the updateParentTotals() write-after-every-edit pattern (duplicated in BulkRiskRecords.tsx
+  // too) — those fields are always live-computed from RiskRecord leaves now. None of these
+  // columns were ever editable (see risk-management/columns.tsx), so this changes nothing about
+  // what users can type into cells.
+  const riskRollups = useRiskRollups(project.id, risks);
+  const risksWithRollups = useMemo(
+    () => risks.map((r) => ({ ...r, ...riskRollups.get(r.id) })),
+    [risks, riskRollups],
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [selectedRiskId, setSelectedRiskId] = useState<string | null>(null);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -316,7 +329,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
         }
         if (toCreate.length > 0) await riskRepo.createManyRiskRecords(toCreate);
-        await updateParentTotals(selectedRiskId);
         toast.success(`Imported ${toCreate.length} records`);
       }
     } catch (error) {
@@ -327,15 +339,15 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   };
 
   const riskPinnedBottomRowData = useMemo(() => {
-    if (risks.length === 0) return [];
+    if (risksWithRollups.length === 0) return [];
     return [{
       riskId: 'TOTALS',
-      minImpactTotal: risks.reduce((sum, r) => sum + (r.minImpactTotal || 0), 0),
-      mostLikelyImpactTotal: risks.reduce((sum, r) => sum + (r.mostLikelyImpactTotal || 0), 0),
-      maxImpactTotal: risks.reduce((sum, r) => sum + (r.maxImpactTotal || 0), 0),
-      exposure: risks.reduce((sum, r) => sum + (r.exposure || 0), 0)
+      minImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.minImpactTotal || 0), 0),
+      mostLikelyImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.mostLikelyImpactTotal || 0), 0),
+      maxImpactTotal: risksWithRollups.reduce((sum, r) => sum + (r.maxImpactTotal || 0), 0),
+      exposure: risksWithRollups.reduce((sum, r) => sum + (r.exposure || 0), 0)
     }];
-  }, [risks]);
+  }, [risksWithRollups]);
 
   const recordPinnedBottomRowData = useMemo(() => {
     if (riskRecords.length === 0) return [];
@@ -391,7 +403,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     let cumulativeResidual = 0;
 
     const data = periods.map((p, index) => {
-      const periodRisks = risks.filter(r => r.periodId === p.id);
+      const periodRisks = risksWithRollups.filter(r => r.periodId === p.id);
       const exposure = periodRisks.reduce((sum, r) => sum + (r.exposure || 0), 0);
       
       cumulativeExposure += exposure;
@@ -409,7 +421,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     });
 
     return data;
-  }, [risks, project.reportingPeriods]);
+  }, [risksWithRollups, project.reportingPeriods]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -466,31 +478,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     }
   };
 
-  const updateParentTotals = async (riskId: string) => {
-    try {
-      const records = await riskRepo.listRiskRecords(project.id, riskId);
-      const totalBetaPert = records.reduce((sum, r) => sum + betaPertExposure(
-        Number(r.minImpactAmount) || 0,
-        Number(r.mostLikelyImpactAmount) || 0,
-        Number(r.maxImpactAmount) || 0,
-        Number(r.probability) || 0,
-      ), 0);
-      const totalMin = records.reduce((sum, r) => sum + (Number(r.minImpactAmount) || 0), 0);
-      const totalLikely = records.reduce((sum, r) => sum + (Number(r.mostLikelyImpactAmount) || 0), 0);
-      const totalMax = records.reduce((sum, r) => sum + (Number(r.maxImpactAmount) || 0), 0);
-
-      await riskRepo.updateRisk(riskId, {
-        exposure: totalBetaPert,
-        minImpactTotal: totalMin,
-        mostLikelyImpactTotal: totalLikely,
-        maxImpactTotal: totalMax,
-        updatedAt: new Date().toISOString()
-      });
-    } catch (error) {
-      console.error(`Error updating risk totals for ${riskId}:`, error);
-    }
-  };
-
   const riskColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
     buildRiskColumnDefs({ project, enterprise, setSelectedRiskId, setRiskToDelete, setIsDeleteRiskOpen }),
     [project, enterprise, risks] // eslint-disable-line react-hooks/exhaustive-deps
@@ -516,7 +503,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
   };
 
   const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
-    buildRiskRecordColumnDefs({ costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo, updateParentTotals }),
+    buildRiskRecordColumnDefs({ costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo }),
     [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
@@ -537,9 +524,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
       }
       
       await riskRepo.updateRiskRecord(data.id, updates);
-      if (['probability', 'minImpactAmount', 'mostLikelyImpactAmount', 'maxImpactAmount'].includes(colDef.field!)) {
-        updateParentTotals(data.riskId);
-      }
     } catch (error) {
       console.error(`Error updating risk record ${data.id}:`, error);
       toast.error('Failed to update record.');
@@ -553,7 +537,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         riskId: selectedRiskId, projectId: project.id, costCodeId: '', scope: '',
         probability: 1.0, minImpactAmount: 0, mostLikelyImpactAmount: 0, maxImpactAmount: 0, betaPertImpactAmount: 0,
       } as Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>);
-      await updateParentTotals(selectedRiskId);
       toast.success("Record added (Default Prob 100%)");
     } catch (error) {
       console.error('Add record error:', error);
@@ -602,7 +585,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
         return [{ id, data: finalUpdates }];
       });
       await riskRepo.updateManyRiskRecords(recordUpdates);
-      await updateParentTotals(selectedRiskId);
       toast.success("Updated Successfully");
       setIsBulkRecordUpdateOpen(false);
       setSelectedRecordIds(new Set());
@@ -616,7 +598,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
     if (selectedRecordIds.size === 0 || !selectedRiskId) return;
     try {
       await riskRepo.deleteManyRiskRecords([...selectedRecordIds]);
-      await updateParentTotals(selectedRiskId);
       toast.success("Deleted Successfully");
       setIsBulkRecordDeleteOpen(false);
       setSelectedRecordIds(new Set());
@@ -733,7 +714,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           <div className="bg-white dark:bg-[#1a1a1a] p-4 rounded-xl border border-gray-200 dark:border-white/10">
             <h4 className="text-xs font-bold text-gray-500 uppercase mb-1">Total Beta Pert Exposure</h4>
             <div className="flex items-center justify-between">
-              <span className="text-xl font-bold text-red-600">{formatCurrency(risks.reduce((sum, r) => sum + (r.exposure || 0), 0))}</span>
+              <span className="text-xl font-bold text-red-600">{formatCurrency(risksWithRollups.reduce((sum, r) => sum + (r.exposure || 0), 0))}</span>
               <AlertTriangle className="w-5 h-5 text-red-500 opacity-20" />
             </div>
           </div>
@@ -750,7 +731,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
           <div className={cn("absolute inset-0 ag-theme-quartz", theme === 'dark' ? "ag-theme-quartz-dark" : "")}>
             <AgGridReact
               theme="legacy"
-              ref={gridRef} rowData={risks} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
+              ref={gridRef} rowData={risksWithRollups} columnDefs={riskColumnDefs} quickFilterText={quickFilterText}
               onCellValueChanged={onCellValueChanged} rowSelection="multiple" animateRows={true}
               pinnedBottomRowData={riskPinnedBottomRowData}
               onSelectionChanged={(p) => setSelectedIds(new Set(p.api.getSelectedRows().map(r => r.id)))}
@@ -775,7 +756,6 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
             onImportRecords={handleImportRecords}
             onBulkUpdateOpen={() => setIsBulkRecordUpdateOpen(true)}
             onBulkDeleteOpen={() => setIsBulkRecordDeleteOpen(true)}
-            onRecalculate={() => updateParentTotals(selectedRiskId)}
             onSelectionChanged={setSelectedRecordIds}
             selectedRecordCount={selectedRecordIds.size}
             theme={theme}
