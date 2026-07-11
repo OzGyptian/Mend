@@ -267,20 +267,29 @@ Firestore at all, or folded into a Supabase migration that starts after 13.A/13.
 Tarek before starting 13.B2.
 
 ## Phase 13.A — Close the security holes (~2 days) 🔴 FIRST
-- [ ] 13.A.1 (F3) `POST /api/accept-invite` on the existing Express server using `firebase-admin`:
+- [x] 13.A.1 (F3) `POST /api/accept-invite` on the existing Express server using `firebase-admin`:
       verify ID token → look up invitation by token → check pending + email match → add uid to
-      enterprise membership + mark invitation accepted in one server-side batch
-- [ ] 13.A.2 (F3) Delete `isJoiningViaInvitation()` from firestore.rules; enterprise update becomes
-      admin-only. Client `acceptInvitation` calls the API instead of writing Firestore directly
-- [ ] 13.A.3 (F2 residue) `userRoles` self-write may not change `platformRole` (or make writes
-      system-admin-only and move user prefs elsewhere)
+      enterprise membership + mark invitation accepted in one server-side batch (v1.0.87)
+- [x] 13.A.2 (F3) Delete `isJoiningViaInvitation()` from firestore.rules; enterprise update becomes
+      admin-only. Client `acceptInvitation` calls the API instead of writing Firestore directly (v1.0.87)
+- [x] 13.A.3 (F2 residue) `userRoles` self-write may not change `platformRole` (split create/update;
+      self-writes locked to `platformRole: null`, only isSystemAdmin() can grant) (v1.0.87)
 - [ ] 13.A.4 (F7/F6) Firebase Auth custom claim `platformAdmin: true` via admin script; rules check
       `request.auth.token.platformAdmin == true`; delete email lists from firestore.rules,
       `hooks.ts:61`, `CostManagement.tsx:51`, `ProcurementManagementSubPane.tsx:33`
+      — DEFERRED: needs a live admin-script run with real service-account creds + a rules deploy;
+      not something to do unattended. Next slice, needs Bernard to execute.
 - [ ] 13.A.5 (N2) Decide enterprise-create policy (self-serve vs platform-admin-only) with Tarek
-- [ ] 13.A.6 GATE: rules-emulator negative tests — non-invited user cannot self-add to adminUsers;
-      user cannot self-grant platform_admin. `grep -r "guindy\|bernard.w.leung" src firestore.rules` = 0.
-      Deploy rules. Commit: `fix(security): server-verified invites, custom-claim admin`
+      — DEFERRED: explicitly a decide-with-Tarek item, left unchanged pending that conversation.
+- [x] 13.A.6 GATE: rules-emulator negative tests — non-invited user cannot self-add to adminUsers;
+      user cannot self-grant platform_admin. `tests/security/firestore.rules.test.ts`, 7/7 passing
+      via `npm run test:rules` (Firestore emulator; required installing Java via `brew install
+      openjdk`). Commit: `fix(security): server-verified invite acceptance, lock platformRole
+      self-grant (v1.0.87)`.
+      **NOT YET DEPLOYED to production** — `firestore.rules` changes are committed on the branch
+      only. Deploying to the shared Firebase project is a confirm-first action; needs explicit
+      go-ahead before `firebase deploy --only firestore:rules`. Also needs
+      `FIREBASE_SERVICE_ACCOUNT_KEY` set in Vercel env vars or `/api/accept-invite` 500s in prod.
 
 ## Phase 13.B — Make the numbers trustworthy (~1.5–2 wks) 🔴 CORE
 ### 13.B1 — Compute-on-read for financial roll-ups (storage-agnostic; do regardless of platform)

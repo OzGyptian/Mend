@@ -310,3 +310,98 @@ Phase 11.8 — Identity unification: `hooks.ts isPlatformAdmin` is now the singl
 3. **Create branch `refactor/platform-seam`**.
 4. **Phase 1 — Complete Chunk 0 recon:** Map Gemini AI usage, confirm all Firestore collection names, confirm auth patterns, finalise folder structure proposal for Bernard's approval.
 5. Then **Phase 2 — Chunk 1: Scaffold & Move**.
+
+---
+
+## 2026-07-11 — SYSTEM_REVIEW.md v2 + Phase 13.A (security remediation)
+
+Branch: `refactor/phase-12-file-splits` · v1.0.86 → v1.0.87. (Note: the "what to
+do next" tail above is stale — left as historical record; see PLAN.md Phase 13
+for current status, and the "STATUS CORRECTION" note above Phase 13 for what
+Phase 11 items actually shipped vs. what the old checkboxes still claim.)
+
+Re-inspected the codebase against the 2026-07-09 SYSTEM_REVIEW.md, verified
+every prior finding against current code (177 unit tests, `tsc --noEmit`,
+grep counts), and rewrote it as v2. Confirmed fixed since v1: F11/F12 rule
+holes, F2 mostly (self-write restricted to admin-or-self, residue below), god
+components halved, domain layer real (eac/phasing/procurement/progress/risk/
+roles, all tested). Confirmed still open: F1 (stored roll-ups, 9 Recalculate
+buttons), F3 (invitation hole), F5 (11 `id OR code` FK sites), no CI. Wrote
+the v2 findings into PLAN.md as Phase 13, superseding the remainder of stale
+Phase 11 checkboxes.
+
+Discussed platform direction: Supabase *is* Postgres (not a stepping stone to
+it) — recommended finishing 13.A (security) + 13.B1 (compute-on-read
+roll-ups, storage-agnostic) on Firestore, then migrating to Supabase instead
+of building 13.B2 (FK migration)/13.C (cascade + schema) by hand on
+Firestore, since the SQL schema gives FK constraints, cascades, and
+migrations natively. Flagged as an open decision (§13.X in PLAN.md) pending
+Tarek's sign-off — not yet started.
+
+**Phase 13.A executed (F3 critical, F2 residue):**
+- Added `POST /api/accept-invite` on the Express server using `firebase-admin`
+  (new dependency): verifies the caller's ID token, looks up a real
+  pending/non-expired invitation matching the token+email, grants enterprise
+  membership server-side in one batch (uses `FieldValue.arrayUnion` instead
+  of the old client's read-modify-write array spread — closes a lost-update
+  race as a side effect).
+- Deleted `isJoiningViaInvitation()` from `firestore.rules` entirely —
+  `enterprises` update is now admin-only, `invitations` update is
+  system-admin-only. A client can no longer write itself into `adminUsers`
+  under any circumstance; the Admin SDK route is the only path.
+- `userRoles` rule split into `create`/`update`: self-writes can never set or
+  change `platformRole` (only `isSystemAdmin()` can). Confirmed no live UI
+  flow depends on self-writing `platformRole` (`setEnterpriseRole`/
+  `setProjectRole` exist on the adapter but are unused — dead code today).
+- `EnterpriseAdapter.acceptInvitation` signature dropped client-supplied
+  `userId`/`userEmail`/`displayName` — identity now comes only from the
+  verified ID token server-side.
+- Added `tests/security/firestore.rules.test.ts` (7 cases) run against the
+  actual rules text via the Firestore emulator — proves both negative cases
+  (attacker rejected on all three rule changes) and that legitimate
+  admin/self writes still succeed. Kept out of the default `vitest run` via
+  a separate `vitest.rules.config.ts` (needs the emulator); wired as
+  `npm run test:rules` (`firebase emulators:exec --only firestore ...`).
+  Required installing Java (`brew install openjdk`, no `sudo`/symlink step
+  needed — resolves via `/opt/homebrew/bin/java`) since the Firestore
+  emulator is JVM-based; this env is now emulator-capable for Phase 13.E CI
+  design too.
+- Documented the new required `FIREBASE_SERVICE_ACCOUNT_KEY` env var in
+  CLAUDE.md — missing key degrades `/api/accept-invite` to a clear 500
+  (same pattern as the existing `RESEND_API_KEY` guard), doesn't crash the
+  server.
+
+Verified clean: `tsc --noEmit`, `vitest run` (177/177), `npm run test:rules`
+(7/7), `npm run build`, `npm run lint:boundary` (5 pre-existing errors in
+untouched files only — react-hooks/exhaustive-deps config gap, not a
+boundary violation, not introduced by this session).
+
+**Deferred within Phase 13.A (not done this session):**
+- **13.A.4 — custom claim `platformAdmin`.** Requires an admin script run
+  against the *live* Firebase project with real service-account credentials
+  to set the claim on Tarek/Bernard's actual accounts, plus a
+  `firebase deploy --only firestore:rules` to ship the rule change. Neither
+  is something to do unattended — flagged as the next slice, needs Bernard
+  (has Firebase CLI access) to run the deploy/script step explicitly.
+- **13.A.5 — enterprise-create policy.** Explicitly a "decide with Tarek"
+  item per the plan; left as `allow create: if isAuthenticated()` (unchanged)
+  pending that conversation.
+- **Rules not yet deployed to production.** All changes are local/committed
+  on the branch. `firebase.json` points at project `gen-lang-client-0160759254`,
+  database `ai-studio-160b29f2-f546-4213-8031-e29afba8c034`; CLI is logged in
+  as bernard.w.leung@gmail.com in this environment, but deploying rules to a
+  shared production system is a confirm-first action, not a silent one.
+
+### What to do next
+1. Confirm with Bernard: deploy `firestore.rules` to production
+   (`firebase deploy --only firestore:rules`) — the F3/F2 fixes have zero
+   effect on real users until this ships.
+2. Set `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel env vars (see CLAUDE.md) so
+   `/api/accept-invite` works in production — currently the invite flow will
+   405/500 in prod without it.
+3. Phase 13.A.4 (custom claims) as its own slice — needs a live admin-script
+   run, coordinate with Bernard before executing.
+4. Phase 13.A.5 — enterprise-create policy decision with Tarek.
+5. Then Phase 13.B1 (compute-on-read roll-ups) — the core fragility fix,
+   storage-agnostic, should proceed regardless of the Supabase timing
+   decision.
