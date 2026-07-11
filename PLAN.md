@@ -236,3 +236,103 @@ pragmatic strictness (extract logic + tests now; defer 800-line/`any` cosmetic c
 - [ ] 11.9.2 Eliminate remaining `: any` in touched components
 - [ ] 11.9.3 Referential integrity: cascade/soft-delete for project & cost-code (fold in audit/fix scripts as a test)
 - [ ] 11.9.4 Split god-documents (Enterprise/Project config arrays; ProgressItem snapshot vs working fields)
+
+---
+
+# STATUS CORRECTION (2026-07-11)
+
+The Phase 11 checkboxes above are stale. Per git history and re-inspection (SYSTEM_REVIEW.md v2):
+**done** — 11.3–11.8 domain slices (betaPert, progress, phasing, procurement, isPlatformAdmin
+centralisation), 11.9.2 partial (`: any` in touched files), 11.9.3 partial (sheets/rows +
+cost-code cascade only), F11/F12 rule fixes, F2 partial fix, eac.ts + tests (11.2.1), Phase 12
+file splits, boundary ESLint, 177 unit tests, E2E suites.
+**Still open** — F1 compute-on-read (9 Recalculate sites), F3 invitation hole, F5 id-OR-code
+(11 sites), full cascade, hardcoded emails (4 sites), prompt()/alert() onboarding, CI.
+Phase 13 below supersedes the remainder of Phase 11.
+
+---
+
+# Phase 13 — Stabilization Uplift (SYSTEM_REVIEW v2, 2026-07-11)
+
+**Basis:** SYSTEM_REVIEW.md v2 Part 4. Goal: PoC/MVP → stable, robust, non-fragile system.
+**Golden rule (unchanged):** every slice ends committed, green, shippable; E2E pins behaviour.
+
+**Guiding principle:** target storage is Postgres (Supabase). Do now what is storage-agnostic or
+protects users today (security, compute-on-read, onboarding, CI). Do minimally what Postgres
+replaces (cascade, schema validation). Defer to the Postgres schema design what should be built
+once (god-document splits, migration framework).
+
+**⚠️ OPEN DECISION — platform timing (see §13.X):** whether Phases 13.B2/13.C are done on
+Firestore at all, or folded into a Supabase migration that starts after 13.A/13.B1. Discuss with
+Tarek before starting 13.B2.
+
+## Phase 13.A — Close the security holes (~2 days) 🔴 FIRST
+- [ ] 13.A.1 (F3) `POST /api/accept-invite` on the existing Express server using `firebase-admin`:
+      verify ID token → look up invitation by token → check pending + email match → add uid to
+      enterprise membership + mark invitation accepted in one server-side batch
+- [ ] 13.A.2 (F3) Delete `isJoiningViaInvitation()` from firestore.rules; enterprise update becomes
+      admin-only. Client `acceptInvitation` calls the API instead of writing Firestore directly
+- [ ] 13.A.3 (F2 residue) `userRoles` self-write may not change `platformRole` (or make writes
+      system-admin-only and move user prefs elsewhere)
+- [ ] 13.A.4 (F7/F6) Firebase Auth custom claim `platformAdmin: true` via admin script; rules check
+      `request.auth.token.platformAdmin == true`; delete email lists from firestore.rules,
+      `hooks.ts:61`, `CostManagement.tsx:51`, `ProcurementManagementSubPane.tsx:33`
+- [ ] 13.A.5 (N2) Decide enterprise-create policy (self-serve vs platform-admin-only) with Tarek
+- [ ] 13.A.6 GATE: rules-emulator negative tests — non-invited user cannot self-add to adminUsers;
+      user cannot self-grant platform_admin. `grep -r "guindy\|bernard.w.leung" src firestore.rules` = 0.
+      Deploy rules. Commit: `fix(security): server-verified invites, custom-claim admin`
+
+## Phase 13.B — Make the numbers trustworthy (~1.5–2 wks) 🔴 CORE
+### 13.B1 — Compute-on-read for financial roll-ups (storage-agnostic; do regardless of platform)
+- [ ] 13.B1.1 Inventory stored derived fields: CostCode roll-ups (+movements), Change.budget/eac,
+      Risk.exposure, pinned betaPertImpactAmount
+- [ ] 13.B1.2 Extend `src/domain/eac.ts` / new `src/domain/rollups.ts`: pure roll-up fns from leaves
+      (actuals, budgets, etcDetails, changeRecords, riskRecords), unit tests — same pattern as
+      `betaPertExposure`
+- [ ] 13.B1.3 Selector hooks (`useCostCodeRollups(projectId)` etc.) subscribing to leaves via repos,
+      computing at render; every screen calls the same hook
+- [ ] 13.B1.4 Freeze switch with `cost-report.characterization.spec.ts` (capture → flip → assert)
+- [ ] 13.B1.5 Migrate screen-by-screen: CostCodes → CostReportingPeriod → Risk →
+      Subcontracts/Invoices → Procurement. One commit each
+- [ ] 13.B1.6 Delete all 9 Recalculate sites; stop writing roll-ups to CostCode docs.
+      `periodSnapshots` stays as the only stored derived data, labelled "as of {period}" everywhere
+- [ ] 13.B1.7 GATE: edit an actual cost → every screen shows new EAC with no button press; no two
+      screens can disagree. E2E green
+### 13.B2 — Canonical cost-code FK (⚠️ subject to platform decision — throwaway if Supabase starts now)
+- [ ] 13.B2.1 `scripts/normalize-costcode-fk.ts`: resolve code-string `costCodeId`s to doc ids across
+      all child collections; report unresolvables. Run on backup/emulator, then live
+- [ ] 13.B2.2 Delete all 11 `=== id || === code` fallbacks (8 files); match on id only
+- [ ] 13.B2.3 Rule + schema validation for `costCodeId`
+- [ ] 13.B2.4 GATE: `grep -rn "costCodeId === .*||" src` = 0; audit script reports 0 ambiguous rows
+
+## Phase 13.C — Data lifecycle integrity (~4 days) 🟠 (⚠️ subject to platform decision)
+- [ ] 13.C.1 (F4) `PROJECT_CHILD_COLLECTIONS` registry in platform; `deleteProjectCascade` /
+      `deleteCostCodeCascade` chunked batched deletes; audit scripts consume the same registry.
+      GATE: delete seeded project → audit finds 0 orphans
+- [ ] 13.C.2 (F14 minimal) Zod schema per collection in `src/domain/schemas/`; adapters parse on
+      read (log+quarantine) and write (throw); seed script builds from schemas. No migration
+      framework on Firestore — schemas become the Postgres DDL spec
+
+## Phase 13.D — Onboarding & error surfaces (~3 days) 🟠 (storage-agnostic)
+- [ ] 13.D.1 (F10) Real create/join-enterprise screen replacing `prompt()` (App.tsx:500); replace
+      ~31 alert()/prompt() sites with shadcn toast/dialog; strip invite token from URL after
+      consumption; surface bootstrapIfEmpty failures in UI
+- [ ] 13.D.2 Top-level React error boundary
+
+## Phase 13.E — Enforcement / CI (~1 day) 🟠 (do early — can precede B)
+- [ ] 13.E.1 GitHub Actions on PR/push: type-check → vitest → lint:boundary → build
+- [ ] 13.E.2 Fold `lint:boundary` into `npm run lint`
+- [ ] 13.E.3 Memory-adapter E2E smoke in CI; live-Vercel E2E stays nightly (blocked on issue #4)
+- [ ] 13.E.4 (N4) Repo hygiene: delete `* 2.*` Finder duplicates, organise loose scripts/docx, gitignore
+
+## Phase 13.F — Continuous ratchets (ongoing, timeboxed)
+- [ ] 13.F.1 File-size ratchet: split >800-line files only when already touching them (Phase-12 pattern)
+- [ ] 13.F.2 `: any` ratchet: no-explicit-any as warn; record 764; CI fails if count rises
+- [ ] 13.F.3 F8/F13 god-documents: DEFERRED to Postgres schema design
+
+## §13.X — Platform decision (Firebase → Supabase/Postgres) — PENDING DISCUSSION
+- Supabase **is** hosted Postgres — one migration, not two. Self-hosting later is trivial (pg_dump).
+- The seam (12 ports, memory fakes) was built precisely to make this swap adapter-work.
+- If migration starts after 13.A + 13.B1: skip 13.B2/13.C on Firestore (the SQL schema does FK
+  normalisation, cascades, and validation natively) — saves ~1.5 wks of throwaway work.
+- Needs Tarek's buy-in. Sequencing options and analysis: see discussion notes / SYSTEM_REVIEW v2 Part 4.

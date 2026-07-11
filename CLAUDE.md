@@ -231,11 +231,23 @@ VITE_FIREBASE_STORAGE_BUCKET=
 VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 RESEND_API_KEY=
-GEMINI_API_KEY=          # if AI features are in use
-VITE_ADAPTER=firestore   # or "memory" for acid test
+GEMINI_API_KEY=              # if AI features are in use
+VITE_ADAPTER=firestore       # or "memory" for acid test
+FIREBASE_SERVICE_ACCOUNT_KEY=  # JSON string (server-only, never VITE_-prefixed) — see below
 ```
 
 The repo has `firebase-applet-config.json` — this is the public Firebase client config (not a secret). The `.env` is gitignored.
+
+**`FIREBASE_SERVICE_ACCOUNT_KEY`** — required for `POST /api/accept-invite` (server.ts) to work.
+This is a Firebase Admin SDK service account, used to verify a user's ID token and read/write
+Firestore server-side when accepting an invitation — the trust boundary that replaced the old
+`isJoiningViaInvitation()` Firestore rule (removed in Phase 13.A / F3 fix; see SYSTEM_REVIEW.md).
+
+To generate: Firebase Console → Project Settings → Service Accounts → Generate new private key.
+Set the env var to the **raw JSON contents of that file as a single-line string** (e.g. `export
+FIREBASE_SERVICE_ACCOUNT_KEY="$(cat service-account.json)"` locally, or pasted as one value into
+Vercel's environment variable UI). **Never commit the JSON file or check it into git.** If missing,
+`/api/accept-invite` returns a 500 with a clear message — the rest of the app still works.
 
 ---
 

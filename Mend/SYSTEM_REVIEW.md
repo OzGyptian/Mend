@@ -1,414 +1,375 @@
-# Mend — System Review (Technical & Functional)
+# Mend — System Review v2 (Technical & Functional)
 
-_Author: architecture review · Date: 2026-07-09 · Branch: `refactor/platform-seam`_
+_Author: architecture review · Date: 2026-07-11 · Branch: `refactor/phase-12-file-splits` · v1.0.86_
+_Supersedes the 2026-07-09 review (v1). Every finding from v1 has been re-verified against the current code._
 
-This report explains how Mend works from first principles (data → objects → functionality),
-walks the key user value chains (happy and unhappy paths), and assesses the system:
-what is **good**, what is **fragile**, and what should be **uplifted**. It closes with a
-prioritised remediation plan.
-
-The headline: **the platform-seam refactor is genuinely good work and is largely done. The
-fragility you have felt does not come from the seam — it comes from three deeper problems that
-the refactor did not touch: (1) a data model with no referential integrity and ambiguous foreign
-keys, (2) derived financial values stored in the database and recomputed only when a human clicks
-a button, and (3) four competing definitions of "who is an admin," one of which is a hardcoded
-email and one of which is an open door in the security rules.**
+**The headline:** since v1, real progress has been made on **code organisation** (the worst
+component shrank from 5,876 to 2,669 lines, domain calculations were extracted with 177 passing
+unit tests, and two of the four security holes in the rules were closed). But the **two problems
+that make the product feel fragile are still open**: (1) financial roll-ups are still stored in
+the database and refreshed only when a human clicks "Recalculate" — nine screens still have that
+button — and (2) any authenticated user can still make themselves an admin of any enterprise
+through the invitation rule. The plan in Part 4 is sequenced to close those first.
 
 ---
 
-## Part 1 — How the system works, from first principles
+## Part 1 — How the system works (updated)
 
 ### 1.1 The storage substrate
 
-Firestore, a schemaless document store. There are **26 top-level collections** (no
-sub-collection nesting except `sheets/{id}/rows`). Every document is a bag of fields; the
-"schema" lives in two places that are not connected to each other:
+Firestore, a schemaless document store: **26+ top-level collections** (plus
+`sheets/{id}/rows` sub-collections). The "schema" still lives in two disconnected places:
 
-- `src/domain/types.ts` — the TypeScript shapes (compile-time only, erased at runtime).
-- `firestore.rules` — per-collection `isValidX()` validators (runtime, but partial — they check
-  a handful of fields, not the whole shape).
+- `src/domain/types.ts` (654 lines) — TypeScript shapes, compile-time only.
+- `firestore.rules` (579 lines) — per-collection `isValidX()` validators, runtime but partial.
 
-There is no migration system and no schema registry. A field's meaning is whatever the code that
-last wrote it decided. This is the root condition that makes everything downstream fragile.
+There is still no migration system and no runtime schema validation at the adapter boundary.
+A field's meaning is whatever the code that last wrote it decided.
 
-### 1.2 The object graph (what links to what)
+### 1.2 The object graph
 
-```
-Enterprise ──1:N──> Project ──1:N──> CostCode  (the spine everything hangs off)
-    │                   │                 ▲
-    │                   │                 │ referenced by costCodeId OR code (string)
-    │                   ├── Sheet ──> rows (forecast)
-    │                   ├── actualCosts        ─┐
-    │                   ├── baselineBudgets      │  all reference a cost code,
-    │                   ├── changes ── changeRecords   but by id in some places
-    │                   ├── risks ── riskRecords        and by user-code in others
-    │                   ├── subcontracts ── subcontractLineItems ── invoices ── invoiceItems
-    │                   ├── progressPackages ── progressItems ── rulesOfCredit
-    │                   ├── procurementItems ── procurementStepDefinitions
-    │                   ├── scheduleItems
-    │                   ├── etcDetails
-    │                   ├── costPhasing
-    │                   └── periodSnapshots (frozen history)
-    ├── calendars (enterprise- or project-scoped)
-    ├── invitations
-    ├── auditLogs
-    ├── savedViews
-    └── userRoles/{uid}  (a *separate* identity model — see §3.4)
-```
+Unchanged from v1: `Enterprise → Project → CostCode` is the spine; every child collection
+denormalises `projectId`/`enterpriseId` as strings; there are no Firestore references, no
+foreign-key constraints, and joins are client-side `.filter()` calls.
 
-**How the links are actually implemented:** every child stores `projectId` (and often
-`enterpriseId`) as a denormalised string. There are **no Firestore references**, no foreign-key
-constraints, and no cascade behaviour. A "join" is a client-side `.filter()` over a separately
-fetched array. Deleting a project does not delete its cost codes, changes, risks, invoices, etc.
-— they become orphans that only the `scripts/audit-*.ts` and `scripts/fix-*.ts` one-off scripts
-can find. **The existence of those scripts is the clearest evidence of the fragility: they are a
-manual referential-integrity layer bolted on after the fact.**
+**Cascade delete — partially added.** `ProjectAdapter.deleteProjectWithSheets` now batch-deletes
+sheets and their rows with the project, and `CostAdapter` has a `deleteCostCode` counterpart.
+But **~18 other child collections** (costCodes on project delete, actuals, budgets, changes,
+risks, subcontracts, invoices, progress\*, procurement\*, scheduleItems, etcDetails, costPhasing)
+are still orphaned on delete. The one-off `scripts/audit-*.ts` / `fix-*.ts` scripts remain the
+de-facto referential-integrity layer.
 
-**The ambiguous foreign key (most important single defect).** A cost code has two identities:
-its Firestore document id (`id`) and its user-facing `code` string. Child records reference "the
-cost code" inconsistently — and the reconciliation code in `CostCodes.tsx` proves it:
-
-```ts
-// CostCodes.tsx handleRecalculateAll
-const actualCost = allActuals
-  .filter(a => a.costCodeId === ccId || a.costCodeId === ccCode)   // id OR code
-  .reduce((sum, a) => sum + (Number(a.cost) || 0), 0);
-```
-
-Matching on "id **or** code" means the same actual cost can attach to the wrong cost code if a
-`code` string ever collides with a document id pattern, and it means the data cannot be trusted
-to have one canonical linkage. This pattern appears in **12 places**. It is the kind of thing
-that silently produces wrong money numbers.
+**The ambiguous foreign key is still there.** The "match on `id` OR `code`" reconciliation
+pattern survives in **11 places across 8 files** (`CostCodes.tsx`, `ActualCost.tsx`,
+`BaselineBudget.tsx`, `CostReportingPeriod.tsx`, `RiskManagement.tsx`, `GlobalTimephasing.tsx`,
+`BulkRiskRecords.tsx`, `cost-codes/panels/TimephasingPanel.tsx`). This remains the single defect
+most likely to silently attribute money to the wrong cost code.
 
 ### 1.3 How data becomes functionality
 
-The application is a pure client-side SPA. `server.ts` is a thin Express server with exactly one
-route (`POST /api/invite`, which sends email via Resend). **All reads and writes happen in the
-browser**, now routed through the new platform seam:
+Still a pure client-side SPA behind the platform seam, and the seam has strengthened:
 
 ```
 Component ──> use{X}Repo() hook ──> Port interface ──> FirestoreAdapter ──> Firestore
                                           └─(VITE_ADAPTER=memory)─> MemoryAdapter (tests)
 ```
 
-The seam (`src/platform/`) is clean and well-built: 12 typed port interfaces, 12 Firestore
-adapters (thin CRUD + `subscribe`), 12 in-memory fakes, a composition root
-(`context.tsx`) selected by `VITE_ADAPTER`, and converters that keep `Timestamp` out of domain
-types. **A grep confirms zero `firebase/*` imports outside `src/platform/` — the non-negotiable
-rule in CLAUDE.md is currently satisfied.** This is the strongest part of the codebase.
+- Zero `firebase/*` imports outside `src/platform/` — and this is now **machine-enforced** by an
+  ESLint `no-restricted-imports` boundary rule (`npm run lint:boundary`). Caveat: it is not part
+  of `npm run lint` and there is **no CI**, so enforcement still depends on someone running it.
+- `src/domain/` has grown substantially: `eac.ts`, `phasing.ts`, `procurement.ts`, `progress.ts`,
+  `risk.ts`, `roles.ts`, `types.ts` — each with a test file; **177 unit tests pass in ~350 ms**.
+- Phases 11.3–11.8 eliminated the inline formula duplicates v1 complained about: 6 inline
+  Beta-PERT copies, 10+ `rocPercentComplete` copies, and 2 inline `calculatePhasing` copies now
+  route through the canonical domain functions.
 
-But note what the seam does **not** contain: **business logic.** The ports are generic CRUD.
-Every meaningful calculation — EAC, ETC, cost variance, roll-ups of change/risk records, phasing
-— still lives inside the components. `src/domain/` contains only `phasing.ts`, `procurement.ts`,
-`risk.ts` (a 1-line `betaPertImpact` helper), and `roles.ts`. **There is no `eac.ts`.** EAC and
-variance are computed inline in 4 components. So the seam moved the *I/O* out of components but
-left the *domain logic* in — which is why the components are still enormous (CostCodes.tsx is
-5,876 lines; the top 12 components are 44k of the 51k total LOC).
+What the seam still does **not** contain: the **roll-up** logic. `eac.ts` exists but is imported
+by exactly one component (`CostCodes.tsx`), and the roll-up totals it should own are still
+computed inline inside `handleRecalculateAll` and its siblings, then **written back to the
+database** (see §2.4).
+
+### 1.4 Code shape (updated numbers)
+
+- `src/` is now **55,741 LOC** (up from ~51k — splits added files, plus tests and column factories).
+- 119 component files. Largest: `CostCodes.tsx` **2,669** (was 5,876), `EnterpriseAdmin.tsx` 1,531,
+  extracted `columns.tsx` factories at 1,462/1,433/1,264.
+- **18 files still exceed the 800-line hard max** from CLAUDE.md.
+- **764 `: any` occurrences** remain in `src/components/`.
 
 ---
 
-## Part 2 — Key value chains (happy and unhappy paths)
+## Part 2 — Key value chains (updated)
 
 ### 2.1 Onboarding a user / enterprise
 
-**Happy path (system owner):** `App.tsx` computes `isSystemOwner` from a **hardcoded email
-string** (`tarek.guindy@gmail.com`). If true, the app subscribes to *all* enterprises and, if
-none exist, calls `bootstrapIfEmpty()`. Enterprise selection is persisted in `localStorage` under
-a *different* key (`systemOwnerEnterpriseId`) than everyone else (`selectedEnterpriseId`), via two
-parallel `useEffect` code paths.
+**Improved:** `App.tsx` no longer hardcodes the owner email; it consumes `isPlatformAdmin` from
+the centralised `usePlatform()`/`hooks.ts` path (Phase 11.8). The `userRoles` subscription feeds it.
 
-**Happy path (invited user):** admin creates an `invitations` doc → invitee gets an email with a
-`?token=` link → on login, `handlePendingInvitation` calls `acceptInvitation(token)` which looks
-up the pending invitation and adds the user to the enterprise's `adminUsers`/`users`.
-
-**Unhappy paths — this is where your pain came from:**
-- A brand-new user with no enterprise hits a dead-end screen whose only escape is a browser
-  **`prompt()`** ("Enter your Enterprise Name") and **`alert()`** for success/failure. This is
-  not a real onboarding flow; it is a debugging affordance that shipped.
-- The invitation success is announced with `alert()`, and failure sets an auth error — the token
-  is consumed from `window.location.search` with no cleanup, so a refresh re-triggers it.
-- **Security hole (critical):** the Firestore rule `isJoiningViaInvitation()` lets *any*
-  authenticated user add *themselves* to *any* enterprise's `adminUsers` as long as the write
-  only touches `adminUsers/users/updatedAt`. It never checks that a matching invitation exists.
-  The token check lives only in app code (`acceptInvitation`), which a direct API call bypasses.
-  → **Any logged-in user can make themselves admin of any enterprise whose id they can guess.**
-- **Security hole (critical):** `match /userRoles/{userId}` allows `write: if isSystemAdmin() ||
-  isAuthenticated()` — the `userId` path is not constrained to `request.auth.uid`. **Any
-  authenticated user can overwrite anyone's roles doc, including granting themselves
-  `platform_admin`.**
-- If `bootstrapIfEmpty` fails, the failure is only `console.error`'d — the owner sees an empty app
-  with no explanation.
+**Still broken:**
+- The hardcoded email list survives in **four places**: `src/platform/firestore/hooks.ts:61`
+  (`SYSTEM_OWNER_EMAILS`), `CostManagement.tsx:51`, `ProcurementManagementSubPane.tsx:33` (both
+  bypass the centralised hook with their own inline email comparison), and `firestore.rules:18-23`
+  (`isSystemAdmin()`, now three emails including bernard's — added in v1.0.85).
+- A brand-new user with no enterprise still hits the **`prompt()`** dead-end (`App.tsx:500`), and
+  ~31 `alert()`/`prompt()` call sites remain across the app.
+- The invitation token is still consumed from `window.location.search` without cleanup.
+- **Security hole (still open, critical):** `isJoiningViaInvitation()` in `firestore.rules:34-42`
+  still only checks that the write adds the caller's own uid to `adminUsers` — it **never checks
+  that a matching invitation exists**. Any authenticated user can make themselves admin of any
+  enterprise whose id they can obtain. The token check lives only in client code, which a direct
+  SDK call bypasses.
+- **Security hole (downgraded, now medium):** `userRoles/{userId}` write was fixed from
+  "any authenticated user" to `isSystemAdmin() || request.auth.uid == userId` — but self-write
+  means a user can still set `platformRole: 'platform_admin'` **on their own doc**, and the
+  client's `isPlatformAdmin` trusts that field. Firestore rules use the email allow-list, so data
+  access does not escalate server-side, but the client will render the platform-admin UI and
+  every client-side authz branch keyed on `isPlatformAdmin` is spoofable.
+- `enterprises` `allow create: if isAuthenticated()` — any logged-in user can create enterprises.
+  Possibly intentional for self-serve onboarding; flagged so it becomes a decision, not an accident.
 
 ### 2.2 Creating / deleting a project
 
-**Create (happy):** enterprise admin creates a `projects` doc; rules require
-`isAdminOfEnterprise`. Fine.
-
-**Delete (unhappy):** deleting a project deletes only the project document. Every child collection
-(cost codes, actuals, budgets, changes, risks, subcontracts, invoices, progress, procurement,
-schedule, etc.) is **left orphaned**. There is no cascade, no transaction, no soft-delete. This is
-exactly the "adding/deleting projects" fragility you reported. The `scripts/check-laing-projects.ts`
-and `check-data.ts` scripts exist to detect the resulting orphans by hand.
+Delete now cascades to **sheets and rows only**. Cost codes, actuals, budgets, changes, risks,
+subcontracts, invoices, progress, procurement and schedule documents are still orphaned. No
+transaction, no soft-delete.
 
 ### 2.3 Seeding data
 
-`scripts/seed-test-data.ts` is **77 KB** of hand-written document construction. Because there is
-no schema and no referential integrity, the seed script has to know every field of every
-collection and manually wire every cross-reference by string. Any drift between the seed script's
-assumptions and the components' assumptions produces data that *looks* valid to the rules but
-breaks a screen. This is why seeding "fights back."
+Unchanged: the seed script hand-encodes every collection because there is no schema layer.
 
 ### 2.4 Entering costs and reading a cost report (the core money flow)
 
-**Happy path:** user enters baseline budgets, actual costs, ETC details, changes. Each is a leaf
-document. To see a cost report, the app roll-ups leaves into each `CostCode`'s
-`approvedBudget / actualCostToDate / estimateAtCompletion / costVariance` fields.
+**This is still the critical defect (F1), essentially unchanged.**
 
-**The critical defect:** those roll-up fields are **stored on the CostCode document** and are only
-refreshed when a user clicks **"Recalculate All"** (`handleRecalculateAll`, and 5 other components
-have equivalent manual recalc buttons). Between a leaf write and the next button-click, the stored
-EAC/variance is **stale and wrong**. Two screens reading the same cost code can show different
-numbers. This is a textbook violation of the Single-Source-of-Truth rule in your own CLAUDE.md
-("derived values must never be stored as independent copies that can drift"): the leaf writers
-(ActualCost, BaselineBudget, ChangeManagement…) do **not** know all the read paths, and there is no
-invariant tying the stored total to its leaves. The same applies to `Change.budget/eac`,
-`Risk.exposure`, and `RiskRecord.betaPertImpactAmount` — all stored derived values.
+- `CostCode.approvedBudget / actualCostToDate / estimateAtCompletion / costVariance` (and the
+  movement fields) are **stored on the document** and refreshed only by `handleRecalculateAll`
+  (`CostCodes.tsx:170`, batch-writing all roll-ups at `:1968`).
+- **Nine files** still carry a manual Recalculate action: `CostCodes.tsx`,
+  `CostReportingPeriod.tsx`, `RiskManagement.tsx`, `GlobalTimephasing.tsx`, `BulkRiskRecords.tsx`,
+  `BulkSubcontractInvoiceItems.tsx`, `ProcurementProgress.tsx`,
+  `subcontracts/panels/LineItemsPanel.tsx`, `risk-management/panels/RiskRecordsPanel.tsx`.
+- Between a leaf write and the next button-click, stored EAC/variance is stale; two screens can
+  show different numbers for the same cost code. This remains a direct violation of the
+  Single-Source-of-Truth rule in CLAUDE.md, and it is the fragility that erodes trust in a cost tool.
 
-**Unhappy path:** a user edits an actual cost, navigates to the dashboard, and sees the *old* EAC.
-They "fix" it by editing again, or by hunting for the Recalculate button on a different screen.
-This is the daily fragility that erodes trust in the numbers — the worst outcome for a cost tool.
+**Partial progress:** Beta-PERT is better — writes now go through the canonical
+`betaPertExposure(min, ml, max, prob)` domain function, and grid cells recompute from leaves
+(only pinned total rows read the stored `betaPertImpactAmount`). The *pattern* to copy exists;
+it just hasn't been applied to the cost roll-ups, which matter most.
 
 ---
 
 ## Part 3 — Assessment
 
-### 3.1 What is genuinely good ✅
+### 3.1 What is genuinely good ✅ (grown since v1)
 
-1. **The ports-and-adapters seam.** Cleanly executed, the rule is enforced, memory fakes exist,
-   the composition root is a single switch. This is real architectural progress and should be
-   preserved and built upon.
-2. **Timestamp isolation.** Converters keep Firebase `Timestamp` out of domain types; dates are
-   ISO strings at the boundary. Correct.
-3. **Domain calculations that *were* extracted** (`phasing.ts`, `procurement.ts`, `betaPertImpact`)
-   have unit tests. The pattern is right; it just hasn't been finished (EAC/variance still inline).
-4. **Firestore rules exist and validate** — most collections check tenancy via
-   `canAccessProject`/`isAdminOfEnterprise`. The intent is sound even where the execution has holes.
-5. **Auth/verification UX** (email verification gate, OAuth + credential fallback, iframe launch
-   handling) is thoughtfully handled for the messy realities of Safari/embedded contexts.
+1. **The ports-and-adapters seam** — still the strongest part, now backed by an ESLint boundary rule.
+2. **Timestamp isolation** — converters keep Firebase types out of domain types.
+3. **The domain layer is real now**: eac, phasing, procurement, progress, risk, roles — all
+   extracted, all unit-tested (177 tests, 13 files, passing). Inline formula duplicates eliminated.
+4. **Test infrastructure**: Vitest suite green; Playwright E2E suites exist (functional CRUD +
+   characterization + a live suite of 4 specs runnable against Vercel); memory adapters make the
+   acid test (`dev:memory`) possible.
+5. **Two rule holes closed**: `procurementStepDefinitions` is now tenancy-scoped (was open to all
+   authenticated users), and `invitations` reads are restricted to the enterprise admin or invitee
+   (was leaking emails cross-tenant).
+6. **God-component splitting has momentum**: column-def factories and panel extractions took the
+   worst file from 5,876 → 2,669 lines.
+7. **Version/commit discipline** — small commits, version bumps, JOURNAL entries.
 
-### 3.2 What is fragile ⚠️ (ordered by blast radius)
+### 3.2 Findings register — status after re-inspection
 
-| # | Issue | Why it hurts | Severity |
-|---|-------|--------------|----------|
-| F1 | **Stored derived financials recomputed only on manual button-click** | Cost reports silently show stale/inconsistent money. Destroys trust in a cost tool. | CRITICAL |
-| F2 | **`userRoles` write rule open to any authenticated user** | Self-service privilege escalation to platform_admin. | CRITICAL (security) |
-| F3 | **`isJoiningViaInvitation` self-add to `adminUsers` with no invitation check** | Any user can admin any enterprise. | CRITICAL (security) |
-| F4 | **No referential integrity / no cascade delete** | Orphaned data on every project/cost-code delete; needs manual fix scripts. | HIGH |
-| F5 | **Ambiguous cost-code foreign key (`id` OR `code`)** | Wrong money attributed to wrong cost code; unfixable by inspection. | HIGH |
-| F6 | **Four competing "who is admin" models** (hardcoded email, `enterprise.adminUsers`, `project.users`, `userRoles`) | Authz decisions disagree; onboarding logic branches everywhere. | HIGH |
-| F7 | **Hardcoded system-owner email in client *and* rules** | Bus factor of one; can't add a platform admin without a deploy. | HIGH |
-| F8 | **God-documents** (Enterprise & Project carry ~40 optional config arrays; Project embeds two full period arrays) | Large writes, contention, hard to reason about, `any`-typed escape hatches. | MEDIUM |
-| F9 | **5,876-line components with inline business logic** | Unreviewable, untestable, the DRY/"logic in lib/" rules are violated. | MEDIUM |
-| F10 | **`prompt()`/`alert()` onboarding, token not cleaned from URL** | Not production onboarding; re-fires on refresh. | MEDIUM |
-| F11 | **`procurementStepDefinitions` rule open to all authenticated users** | Cross-tenant read/write of procurement templates. | MEDIUM |
-| F12 | **`invitations` readable by any authenticated user** | Email-address disclosure across tenants. | LOW |
-| F13 | **Duplicate "planned" vs "current" vs "actual" field sets on ProgressItem** | Working-copy vs snapshot confusion stored on one doc. | LOW |
-| F14 | **No schema/migration system** | Field meaning drifts; seed script must hand-encode everything. | (structural) |
+| # | Issue (v1) | Status 2026-07-11 | Severity now |
+|---|-----------|-------------------|--------------|
+| F1 | Stored derived financials, manual Recalculate | **OPEN.** 9 recalc sites; roll-ups still written to CostCode docs. `eac.ts` exists but imported once. | **CRITICAL** |
+| F2 | `userRoles` writable by anyone | **PARTIAL.** Now self-or-admin only, but self-write still permits self-granting `platformRole` → client-side admin UI spoof (rules don't trust it, so no data escalation). | MEDIUM |
+| F3 | `isJoiningViaInvitation` — no invitation check | **OPEN.** Rule unchanged in substance; any authed user can self-add to any enterprise's `adminUsers`. | **CRITICAL (security)** |
+| F4 | No cascade delete | **PARTIAL.** Sheets+rows (and cost-code path) cascade; ~18 child collections still orphan. | HIGH |
+| F5 | Ambiguous cost-code FK (`id` OR `code`) | **OPEN.** 11 occurrences in 8 files. | HIGH |
+| F6 | Four competing admin models | **PARTIAL.** Client centralised on `isPlatformAdmin` (hooks.ts) — but 2 components bypass it with inline email checks, and rules/adminUsers/project.users/userRoles all still coexist. | HIGH |
+| F7 | Hardcoded owner emails | **PARTIAL.** Reduced to 4 sites (hooks.ts, 2 components, firestore.rules — now 3 emails). Still requires a deploy to change platform admins. | MEDIUM-HIGH |
+| F8 | God-documents (Enterprise/Project config arrays) | **OPEN.** Unchanged. | MEDIUM |
+| F9 | God-components with inline business logic | **PARTIAL.** Max file halved; formula duplicates gone; 18 files still >800 lines; roll-up logic still inline. | MEDIUM |
+| F10 | `prompt()`/`alert()` onboarding, dirty token URL | **OPEN.** `App.tsx:500` prompt; ~31 alert/prompt sites. | MEDIUM |
+| F11 | `procurementStepDefinitions` rule open to all | **FIXED** (tenancy-scoped, firestore.rules:504). | — |
+| F12 | `invitations` readable by any user | **FIXED** (admin or invitee only, firestore.rules:375). | — |
+| F13 | Duplicate planned/current/actual field sets on ProgressItem | **OPEN.** | LOW |
+| F14 | No schema/migration system | **OPEN.** | (structural) |
 
-### 3.3 Is this "good and robust software architecture"?
+**New observations (v2):**
 
-Partly. The **structural (code-organisation) architecture** is being fixed well by the seam. But
-the **data architecture** is not robust, and in a cost/forecasting product the data architecture
-*is* the product. Two principles that your own CLAUDE.md codifies are being violated in the
-substrate:
+| # | Issue | Severity |
+|---|-------|----------|
+| N1 | ESLint boundary rule exists but is not in `npm run lint` and there is **no CI pipeline** — nothing runs type-check/tests/boundary on push or PR. | HIGH (process) |
+| N2 | `enterprises` create is open to any authenticated user — decide if that's the intended self-serve flow. | MEDIUM |
+| N3 | 764 `: any` in components — the domain layer is typed but the UI layer erases it. | MEDIUM |
+| N4 | Repo hygiene: dozens of Finder-duplicate `* 2.ts` files and loose docx/scripts sit untracked at repo root; they will eventually get committed by accident. | LOW |
 
-- **Single Source of Truth** — violated by F1 (stored, drift-prone derived money).
-- **Referential integrity / one canonical linkage** — violated by F4 and F5.
+### 3.3 Is this good, robust architecture yet?
 
-And the **security model** has two critical broken-access-control holes (F2, F3) plus a hardcoded
-super-admin (F7). So the honest answer to "are we following robust standards?" is: *the refactor
-is on the right track, but it stopped at the seam and never reached the two layers that actually
-cause your day-to-day pain — the data model and the authorization model.*
-
-### 3.4 The identity/authorization tangle (F6, spelled out)
-
-There are **four** ways the system decides what a user can do, and they are not reconciled:
-
-1. `isSystemOwner` = hardcoded email in `App.tsx`.
-2. `isSystemAdmin()` = the *same* hardcoded emails in `firestore.rules`.
-3. `Enterprise.adminUsers[]` + `Enterprise.users{}` (roles `Enterprise System Admin`/`Enterprise User`).
-4. `Project.users{}` (roles `Project Admin`/`Project User`).
-5. A *fifth*, newer model in `src/domain/roles.ts` + `userRoles/{uid}` (`platformRole`,
-   `memberships[]` with `enterprise_admin`/`enterprise_member`, `projectRoles`) surfaced by the
-   `useAuth()` hook — but `App.tsx` does not use it; it still uses #1.
-
-`roles.ts` even names roles (`Project Writer/Reader/Guest`) that the `Project.users` type
-(`Project Admin | Project User`) cannot represent. So the new model and the live model disagree at
-the type level. This is the single biggest source of "why did onboarding behave weirdly" — the
-app authorizes with one model while the rules authorize with another and a third is half-wired in.
+The **code-organisation architecture** is genuinely on track: seam enforced, domain layer real
+and tested, components shrinking. What is *not* yet robust is the **data architecture** — the
+same three deep problems v1 named: no referential integrity with an ambiguous FK, stored derived
+financials with human-triggered refresh, and a fractured identity/authz model. Those three are
+what make the app *feel* fragile in daily use, and none of them is closed. The good news: the
+domain layer and test harness built since v1 are exactly the tools needed to close them.
 
 ---
 
-## Part 4 — Recommended uplift (proposed plan — needs your sign-off)
+## Part 4 — The uplift plan: PoC/MVP → stable, robust system
 
-Sequenced so that the highest-trust-and-security items come first and nothing depends on a later
-phase. Each phase is independently shippable.
+### Guiding principle: don't fight Firestore where Postgres will win
 
-### Phase A — Stop the bleeding (security + trust) — do first
-- **A1 (F2):** Fix `userRoles` write rule → `allow write: if isSystemAdmin() || request.auth.uid == userId` (and never allow self-setting `platformRole`).
-- **A2 (F3):** Make enterprise-join require a real invitation: rule must `get()` the matching `invitations` doc (status pending, email == token email) rather than trusting the diff shape.
-- **A3 (F11/F12):** Scope `procurementStepDefinitions` to enterprise/project; restrict `invitations` read to the invited email + enterprise admins.
-- **A4 (F1 — the trust fix):** Make cost/change/risk roll-ups a **derived read**, not stored state. Two legal options from your own rules: (i) compute on read from leaves via a canonical `src/domain/eac.ts` (simplest, always correct), or (ii) keep the stored cache but add a contract test asserting every leaf-writer calls one `recompute()`. Recommend (i) first; the "Recalculate All" buttons then disappear.
+The stated target is PostgreSQL (Supabase). That changes what's worth building **now**:
 
-### Phase B — Fix the data model
-- **B1 (F5):** Pick one canonical cost-code key (the document `id`), write a migration to normalise all children, and delete the "id OR code" matching everywhere.
-- **B2 (F4):** Introduce cascade/soft-delete for project & cost-code deletion (a delete goes through a repository method that removes or tombstones children in a batch). Fold the `scripts/audit-*`/`fix-*` logic into a repeatable integrity check + a test.
-- **B3 (F14):** Add a lightweight schema+migration convention (versioned docs, or Zod schemas at the adapter boundary that reject malformed writes) so seed and app share one definition.
+- **Do now, carries over or protects users today:** security-rule fixes, compute-on-read domain
+  roll-ups, canonical FK normalisation, real onboarding UX, CI. These are storage-agnostic (the
+  domain functions and selectors move to Postgres unchanged) or urgent regardless.
+- **Do minimally:** cascade delete (a simple registry-driven batch — don't build infrastructure;
+  Postgres gives `ON DELETE CASCADE` for free), schema validation (zod at the adapter boundary —
+  which doubles as the future Postgres schema spec).
+- **Defer to the Postgres migration:** god-document restructuring (F8/F13), a real migration
+  framework (F14), event-driven anything. Redesign the schema once, in SQL, not twice.
 
-### Phase C — Unify identity/authorization
-- **C1 (F6/F7):** Choose **one** role model — the `userRoles`/`roles.ts` model is the right target. Wire `App.tsx` to `useAuth()` instead of the hardcoded email; make `firestore.rules` read `userRoles` (via custom claims or a `get()`); remove hardcoded emails from both client and rules. Reconcile the role vocabularies (`roles.ts` vs `Project.users` type).
+### Phase A — Close the security holes (≈2 days) 🔴 do first
 
-### Phase D — Finish the seam's promise (maintainability)
-- **D1 (F9):** Extract the remaining inline business logic (EAC/variance roll-ups, change/risk aggregation) into `src/domain/`, and shrink the top components below the 800-line rule by splitting grid/config/logic. This is where the "many small files" and "logic in lib/" rules get satisfied.
-- **D2 (F8/F13):** Split god-documents — move `reportingPeriods`/`progressPeriods` and enterprise config arrays into their own collections; separate ProgressItem's snapshot fields from its working fields.
+**A1 (F3) — Server-verified invitation acceptance.**
+The Express server already exists; give it a second route. `POST /api/accept-invite` using
+`firebase-admin`: verify the ID token, look up the invitation by token, check status/email match,
+add the uid to the enterprise membership and mark the invitation accepted **in one server-side
+batch**. Then **delete `isJoiningViaInvitation()` from firestore.rules entirely** — enterprise
+updates become admin-only. This closes the self-add-as-admin hole at the root.
+_Acceptance: a rules-emulator test proving a non-invited authed user cannot write themselves into `adminUsers`._
 
-### Suggested first move
-Phase A is small, high-value, and low-risk (rules edits + one derived-read refactor). It directly
-removes the two critical security holes and the stale-numbers problem — the things eroding your
-confidence — without waiting on the larger data-model migration.
+**A2 (F2 residue) — Lock `platformRole`.**
+`userRoles` self-write may not change `platformRole`:
+`request.resource.data.platformRole == resource.data.platformRole || isSystemAdmin()` (handle the
+missing-field case). Or simpler: make `userRoles` writes system-admin-only and route user-pref
+fields elsewhere.
+_Acceptance: emulator test — self-granting `platform_admin` is rejected._
 
----
+**A3 (F7/F6) — One admin definition via custom claims.**
+Set `platformAdmin: true` as a **Firebase Auth custom claim** (one small admin script using
+firebase-admin). Rules check `request.auth.token.platformAdmin == true`; the client reads it from
+the ID token. Delete the email lists from `firestore.rules`, `hooks.ts`, `CostManagement.tsx`,
+`ProcurementManagementSubPane.tsx`. Adding a platform admin becomes a script run, not a deploy.
+_Acceptance: `grep -r "guindy\|bernard.w.leung" src firestore.rules` returns nothing._
 
----
+**A4 (N2) — Decide enterprise creation policy.** If self-serve is intended, keep it and build the
+real onboarding form (Phase D); if not, restrict create to platform admins.
 
-## Part 5 — Separation of concerns & code distribution
+### Phase B — Make the numbers trustworthy (≈1.5–2 weeks) 🔴 the core of "not fragile"
 
-**Verdict: the system does not currently follow good separation of concerns.** The seam
-(`src/platform/`) is well-layered, but 91% of the code sits in one flat folder of oversized files
-that each mix six concerns. The foundation is not yet sound enough to build further on without
-first decomposing.
+**B1 (F1) — Compute-on-read for all financial roll-ups.**
+This is the single highest-value change in the plan. The recipe, per roll-up family:
 
-### Map 5.1 — Where the code lives
+1. **Inventory** the stored derived fields: CostCode roll-ups (budget/actual/ETC/EAC/variance +
+   movements), `Change.budget/eac`, `Risk.exposure`, pinned-row `betaPertImpactAmount`.
+2. **Extend `src/domain/eac.ts`** (and a new `src/domain/rollups.ts`) with pure functions that
+   take leaves (actuals, budgets, etcDetails, changeRecords, riskRecords) and return the totals —
+   exactly the pattern already proven with `betaPertExposure`.
+3. **Add selector hooks** (`useCostCodeRollups(projectId)`) in `src/product`/`lib` that subscribe
+   to leaves via the existing repos and compute at render. Every screen calls the same hook.
+4. **Freeze the switch with the existing characterization test**
+   (`tests/e2e/cost-report.characterization.spec.ts`): capture current numbers, flip a screen to
+   computed values, assert equality (after deliberately reconciling any stale stored data).
+5. **Delete the 9 Recalculate buttons** and stop writing roll-ups to CostCode docs. Keep
+   `periodSnapshots` as the *only* stored derived data — it is a legitimate frozen snapshot, and
+   every surface that shows it must label it "as of {period}".
+6. Migrate one screen at a time: CostCodes → CostReportingPeriod → Risk → Subcontracts/Invoices →
+   Procurement. Each step is commit-sized and testable.
 
-```
-                          LOC      % src    files   avg/file
- src/components/  ██████  46,561   91.2%     79      590     ◀ the problem
- src/platform/    █        2,661    5.2%     32       83     ◀ the good part (the seam)
- src/domain/      ▌        1,072    2.1%      7      153     (half is dead — see 5.4)
- src/ (root)      ▏          649    1.3%      4        —     App.tsx, main.tsx, types.ts
- src/lib/         ·           41    0.1%      3       14     ◀ where logic SHOULD live, but is empty
-```
+_Acceptance: edit an actual cost, navigate anywhere — every screen shows the new EAC with no
+button pressed; no two screens can disagree._
+_Perf note: current data volumes are PoC-scale; client-side reduce over a few thousand leaves is
+milliseconds. If a screen measurably lags, memoise the selector — do not go back to storing._
 
-Healthy target for this class of app: components 40–50%, domain/logic 25–35%, platform 15–20%,
-lib 5–10%. Here the logic never reached `lib/`/`domain/` — it is trapped inside components.
+**B2 (F5) — One canonical cost-code foreign key.**
+1. Write `scripts/normalize-costcode-fk.ts`: for every child collection, resolve
+   `costCodeId` values that hold a user `code` string to the document id; report unresolvable rows.
+2. Run against a backup/emulator first, then live.
+3. Delete all 11 `=== id || === code` fallbacks; children match on `costCodeId === id` only.
+4. Add a validator to `isValidX()` rules: `costCodeId is string && costCodeId.size() > 0`, and to
+   the zod schemas in C2.
 
-### Map 5.2 — Component size distribution (79 files)
+_Acceptance: `grep -rn "costCodeId === .*||" src` returns 0; audit script reports 0 ambiguous rows._
 
-```
-  >2,000 lines    ██████ 6      CostCodes 5876 · Subcontracts 4591 · EnterpriseAdmin 3524
-                                 ProgressTracking 2434 · BulkEtcDetails 1930 · ...
-  800–2,000       ████████████ 12
-  400–800         █████████ 15
-  200–400         ████████████ 20
-  <200            ████████████████ 26
-```
+### Phase C — Data lifecycle integrity (≈4 days) 🟠
 
-**18 of 79 files exceed the 800-line hard max in CLAUDE.md; 6 are 2–6× over it.**
+**C1 (F4) — Registry-driven cascade delete.**
+One constant in the platform layer, e.g. `PROJECT_CHILD_COLLECTIONS: string[]` (all ~20 names),
+consumed by `deleteProjectCascade(projectId)` — chunked batched deletes (500/batch), sheets/rows
+included. Same registry drives a `deleteCostCodeCascade` and the audit scripts, so there is
+exactly one list to maintain. Client-side is acceptable for MVP (rules already gate delete to
+enterprise admins); move it behind the Express server later if delete volume grows.
+_Acceptance: delete a seeded project → audit script finds 0 orphans._
 
-### Map 5.3 — Anatomy of a god-component (`CostCodes.tsx`, 5,876 lines)
+**C2 (F14, minimal) — Zod schemas at the adapter boundary.**
+One zod schema per collection in `src/domain/schemas/`, inferred types replacing hand-written
+ones progressively. Firestore adapters `parse()` on read (log + quarantine on failure) and
+`parse()` on write (throw). The seed script builds documents *from the schemas*. This kills the
+"seed fights back" problem, gives runtime validation Firestore rules can't, and becomes the
+specification for the Postgres DDL later. **Do not** build a Firestore migration framework.
 
-```
-  ┌──────────────────────────────────────────────────────────────┐
-  │  64 useState hooks        → ① UI/local state                   │
-  │   7 repo hooks            → ② data access (7 collections)      │
-  │ 241 calc sites            → ③ BUSINESS LOGIC (EAC, variance)   │  ← belongs in domain/
-  │ 160 grid column defs      → ④ presentation / grid config       │
-  │  28 modal/dialog refs     → ⑤ sub-views & flows                │
-  │  handleRecalculateAll()   → ⑥ orchestration / persistence      │
-  └──────────────────────────────────────────────────────────────┘
-```
+### Phase D — Onboarding & error surfaces (≈3 days) 🟠
 
-This is systemic, not confined to the top files: **27 of 79 components** individually fetch data
-**and** compute business logic **and** render a grid in the same file.
+**D1 (F10):** replace the `prompt()` dead-end with a real create/join-enterprise screen; replace
+all ~31 `alert()`/`prompt()` sites with the toast/dialog pattern (shadcn/ui is already in the
+stack); strip the invitation token from the URL after consumption (`history.replaceState`);
+surface `bootstrapIfEmpty` failures in UI, not `console.error`.
+**D2:** add a top-level React error boundary so a component crash degrades to a screen-level
+error instead of a white page.
 
-### Map 5.4 — Two proofs the foundation isn't wired correctly
+### Phase E — Enforcement: make the standards self-executing (≈1 day) 🟠
 
-1. **`domain/phasing.ts` exists but ZERO components import it.** 4 components carry their own
-   inline copy of the curve/phasing logic → the "canonical" function is dead code while the real
-   logic is duplicated. **There is no `domain/eac.ts` at all** — EAC/variance is inline in 4 files.
-2. **627 `: any` annotations inside components** — the type safety domain types promise is erased
-   at point of use.
+- **CI (GitHub Actions):** on PR/push — `type-check` → `vitest run` → `lint:boundary` → `build`.
+  This is the highest leverage/effort ratio in the whole plan: every guarantee built so far
+  currently depends on someone remembering to run it.
+- Fold `lint:boundary` into `npm run lint`.
+- Add the memory-adapter E2E smoke (`dev:memory` + a functional spec) to CI; keep live-Vercel E2E
+  as the nightly job (blocked on GitHub issue #4 / test-project setup — existing backlog item).
+- **Repo hygiene:** delete the `* 2.ts` Finder duplicates, move loose scripts under `scripts/`,
+  move or gitignore the docx files at repo root.
 
-### Map 5.5 — Intended vs actual architecture
+### Phase F — Continuous code health (ongoing, timeboxed per session) 🟡
 
-```
-   INTENDED (what the seam implies)          ACTUAL (today)
-   Component  = render only                  Component = 5,876 lines doing everything
-       │ calls                                   │  fetch (7 repos) + compute inline + render
-   domain/    = pure canonical logic  ✗ mostly missing / dead
-       │
-   platform/ports  = CRUD          ✓          platform/ports  ✓
-   platform/adapters ─▶ Firestore  ✓          platform/adapters ─▶ Firestore  ✓
-```
+- **File-size ratchet:** never let a touched file grow; split any of the 18 >800-line files *when
+  you're already in them* (the Phase-12 pattern — column factories + panels — works; don't big-bang it).
+- **`: any` ratchet:** enable `@typescript-eslint/no-explicit-any` as `warn`, record the count
+  (764), fail CI if it rises. Burn it down opportunistically.
+- **F8/F13 (god documents, ProgressItem field triplication): deliberately deferred** to the
+  Postgres schema design, where normalisation happens once. Only intervene sooner if write
+  contention on Project period arrays actually bites.
 
-The bottom half (the seam) is clean. The top half (a domain layer + thin components) was never
-built. The fix is **extraction under test**, not a rewrite — the seam already provides the skeleton.
+### Sequencing and effort (solo, focused)
 
----
+| Phase | What | Effort | Risk if skipped |
+|-------|------|--------|-----------------|
+| A | Security holes, one admin model | ~2 days | Tenant takeover; can't safely demo to outsiders |
+| B | Compute-on-read + canonical FK | ~1.5–2 wks | Numbers stay untrustworthy — the product's core promise |
+| C | Cascade + zod boundary | ~4 days | Orphans and seed fragility keep recurring |
+| D | Onboarding + error surfaces | ~3 days | First-run experience remains a debugging affordance |
+| E | CI + hygiene | ~1 day | All other guarantees decay silently |
+| F | Ratchets | ongoing | Slow regression to god-files |
 
-## Part 6 — Approved execution plan (supersedes Part 4 sequencing)
-
-**Decisions (signed off 2026-07-09):** vertical slices + E2E-first; pragmatic strictness
-(extract logic + tests now, defer 800-line/`any` cosmetic cleanup to a later pass).
-
-**Testing philosophy — characterization first:**
-1. Pin current behaviour with **E2E tests against a local memory-adapter build** (deterministic) —
-   this is the outer safety net; behaviour must not change.
-2. Extract logic into `src/domain/` **under new unit tests written at the moment of extraction**
-   (not up front against code we're about to delete).
-3. E2E staying green = proof the value chain still works. Unit coverage climbs as logic moves.
-
-**Structure — vertical slices, not horizontal phases** (a slice fits one working session and ends
-in a committed, green, shippable state, so context loss never strands a half-done file):
-
-```
- PHASE 0  Safety net & harness (horizontal, once)
-   • Repoint Playwright at a local memory-adapter build; seed in-memory fixtures
-   • Characterization E2E for core value chains (auth → enterprise → project → cost report)
-   • Widen vitest coverage scope beyond domain/ to observe it climb
-   ▶ GATE: E2E green on current code = the net is live.
-
- PHASE 1  Security rules (horizontal, small)
-   • F2 userRoles write scope · F3 invitation-must-exist · F11/F12 collection scoping
-   • Add NEGATIVE tests: attacker cannot self-escalate
-   ▶ GATE: legit flows green, escalation blocked.
-
- PHASE 2+ Vertical slices (one per session, trust-priority order)
-   2. Cost / EAC       → extract eac.ts, compute-on-read (removes "Recalculate All"), fix cost-code FK
-   3. Change management
-   4. Risk             → wire domain/risk.ts betaPert at write+read
-   5. Subcontract / Invoice
-   6. Progress         → wire domain/phasing.ts (kills the dead-code duplication)
-   7. Procurement
-   Each slice: extract logic→domain/ · fix that domain's data issue · adopt <DataGrid> ·
-               unit-test extracted fns (100%) · E2E green · commit + JOURNAL entry.
-
- PHASE 8  Identity unification (cross-cutting, near end)
-   • Collapse 4 role models → userRoles; wire App.tsx to useAuth(); remove hardcoded emails.
-```
-
-**Context-safety mechanism:** every slice ends with a committed green build and a one-line
-`PLAN.md`/`JOURNAL.md` entry. The last commit is always a working app.
-
-Per-slice checklist lives in `PLAN.md` under "Phase 11 — Foundation Uplift".
+**Total: roughly 3.5–4.5 weeks** of solo effort to a defensible "stable MVP" bar. A and E are
+tiny and unblock everything else psychologically: after them, every subsequent change is guarded
+by CI and no longer exposed to the two critical holes.
 
 ---
 
-## Appendix — Evidence index
-- Seam clean: `grep firebase/* outside src/platform` → 0 hits.
-- Manual recompute: `CostCodes.tsx:395 handleRecalculateAll`; 6 components have Recalculate buttons.
-- FK ambiguity: 12 occurrences of `costCodeId === id || costCodeId === code`.
-- Security: `firestore.rules:32-40` (`isJoiningViaInvitation`), `:554-557` (`userRoles`), `:18-21` (hardcoded admin), `:498-503` (`procurementStepDefinitions`), `:373-374` (`invitations` read).
-- Identity models: `App.tsx:48`, `domain/roles.ts`, `types.ts` (`Enterprise.users`, `Project.users`), `platform/.../UserRoleAdapter.ts`.
-- Scale: 51,017 LOC in `src/`; top 12 components = 44,454 LOC; `seed-test-data.ts` = 77 KB.
-- Firefighting scripts: `scripts/{audit-user-access,audit2,check-data,check-laing-projects,fix-enterprise-membership,fix-email-verified,add-bernard-to-all-enterprises}.ts`.
+## Part 5 — Metrics snapshot (2026-07-11 vs 2026-07-09)
+
+| Metric | v1 (07-09) | v2 (07-11) |
+|--------|-----------|-----------|
+| `src/` LOC | ~51k | 55,741 (splits, tests, factories) |
+| Largest component | 5,876 (CostCodes) | 2,669 (CostCodes) |
+| Files >800 lines | ~12–15 | 18 (splits created mid-size files; several columns.tsx >1,200) |
+| Domain modules | 4 (no eac) | 7 incl. `eac.ts`, all tested |
+| Unit tests | ~166 | **177 passing** (13 files, ~350 ms) |
+| E2E | none live | functional + characterization + 4 live specs (Vercel) |
+| Firebase imports outside platform | 0 (manual grep) | 0 (**ESLint-enforced**, not in CI) |
+| `: any` in components | (not counted) | 764 |
+| Recalculate button sites | ~6 | 9 files (splits duplicated some panels) |
+| `id OR code` fallbacks | 12 | 11 (8 files) |
+| Hardcoded admin emails | client + rules | 4 sites (hooks.ts, 2 components, rules — 3 emails) |
+| Critical security holes | 2 (F2, F3) | **1 (F3)** + 1 medium residue (F2 platformRole self-grant) |
+| CI | none | none |
+
+## Part 6 — Verdict
+
+The refactor is working: the seam is enforced, the domain layer is real and tested, and the code
+is getting smaller and safer to change. **v1's synopsis still stands** — the fragility lives in
+the data model, not the code layout — but the distance to "stable, robust MVP" is now short and
+well-defined: **one security rule (A1), one architectural pattern applied nine times (B1), one
+data migration (B2), one deletion registry (C1), and a CI file (E)**. Everything else is polish
+and ratchets. Do Phase A this week; do not add new features until Phase B is done, because every
+feature built on stored roll-ups deepens the hole you must climb out of.
+
+---
+
+_Verification evidence for this review: `firestore.rules:18-23, 34-42, 305-312, 375-386, 504-522,
+573-577`; `src/platform/firestore/hooks.ts:61`; `CostManagement.tsx:51`;
+`ProcurementManagementSubPane.tsx:33`; `CostCodes.tsx:170, 1968`; `App.tsx:500`;
+`ProjectAdapter.ts:71-81`; grep counts for `costCodeId === ... ||` (11), `: any` (764),
+Recalculate (9 files); `vitest run` → 177/177 pass; `tsc --noEmit` clean; no `.github/workflows`._

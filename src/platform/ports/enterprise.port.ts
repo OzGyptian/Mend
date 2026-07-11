@@ -9,7 +9,9 @@ export interface EnterpriseRepository {
   subscribeByUserId(userId: string, callback: (enterprises: Enterprise[]) => void): Unsubscribe;
   subscribeById(enterpriseId: string, callback: (enterprise: Enterprise | null) => void): Unsubscribe;
   bootstrapIfEmpty(userId: string, name: string, role: string): Promise<void>;
-  acceptInvitation(token: string, userId: string, userEmail: string, displayName: string): Promise<{ enterpriseName: string } | null>;
+  // F3 fix: acceptance is verified server-side (POST /api/accept-invite) against the
+  // caller's own ID token — the adapter no longer takes client-supplied identity fields.
+  acceptInvitation(token: string): Promise<{ enterpriseName: string } | null>;
   update(enterpriseId: string, data: Partial<Enterprise>): Promise<void>;
   create(data: Omit<Enterprise, 'id'>): Promise<Enterprise>;
   createMany(records: Array<Omit<Enterprise, 'id'>>): Promise<void>;

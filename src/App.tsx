@@ -83,15 +83,15 @@ export default function App() {
     return authRepo.subscribeToAuth((u) => {
       setUser(u);
       setLoading(false);
-      if (u) handlePendingInvitation(u);
+      if (u) handlePendingInvitation();
     });
   }, []);
 
-  const handlePendingInvitation = async (u: AuthUser) => {
+  const handlePendingInvitation = async () => {
     const token = new URLSearchParams(window.location.search).get('token');
     if (!token) return;
     try {
-      const result = await enterpriseRepo.acceptInvitation(token, u.id, u.email || '', u.displayName || u.email?.split('@')[0] || 'New User');
+      const result = await enterpriseRepo.acceptInvitation(token);
       if (result) alert(`Welcome! You've been added to ${result.enterpriseName}.`);
     } catch (error: unknown) {
       setAuthError(error instanceof Error ? error.message : 'Failed to process invitation.');
