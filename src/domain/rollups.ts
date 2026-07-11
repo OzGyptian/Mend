@@ -231,3 +231,28 @@ export function aggregateCostCodeRollups(
   }
   return rollups;
 }
+
+/**
+ * Aggregates all of a project's ChangeRecord leaves into
+ * Map<changeId, {budget, eac}> in one pass — pure, no I/O. Groups records by
+ * changeId, then applies computeChangeRollup per group. Canonical
+ * replacement for the duplicated updateParentTotals() in
+ * ChangeManagement.tsx and BulkChangeRecords.tsx.
+ */
+export function aggregateChangeRollups(
+  changes: Change[],
+  changeRecords: ChangeRecord[],
+): Map<string, { budget: number; eac: number }> {
+  const recordsByChangeId = new Map<string, ChangeRecord[]>();
+  for (const record of changeRecords) {
+    const list = recordsByChangeId.get(record.changeId) || [];
+    list.push(record);
+    recordsByChangeId.set(record.changeId, list);
+  }
+
+  const rollups = new Map<string, { budget: number; eac: number }>();
+  for (const change of changes) {
+    rollups.set(change.id, computeChangeRollup(recordsByChangeId.get(change.id) || []));
+  }
+  return rollups;
+}

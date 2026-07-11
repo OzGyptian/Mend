@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  aggregateCostCodeRollups, computeChangeRollup, computeCostCodeRollup, resolveEacSourceValue, type CostCodeLeafTotals,
+  aggregateChangeRollups, aggregateCostCodeRollups, computeChangeRollup, computeCostCodeRollup, resolveEacSourceValue,
+  type CostCodeLeafTotals,
 } from './rollups';
 import type {
   ActualCostRecord, BaselineBudgetRecord, Change, ChangeRecord, CostCode, EtcDetail, Subcontract,
@@ -249,5 +250,27 @@ describe('aggregateCostCodeRollups', () => {
       period,
     );
     expect(result.size).toBe(0);
+  });
+});
+
+describe('aggregateChangeRollups', () => {
+  const changes = [{ id: 'chg-1' }, { id: 'chg-2' }] as unknown as Change[];
+
+  it('groups records by changeId and computes each change independently', () => {
+    const records = [
+      { changeId: 'chg-1', budgetAmount: 1000, eacAmount: 1200 },
+      { changeId: 'chg-1', budgetAmount: 500, eacAmount: 400 },
+      { changeId: 'chg-2', budgetAmount: 50, eacAmount: 50 },
+    ] as unknown as ChangeRecord[];
+
+    const result = aggregateChangeRollups(changes, records);
+    expect(result.get('chg-1')).toEqual({ budget: 1500, eac: 1600 });
+    expect(result.get('chg-2')).toEqual({ budget: 50, eac: 50 });
+  });
+
+  it('returns zeroed totals for a change with no records', () => {
+    const result = aggregateChangeRollups(changes, []);
+    expect(result.get('chg-1')).toEqual({ budget: 0, eac: 0 });
+    expect(result.get('chg-2')).toEqual({ budget: 0, eac: 0 });
   });
 });

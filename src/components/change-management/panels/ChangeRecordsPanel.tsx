@@ -52,7 +52,6 @@ interface ChangeRecordsPanelProps {
   isMainTableCollapsed: boolean;
   recordColumnDefs: (ColDef | ColGroupDef)[];
   onCellValueChanged: (params: any) => void;
-  onUpdateParentTotals: (changeId: string) => void;
 }
 
 export default function ChangeRecordsPanel({
@@ -67,7 +66,6 @@ export default function ChangeRecordsPanel({
   isMainTableCollapsed,
   recordColumnDefs,
   onCellValueChanged,
-  onUpdateParentTotals,
 }: ChangeRecordsPanelProps) {
   const changeRepo = useChangeRepo();
 
@@ -212,7 +210,6 @@ export default function ChangeRecordsPanel({
 
         const importCreatesR: any[] = [];
         let addedCount = 0;
-        const affectedChangeIds = new Set<string>();
 
         for (const row of data) {
           const costCode = String(row['Cost Code'] || '').trim();
@@ -239,14 +236,10 @@ export default function ChangeRecordsPanel({
             eacAmount: Number(row['EAC Amount']) || 0,
           });
           addedCount++;
-          affectedChangeIds.add(selectedChangeId);
         }
 
         if (addedCount > 0) {
           await Promise.all(importCreatesR.map(r => changeRepo.createChangeRecord(r)));
-          for (const cid of affectedChangeIds) {
-            onUpdateParentTotals(cid);
-          }
           toast.success(`Imported ${addedCount} records`);
         }
       } catch (error) {
@@ -274,15 +267,6 @@ export default function ChangeRecordsPanel({
       });
 
       await changeRepo.updateManyChangeRecords([...selectedRecordIds].map(id => ({ id, data: updates })));
-
-      const affectedChangeIds = new Set<string>();
-      selectedRecordIds.forEach(id => {
-        const record = changeRecords.find(r => r.id === id);
-        if (record) affectedChangeIds.add(record.changeId);
-      });
-      for (const changeId of affectedChangeIds) {
-        onUpdateParentTotals(changeId);
-      }
 
       toast.success(`Updated ${selectedRecordIds.size} records`);
       setIsBulkRecordUpdateOpen(false);
@@ -381,7 +365,6 @@ export default function ChangeRecordsPanel({
                       onClick={async () => {
                         if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
                           await Promise.all([...selectedRecordIds].map(id => changeRepo.deleteChangeRecord(id)));
-                          if (selectedChangeId) onUpdateParentTotals(selectedChangeId);
                           setSelectedRecordIds(new Set());
                           toast.success(`Deleted ${selectedRecordIds.size} records`);
                         }

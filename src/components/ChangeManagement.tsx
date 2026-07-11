@@ -55,6 +55,7 @@ import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
+import { useChangeRollups } from '../lib/changeRollups';
 import {
   buildChangeColumnDefs,
   buildChangeRecordColumnDefs,
@@ -107,6 +108,15 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   const [changes, setChanges] = useState<Change[]>([]);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
+
+  // Phase 13.B1.6: compute-on-read budget/eac totals (SYSTEM_REVIEW.md v2 / PLAN.md F1).
+  // Replaces the stored budget/eac fields and updateParentTotals() (duplicated in
+  // BulkChangeRecords.tsx too). Neither field was ever editable in this grid.
+  const changeRollups = useChangeRollups(project.id, changes);
+  const changesWithRollups = useMemo(
+    () => changes.map((c) => ({ ...c, ...changeRollups.get(c.id) })),
+    [changes, changeRollups],
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [selectedChangeId, setSelectedChangeId] = useState<string | null>(null);
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -175,7 +185,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     let cumulativeEac = 0;
 
     const data = periods.map((p, index) => {
-      const periodChanges = changes.filter(c => c.periodId === p.id);
+      const periodChanges = changesWithRollups.filter(c => c.periodId === p.id);
       const budget = periodChanges.reduce((sum, c) => sum + (c.budget || 0), 0);
       const eac = periodChanges.reduce((sum, c) => sum + (c.eac || 0), 0);
       
@@ -198,7 +208,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
     });
 
     return data;
-  }, [changes, project.reportingPeriods]);
+  }, [changesWithRollups, project.reportingPeriods]);
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
@@ -327,19 +337,19 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
   };
 
   const changesPinnedBottomRowData = useMemo(() => {
-    if (changes.length === 0) return [];
-    const totalBudget = changes.reduce((sum, c) => sum + (Number(c.budget) || 0), 0);
-    const totalEac = changes.reduce((sum, c) => sum + (Number(c.eac) || 0), 0);
+    if (changesWithRollups.length === 0) return [];
+    const totalBudget = changesWithRollups.reduce((sum, c) => sum + (Number(c.budget) || 0), 0);
+    const totalEac = changesWithRollups.reduce((sum, c) => sum + (Number(c.eac) || 0), 0);
     return [{
       changeId: 'Total',
       budget: totalBudget,
       eac: totalEac,
       isTotalRow: true
     }];
-  }, [changes]);
+  }, [changesWithRollups]);
 
   const handleExport = () => {
-    const exportData = changes.map(c => {
+    const exportData = changesWithRollups.map(c => {
       const row: any = {
         'Change ID': c.changeId,
         'Description': c.description,
@@ -480,21 +490,9 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
       }
       if (colDef.field === 'scope') updates.scope = String(params.newValue).slice(0, 100);
       await changeRepo.updateChangeRecord(data.id, updates);
-      if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') updateParentTotals(data.changeId);
     } catch (error) {
       console.error(error);
       toast.error("Failed to update record");
-    }
-  };
-
-  const updateParentTotals = async (changeId: string) => {
-    try {
-      const records = allChangeRecords.filter(r => r.changeId === changeId);
-      const totalBudget = records.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
-      const totalEac = records.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-      await changeRepo.updateChange(changeId, { budget: totalBudget, eac: totalEac });
-    } catch (error) {
-      console.error(error);
     }
   };
 
@@ -521,9 +519,8 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         enterpriseLineItemAttrs,
         projectLineItemAttrs,
         deleteChangeRecord: (id) => changeRepo.deleteChangeRecord(id),
-        updateParentTotals,
       }),
-    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, changes]
+    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]
   );
 
   return (
@@ -788,7 +785,7 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
             <AgGridReact
               theme="legacy"
               ref={gridRef}
-              rowData={changes}
+              rowData={changesWithRollups}
               columnDefs={changeColumnDefs}
               pinnedTopRowData={changesPinnedBottomRowData}
               groupDefaultExpanded={-1}
@@ -851,7 +848,6 @@ export default function ChangeManagement({ project, enterprise }: ChangeManageme
         isMainTableCollapsed={isMainTableCollapsed}
         recordColumnDefs={recordColumnDefs}
         onCellValueChanged={onRecordCellValueChanged}
-        onUpdateParentTotals={updateParentTotals}
       />
 
       <ChangeFormDialog

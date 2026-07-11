@@ -6,8 +6,7 @@ import {
   Trash2, 
   Download, 
   Upload,
-  Filter, 
-  RefreshCw,
+  Filter,
   X,
   PlusCircle,
   Database,
@@ -217,7 +216,6 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         }
 
         const toCreate: Array<Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>> = [];
-        const affectedChangeIds = new Set<string>();
 
         for (const row of data) {
           const changeIdStr = String(row['Change ID'] || '').trim();
@@ -242,14 +240,10 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
             budgetAmount: Number(row['Budget Amount']) || 0,
             eacAmount: Number(row['EAC Amount']) || 0,
           } as Omit<ChangeRecord, 'id' | 'createdAt' | 'updatedAt'>);
-          affectedChangeIds.add(targetChangeId);
         }
 
         if (toCreate.length > 0) {
           await changeRepo.createManyChangeRecords(toCreate);
-          for (const cid of affectedChangeIds) {
-            await updateParentTotals(cid);
-          }
           toast.success(`Imported ${toCreate.length} records`);
         }
       } catch (error) {
@@ -276,12 +270,6 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         if (val !== undefined && val !== '') updates[`projectAttributes.${id}`] = val;
       });
       await changeRepo.updateManyChangeRecords([...selectedBulkRecordIds].map(id => ({ id, data: updates })));
-      const affectedChangeIds = new Set<string>();
-      selectedBulkRecordIds.forEach(id => {
-        const record = allChangeRecords.find(r => r.id === id);
-        if (record) affectedChangeIds.add(record.changeId);
-      });
-      for (const changeId of affectedChangeIds) await updateParentTotals(changeId);
       toast.success(`Updated ${selectedBulkRecordIds.size} records`);
       setIsBulkRecordUpdateOpen(false);
       setBulkRecordUpdateData({ costCodeId: '', scope: '', budgetAmount: '', eacAmount: '', enterpriseAttributes: {}, projectAttributes: {} });
@@ -295,30 +283,13 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
   const handleBulkDeleteRecords = async () => {
     if (selectedBulkRecordIds.size === 0) return;
     try {
-      const affectedChangeIds = new Set<string>();
-      selectedBulkRecordIds.forEach(id => {
-        const record = allChangeRecords.find(r => r.id === id);
-        if (record) affectedChangeIds.add(record.changeId);
-      });
       await changeRepo.deleteManyChangeRecords([...selectedBulkRecordIds]);
-      for (const cid of affectedChangeIds) await updateParentTotals(cid);
       toast.success(`Deleted ${selectedBulkRecordIds.size} records`);
       setSelectedBulkRecordIds(new Set());
       setIsBulkDeleteOpen(false);
     } catch (error) {
       console.error('Bulk delete error:', error);
       toast.error('Failed to delete records.');
-    }
-  };
-
-  const updateParentTotals = async (changeId: string) => {
-    try {
-      const records = await changeRepo.listChangeRecords(project.id, changeId);
-      const totalBudget = records.reduce((sum, r) => sum + (Number(r.budgetAmount) || 0), 0);
-      const totalEac = records.reduce((sum, r) => sum + (Number(r.eacAmount) || 0), 0);
-      await changeRepo.updateChange(changeId, { budget: totalBudget, eac: totalEac });
-    } catch (error) {
-      console.error(`Error updating totals for change ${changeId}:`, error);
     }
   };
 
@@ -348,9 +319,6 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
       }
 
       await changeRepo.updateChangeRecord(data.id, updates);
-      if (colDef.field === 'budgetAmount' || colDef.field === 'eacAmount') {
-        updateParentTotals(data.changeId);
-      }
     } catch (error) {
       console.error(`Error updating change record ${data.id}:`, error);
       toast.error('Failed to update record.');

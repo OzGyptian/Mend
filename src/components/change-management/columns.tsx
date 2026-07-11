@@ -232,7 +232,6 @@ export interface RecordColumnDeps {
   enterpriseLineItemAttrs: Attribute[];
   projectLineItemAttrs: Attribute[];
   deleteChangeRecord: (id: string) => Promise<void>;
-  updateParentTotals: (changeId: string) => Promise<void>;
 }
 
 export function buildChangeRecordColumnDefs(deps: RecordColumnDeps): (ColDef | ColGroupDef)[] {
@@ -241,7 +240,6 @@ export function buildChangeRecordColumnDefs(deps: RecordColumnDeps): (ColDef | C
     enterpriseLineItemAttrs,
     projectLineItemAttrs,
     deleteChangeRecord,
-    updateParentTotals,
   } = deps;
 
   return [
@@ -350,7 +348,6 @@ export function buildChangeRecordColumnDefs(deps: RecordColumnDeps): (ColDef | C
               onClick={async (e) => {
                 e.stopPropagation();
                 await deleteChangeRecord(p.data.id);
-                updateParentTotals(p.data.changeId);
               }}
               className="p-1.5 text-gray-400 hover:text-red-600 transition-colors"
             >
