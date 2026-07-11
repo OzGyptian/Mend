@@ -286,10 +286,10 @@ Tarek before starting 13.B2.
       via `npm run test:rules` (Firestore emulator; required installing Java via `brew install
       openjdk`). Commit: `fix(security): server-verified invite acceptance, lock platformRole
       self-grant (v1.0.87)`.
-      **NOT YET DEPLOYED to production** — `firestore.rules` changes are committed on the branch
-      only. Deploying to the shared Firebase project is a confirm-first action; needs explicit
-      go-ahead before `firebase deploy --only firestore:rules`. Also needs
-      `FIREBASE_SERVICE_ACCOUNT_KEY` set in Vercel env vars or `/api/accept-invite` 500s in prod.
+      **DEPLOYED 2026-07-11** — `firebase deploy --only firestore:rules --project
+      gen-lang-client-0160759254` succeeded (Bernard's go-ahead). F3 and the F2 residue are now
+      live. Still needs `FIREBASE_SERVICE_ACCOUNT_KEY` set in Vercel env vars or
+      `/api/accept-invite` 500s in prod — invite acceptance is broken in prod until that's set.
 
 ## Phase 13.B — Make the numbers trustworthy (~1.5–2 wks) 🔴 CORE
 ### 13.B1 — Compute-on-read for financial roll-ups (storage-agnostic; do regardless of platform)
