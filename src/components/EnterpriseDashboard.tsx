@@ -78,7 +78,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
     if (!enterprise) return;
 
     if (codeExists) {
-      alert('This Project Code already exists!');
+      toast.error('This Project Code already exists!');
       return;
     }
 
@@ -108,7 +108,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
       setProjectToDelete(null);
     } catch (error) {
       console.error('Failed to delete project', error);
-      alert('Failed to delete project. Check console for details.');
+      toast.error('Failed to delete project. Check console for details.');
     } finally {
       setIsDeleting(false);
     }

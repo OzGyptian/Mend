@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,7 +23,7 @@ export default function EnterpriseSettingsTab({ enterprise, projects }: Enterpri
       await enterpriseRepo.update(enterprise.id, updates);
     } catch (error) {
       console.error('Enterprise update failed', error);
-      alert('Failed to update enterprise settings.');
+      toast.error('Failed to update enterprise settings.');
     }
   };
 

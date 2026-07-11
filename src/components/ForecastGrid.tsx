@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { Sheet, Project, ForecastRow, Enterprise } from '../types';
 import { RefreshCw, Settings, Save, Plus, Filter, Download, Trash2, FileSpreadsheet, Upload } from 'lucide-react';
 import SheetSettings from './SheetSettings';
@@ -50,7 +51,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
 
   const handleAddRow = async () => {
     if (!sheet?.id) {
-      alert('Cannot add row: Sheet ID is missing.');
+      toast.error('Cannot add row: Sheet ID is missing.');
       return;
     }
     const newRow: Omit<ForecastRow, 'id'> = {
@@ -73,7 +74,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       await audit('ADD_ROW', { sheetId: sheet.id, rowId: created.id, costCode: newRow.costCode });
     } catch (error: any) {
       console.error('Failed to add row', error);
-      alert(`Failed to add row: ${error.message}`);
+      toast.error(`Failed to add row: ${error.message}`);
     }
   };
 
@@ -88,7 +89,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       gridRef.current?.saveViewState();
     } catch (error) {
       console.error('Save failed', error);
-      alert('Failed to save changes.');
+      toast.error('Failed to save changes.');
     } finally {
       setSaving(false);
     }
@@ -105,7 +106,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
   const handleDeleteSelected = async () => {
     const selectedRows = gridRef.current?.getSelectedRows();
     if (!selectedRows || selectedRows.length === 0) {
-      alert('No rows selected for deletion.');
+      toast.error('No rows selected for deletion.');
       return;
     }
     if (!confirm(`Are you sure you want to delete ${selectedRows.length} selected row(s)?`)) return;
@@ -114,7 +115,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       await audit('DELETE_ROWS', { sheetId: sheet.id, rowCount: selectedRows.length, rowIds: selectedRows.map(r => r.id) });
     } catch (error: any) {
       console.error('Failed to delete rows', error);
-      alert(`Failed to delete rows: ${error.message}`);
+      toast.error(`Failed to delete rows: ${error.message}`);
     }
   };
 
@@ -136,7 +137,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
         if (data.length === 0) {
-          alert('No data found in the file.');
+          toast.error('No data found in the file.');
           return;
         }
 
@@ -163,10 +164,10 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
         await costRepo.createManyForecastRows(newRows);
         await audit('IMPORT_ROWS', { sheetId: sheet.id, rowCount: data.length });
 
-        alert(`Successfully imported ${data.length} rows.`);
+        toast.success(`Successfully imported ${data.length} rows.`);
       } catch (error: any) {
         console.error('Import failed', error);
-        alert(`Import failed: ${error.message}`);
+        toast.error(`Import failed: ${error.message}`);
       } finally {
         setSaving(false);
         if (fileInputRef.current) fileInputRef.current.value = '';

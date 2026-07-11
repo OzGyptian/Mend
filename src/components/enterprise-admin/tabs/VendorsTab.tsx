@@ -92,12 +92,12 @@ export default function VendorsTab({
     if (!enterprise.id || !vendorFormData.name || !vendorFormData.id) return;
 
     if (vendorFormData.id.length > 50) {
-      alert('Vendor ID cannot be more than 50 characters.');
+      toast.error('Vendor ID cannot be more than 50 characters.');
       return;
     }
 
     if (isDuplicateVendorCode) {
-      alert(`Vendor ID "${vendorFormData.id}" is already in use.`);
+      toast.error(`Vendor ID "${vendorFormData.id}" is already in use.`);
       return;
     }
 
@@ -119,7 +119,7 @@ export default function VendorsTab({
       setVendorFormData({ id: '', name: '', code: '', contactEmail: '', contactName: '' });
     } catch (error) {
       console.error('Save vendor failed', error);
-      alert('Failed to save vendor.');
+      toast.error('Failed to save vendor.');
     } finally {
       setIsSubmitting(false);
     }

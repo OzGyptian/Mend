@@ -296,7 +296,7 @@ export default function LineItemAttributesTab({
         if (a.id === attrId) {
           const values = a.values || [];
           if (values.some((v) => v.id === value.id)) {
-            alert(`Value ID "${value.id}" already exists for this attribute.`);
+            toast.error(`Value ID "${value.id}" already exists for this attribute.`);
             return a;
           }
           return { ...a, values: [...values, finalValue] };

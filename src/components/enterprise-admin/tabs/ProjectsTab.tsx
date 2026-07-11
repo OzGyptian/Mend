@@ -114,7 +114,7 @@ export default function ProjectsTab({
 
     const codeExists = projects.some((p) => p.projectCode === newProjectData.code);
     if (codeExists) {
-      alert('This Project Code already exists!');
+      toast.error('This Project Code already exists!');
       return;
     }
 

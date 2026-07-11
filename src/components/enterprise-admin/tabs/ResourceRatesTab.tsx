@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
+import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { AgGridReact } from 'ag-grid-react';
 import { cn } from '@/lib/utils';
@@ -89,7 +90,7 @@ export default function ResourceRatesTab({
       setIsSubmitting(true);
       const currentResources = [...(enterprise.resourceRates || [])];
       if (currentResources.some((r) => r.id === resource.id)) {
-        alert(`Resource ID "${resource.id}" already exists.`);
+        toast.error(`Resource ID "${resource.id}" already exists.`);
         setIsSubmitting(false);
         return;
       }

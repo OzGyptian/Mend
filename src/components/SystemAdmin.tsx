@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { version } from '../../package.json';
 import { useEnterpriseRepo } from '../platform/firestore/hooks';
 import { Enterprise } from '../types';
@@ -53,11 +54,11 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.enterpriseId.length > 10) {
-      alert('Enterprise ID must be maximum 10 characters.');
+      toast.error('Enterprise ID must be maximum 10 characters.');
       return;
     }
     if (formData.name.length > 50) {
-      alert('Enterprise Name must be maximum 50 characters.');
+      toast.error('Enterprise Name must be maximum 50 characters.');
       return;
     }
 
@@ -72,7 +73,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
       } else {
         // Check for uniqueness again on submit
         if (enterprises.some(e => e.enterpriseId === formData.enterpriseId)) {
-          alert('This ID already Exists!');
+          toast.error('This ID already Exists!');
           setIsSubmitting(false);
           return;
         }

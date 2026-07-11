@@ -108,7 +108,7 @@ export default function UsersTab({ enterprise, projects, userColumnDefs, setDele
       }
     } catch (error) {
       console.error('Invitation failed:', error);
-      alert(error instanceof Error ? error.message : 'Failed to generate invitation. Please try again.');
+      toast.error(error instanceof Error ? error.message : 'Failed to generate invitation. Please try again.');
     } finally {
       setIsInviting(false);
     }
@@ -117,7 +117,7 @@ export default function UsersTab({ enterprise, projects, userColumnDefs, setDele
   const copyInviteLink = () => {
     if (generatedLink) {
       navigator.clipboard.writeText(generatedLink);
-      alert('Invitation link copied to clipboard!');
+      toast.success('Invitation link copied to clipboard!');
     }
   };
 

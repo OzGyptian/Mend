@@ -123,7 +123,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
     const exists = packages.some(p => p.packageId.toLowerCase() === packageFormData.packageId?.toLowerCase());
     if (exists) {
-      alert('Package ID must be unique per project.');
+      toast.error('Package ID must be unique per project.');
       return;
     }
 
