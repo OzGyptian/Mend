@@ -312,32 +312,33 @@ Tarek before starting 13.B2.
       calls the domain function in a useMemo. 18 more unit tests on the pure aggregation function (no React
       testing library in this repo yet, so kept the hook itself free of logic worth testing in isolation).
       198/198 total unit tests, tsc clean. Not yet wired into any component. (v1.0.89)
-- [ ] 13.B1.4 Freeze switch with `cost-report.characterization.spec.ts` — **PARTIALLY BLOCKED**: probed the
-      live AG Grid DOM via Playwright (`.ag-center-cols-viewport` scroll + `[col-id]` cell query) to write
-      real money-column assertions. Found the money columns aren't reliably reachable by scrolling to grid
-      edges — some columns render with numeric auto-generated `col-id`s instead of semantic field names,
-      and virtualization means off-screen cells don't exist in the DOM at all. The existing test file's own
-      comment anticipated this ("AG Grid virtualizes off-screen columns... after compute-on-read lands").
-      Getting this reliably automatable needs either exposing the grid API on `window` for tests to query
-      directly (small app-code addition) or more iteration than is safe to rush. **Did not force a fragile
-      assertion in** — left the 4 existing lightweight tests (boots / enterprise visible / project opens /
-      cost codes visible) as the current regression guard; they're robust and unaffected by virtualization.
-- [ ] 13.B1.5 Migrate screen-by-screen: CostCodes → CostReportingPeriod → Risk →
-      Subcontracts/Invoices → Procurement. One commit each.
-      **NOT STARTED — flagged for explicit go-ahead before touching live UI.** This means: deleting a
-      user-facing button (`calculateCosts`'s Recalculate action) and changing how the biggest, most
-      business-critical screen in the app (CostCodes.tsx, 2,669 lines) computes/displays every dollar
-      figure, on real production financial software, without a strong E2E safety net for the exact
-      migrated behavior (see 13.B1.4 blocker above). The domain math is solid (41 unit tests total across
-      risk.ts/rollups.ts, cross-checked line-by-line against the real inline logic) — the remaining risk is
-      UI wiring, not arithmetic.
-- [ ] 13.B1.6 Delete all 3 genuine roll-up write sites (CostCodes.tsx `calculateCosts` incl. the dead
-      `handleRecalculateAll`, RiskManagement.tsx + BulkRiskRecords.tsx `updateParentTotals`,
-      ChangeManagement.tsx + BulkChangeRecords.tsx `updateParentTotals`) — NOT the 6 legitimate bulk-action
-      sites identified in 13.B1.1. `periodSnapshots` stays as the only stored derived data, labelled
-      "as of {period}" everywhere.
-- [ ] 13.B1.7 GATE: edit an actual cost → every screen shows new EAC with no button press; no two
-      screens can disagree. E2E green
+- [x] 13.B1.4 Freeze switch with `cost-report.characterization.spec.ts`. **Unblocked**: exposed the AG Grid
+      API on `window.__costCodesGridApi` in CostCodes.tsx onGridReady, gated to `VITE_ADAPTER === 'memory'`
+      (never present in a real build) — reads exact cell values via `api.getCellValue()` instead of fighting
+      virtualized DOM/scroll. Captured real seeded values by querying the live grid: Substructure
+      500k/550k/200k/500k, Superstructure 400k/400k/100k/350k (baseline/approved/actual/EAC). (v1.0.90)
+- [x] 13.B1.5 CostCodes.tsx migrated (v1.0.91) — wired `useCostCodeRollups(project, costCodes)`, merged
+      live-computed values onto row data feeding the grid (`costCodesWithRollups`); every column definition
+      left unchanged, only the rowData source changed. Confirmed safe because baselineBudget/
+      actualCostToDate/budgetChanges/approvedBudget(+movements)/estimateToComplete/costVariance(+movements)
+      were already `editable: false`; only `estimateAtCompletion` is genuinely editable, gated to
+      `eacMethod === 'Manual'` (a real leaf in that mode) — unaffected. CostReportingPeriod → Risk →
+      Subcontracts/Invoices → Procurement **not yet migrated** (see 13.B1.1 scope correction — only the
+      Risk.exposure and Change.budget/eac write sites are genuine SSOT violations needing this treatment;
+      the others were already correctly out of scope).
+- [x] 13.B1.6 (CostCode only) Deleted `calculateCosts` (~130 lines, the live Recalculate handler) and the
+      dead `handleRecalculateAll` (never wired to any button, wrote a stale field name). Simplified
+      `onCellValueChanged` — previously every cell edit in this grid force-rewrote all 7 derived fields
+      regardless of which field changed; now an edit writes only the field actually edited. `periodSnapshots`
+      untouched, still the only stored derived data.
+      **NOT YET DONE**: RiskManagement.tsx + BulkRiskRecords.tsx `updateParentTotals` (Risk.exposure),
+      ChangeManagement.tsx + BulkChangeRecords.tsx `updateParentTotals` (Change.budget/eac) — the domain
+      functions exist (`computeRiskRollup`, `computeChangeRollup`, tested) but aren't wired into those
+      components yet, and the write sites/buttons haven't been removed.
+- [x] 13.B1.7 GATE (CostCode only): verified via `cost-report.characterization.spec.ts` (money values
+      identical pre/post migration) + full 47-test E2E suite green + 198/198 unit tests + tsc/build clean.
+      No manual/visual browser check was done beyond Playwright-driven — flagged explicitly since this is
+      the app's primary financial screen. **Full gate (Risk + Change too) not yet met.**
 ### 13.B2 — Canonical cost-code FK (⚠️ subject to platform decision — throwaway if Supabase starts now)
 - [ ] 13.B2.1 `scripts/normalize-costcode-fk.ts`: resolve code-string `costCodeId`s to doc ids across
       all child collections; report unresolvables. Run on backup/emulator, then live
