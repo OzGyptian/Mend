@@ -163,7 +163,7 @@ export default function GlobalTimephasing({ project, enterprise, theme = 'light'
           const approvedDoc = codePhasing.find((p: any) => p.type === 'approved');
           const eacDoc = codePhasing.find((p: any) => p.type === 'eac');
 
-          const filteredActuals = allActuals.filter((a: any) => a.costCodeId === code.id || a.costCodeId === code.code);
+          const filteredActuals = allActuals.filter((a: any) => a.costCodeId === code.id);
           const actualsByPeriod: Record<string, number> = {};
           filteredActuals.forEach((a: any) => {
             actualsByPeriod[a.reportingPeriodId] = (actualsByPeriod[a.reportingPeriodId] || 0) + (a.cost || 0);

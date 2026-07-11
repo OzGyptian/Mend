@@ -416,7 +416,10 @@ export function LineItemsPanel({
             projectId: project.id,
             itemNo: String(itemNo),
             description: String(description),
-            costCodeId: row['Cost Code ID'] || row.costCodeId || '',
+            costCodeId: (() => {
+              const raw = row['Cost Code ID'] || row.costCodeId || '';
+              return costCodes.find((c) => c.id === raw || c.code === raw)?.id || raw;
+            })(),
             date: row['Date'] || row.date || dateToISO(new Date()),
             qty: Number(row['Qty'] || row.qty) || 0,
             unit: String(row['Unit'] || row.unit || 'ea'),

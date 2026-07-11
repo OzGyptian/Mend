@@ -135,7 +135,7 @@ const BaselineBudget: React.FC<BaselineBudgetProps> = ({ project, enterprise }) 
     try {
       const ccData = costCodes.find(c => c.id === costCodeId);
       if (!ccData) return;
-      const codeBudgets = records.filter(r => r.costCodeId === costCodeId || r.costCodeId === ccData.code);
+      const codeBudgets = records.filter(r => r.costCodeId === costCodeId);
       const totalBaseline = codeBudgets.reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
       await costRepo.updateCostCode(costCodeId, { baselineBudget: totalBaseline } as any);
     } catch (error) {

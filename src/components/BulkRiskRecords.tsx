@@ -220,7 +220,9 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           const ml = Number(row['Most Likely $']) || 0;
           const max = Number(row['Max Value $']) || 0;
           const prob = (Number(row['Prob %']) || 100) / 100;
-          toCreate.push({ riskId, projectId: project.id, costCodeId: String(row['Cost Code'] || '').trim(), scope: String(row['Scope'] || ''), probability: prob, minImpactAmount: min, mostLikelyImpactAmount: ml, maxImpactAmount: max, betaPertImpactAmount: betaPertExposure(min, ml, max, prob) } as any);
+          const rawCostCode = String(row['Cost Code'] || '').trim();
+          const resolvedCostCodeId = costCodes.find(c => c.id === rawCostCode || c.code === rawCostCode)?.id || rawCostCode;
+          toCreate.push({ riskId, projectId: project.id, costCodeId: resolvedCostCodeId, scope: String(row['Scope'] || ''), probability: prob, minImpactAmount: min, mostLikelyImpactAmount: ml, maxImpactAmount: max, betaPertImpactAmount: betaPertExposure(min, ml, max, prob) } as any);
           addedCount++;
         }
         if (addedCount > 0) {

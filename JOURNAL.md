@@ -606,3 +606,73 @@ See "ACTION NEEDED FROM BERNARD" at the top of this entry. After those:
 wire the zod schemas into the Firestore adapters (rest of 13.C.2), then
 either the Supabase migration conversation or 13.B2.2 depending on what the
 FK audit report shows.
+
+## 2026-07-11 (continued, same day) — FK audit applied + 13.B2.2 (id||code fallback removal)
+
+Acted on the "ACTION NEEDED FROM BERNARD" item #1 from the prior entry: ran
+`scripts/normalize-costcode-fk.ts --all-projects` for real (report mode
+first, then `--apply` on Bernard's go-ahead — test data, minimal risk).
+
+**Audit result: ambiguity was real, not near-zero** (this matters — the plan
+had assumed near-zero would deprioritize 13.B2.2 and the Supabase-timing
+conversation). 575 ambiguous `costCodeId` values found across 3 projects
+(12 / 535 / 28), all fixed via `--apply`. 535 collapsed to 49 document
+writes for the subcontract-lineItems-heavy project — `lineItems` is an
+array field, so multiple ambiguous entries in the same subcontract doc are
+one write, not one each.
+
+**6 orphaned records left untouched** in project `E9h5Oh9kLsIoIoxjBarT` —
+`costCodeId="E3 - E3"` / `"E2 - E2"` (doubled code string, not a normal
+id/code mismatch). Not investigated yet — the write path producing this
+malformed shape is still unknown. Follow-up, not done this session.
+
+**Given the audit wasn't near-zero, proceeded with 13.B2.2 properly** rather
+than just deleting the read-side fallback in isolation. Found the real risk
+first: 4 CSV bulk-import write paths (`BulkRiskRecords.tsx`,
+`LineItemsPanel.tsx`, `ProgressItemsPanel.tsx`, `BulkChangeRecords.tsx`)
+wrote whatever a user typed in a spreadsheet cell straight into
+`costCodeId` with zero resolution to the actual doc id — unlike
+`ActualCost.tsx`/`BaselineBudget.tsx`, which already resolved correctly.
+Deleting the read-side fallback before fixing these would have made bad
+data disappear silently instead of erroring. Fixed all 4 to resolve
+code-or-id input via `costCodes.find(c => c.id === raw || c.code === raw)`
+(same pattern `ActualCost.tsx` already used) before writing.
+`BulkChangeRecords.tsx` was the interesting case — it already validated the
+cost code existed via a lookup, just wasn't using the resolved id.
+
+Then removed the now-dead read-side `id||code` fallback comparisons in 8
+sites: `ActualCost.tsx`, `BaselineBudget.tsx`, `CostCodes.tsx` (×3),
+`CostReportingPeriod.tsx` (×2), `GlobalTimephasing.tsx`.
+
+**Found a 9th, different bug while in `CostCodes.tsx`**: the "Changes"
+drill-down filter (`selectedChangesCode`) compared `changeRecords.costCodeId`
+(a doc id) directly against a raw `.code` string with *no* resolution at
+all — unlike its 3 sibling filters (baseline/actuals/timephasing) in the
+same file, which all resolve through a `costCodeObj` lookup first. This
+looks like a pre-existing bug (the Changes drill-down likely never filtered
+correctly), not something this session's changes caused. Fixed it to match
+the sibling pattern.
+
+Deliberately left `costPhasing`/`etcDetails` alone — confirmed via
+`domain/rollups.ts`'s own comment that `EtcDetail` is intentionally keyed by
+the code string, not the id. Different design, not a fallback bug; out of
+scope of the FK audit's 4 target collections.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 252/252,
+`npm run test:rules` 7/7, `npx playwright test` 47/47. Re-ran the audit
+script (report-only) as a regression check afterward: **0 ambiguous**
+across every project with cost codes. One project (`YYAvcfIxOuu4BSz3eYai`)
+hit a Firestore free-tier daily-read-quota error mid-scan on the regression
+run — unrelated to this change, just quota exhausted from two full scans in
+one session. Worth re-running that single project once quota resets if full
+coverage confirmation matters.
+
+### What to do next
+
+- Re-scan `YYAvcfIxOuu4BSz3eYai` once Firestore quota resets, to confirm 0
+  ambiguous there too (wasn't reached in the regression check).
+- Investigate the 6 orphaned `"E3 - E3"`/`"E2 - E2"` records' write path —
+  still unknown, still untouched.
+- Everything else from the prior entry's "ACTION NEEDED FROM BERNARD" list
+  is still open (CI push, untracked scripts/docs decision,
+  `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel, 13.A.4/13.A.5).

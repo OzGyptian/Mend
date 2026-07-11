@@ -137,7 +137,7 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
     try {
       const ccData = costCodes.find(c => c.id === costCodeId);
       if (!ccData) return;
-      const codeActuals = records.filter(r => r.costCodeId === costCodeId || r.costCodeId === ccData.code);
+      const codeActuals = records.filter(r => r.costCodeId === costCodeId);
       const totalToDate = codeActuals.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
       const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);

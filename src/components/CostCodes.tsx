@@ -504,7 +504,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (!selectedBaselineCode) { setBaselineRows([]); return; }
     setIsBaselineLoading(true);
     const costCodeObj = costCodes.find(c => c.code === selectedBaselineCode);
-    setBaselineRows(allBaseline.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedBaselineCode));
+    setBaselineRows(allBaseline.filter((a: any) => a.costCodeId === costCodeObj?.id));
     setIsBaselineLoading(false);
   }, [selectedBaselineCode, allBaseline, costCodes]);
 
@@ -517,7 +517,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     if (!selectedActualsCode) { setActualsRows([]); return; }
     setIsActualsLoading(true);
     const costCodeObj = costCodes.find(c => c.code === selectedActualsCode);
-    const filtered = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedActualsCode);
+    const filtered = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id);
     setActualsRows([...filtered].sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()));
     setIsActualsLoading(false);
   }, [selectedActualsCode, allActuals, costCodes]);
@@ -548,9 +548,10 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   useEffect(() => {
     if (!selectedChangesCode) { setChangeRecords([]); return; }
     setIsChangesLoading(true);
-    setChangeRecords(allChangeRecords.filter(r => (r as any).costCodeId === selectedChangesCode));
+    const costCodeObj = costCodes.find(c => c.code === selectedChangesCode);
+    setChangeRecords(allChangeRecords.filter(r => (r as any).costCodeId === costCodeObj?.id));
     setIsChangesLoading(false);
-  }, [selectedChangesCode, allChangeRecords]);
+  }, [selectedChangesCode, allChangeRecords, costCodes]);
 
   useEffect(() => {
     if (!project.id) return;
@@ -617,7 +618,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         
         // 1. Get Actuals from local state
         const costCodeObj = costCodes.find(c => c.code === selectedTimephasingCode);
-        const filteredActuals = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id || a.costCodeId === selectedTimephasingCode);
+        const filteredActuals = allActuals.filter((a: any) => a.costCodeId === costCodeObj?.id);
 
         const actualsByPeriod: Record<string, number> = {};
         filteredActuals.forEach((a: any) => {

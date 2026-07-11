@@ -216,10 +216,11 @@ export default function ProgressItemsPanel({
           const itemId = (row['Commodity Item ID'] || row['Item ID'] || row['itemId'])?.toString();
           if (!itemId) continue;
           const existing = items.find(i => i.itemId === itemId);
+          const rawCostCode = row['Cost Code']?.toString() || '';
           const payload = {
             itemId,
             description: row['Description']?.toString() || '',
-            costCodeId: row['Cost Code']?.toString() || '',
+            costCodeId: costCodes.find((c) => c.id === rawCostCode || c.code === rawCostCode)?.id || rawCostCode,
             totalQty: parseFloat(row['Total Qty']) || 0,
             plannedStartDate: row['Pl Start']?.toString() || '',
             plannedEndDate: row['Pl End']?.toString() || '',

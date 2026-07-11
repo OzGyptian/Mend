@@ -222,6 +222,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
           const foundChange = changes.find(c => c.changeId === changeIdStr)!;
           const targetChangeId = foundChange.id;
           const costCode = String(row['Cost Code'] || '').trim();
+          const foundCostCode = costCodes.find(c => c.code === costCode)!;
           const entAttrs: Record<string, string> = {};
           enterprise.lineItemAttributes?.forEach(a => {
             if (row[a.title]) entAttrs[a.id] = String(row[a.title]);
@@ -233,7 +234,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
           toCreate.push({
             changeId: targetChangeId,
             projectId: project.id,
-            costCodeId: costCode,
+            costCodeId: foundCostCode.id,
             scope: String(row['Scope'] || '').slice(0, 100),
             enterpriseAttributes: entAttrs,
             projectAttributes: prjAttrs,
