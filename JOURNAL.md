@@ -768,3 +768,53 @@ coverage gap flagged in the prior entry - the valueSetter logic was
 previously verified by type-check only.
 
 Verified: tsc+eslint clean, 262/262 unit (252 + 10 new), 47/47 E2E.
+
+## 2026-07-12 — manual browser verification of the cost code editor fix
+
+Firestore free-tier quota was still exhausted this morning (same error as
+yesterday) — the `defaultCostCodeId` audit and the `YYAvcfIxOuu4BSz3eYai`
+regression check are still blocked, unclear when the reset actually lands.
+Not retried further; pivoted to something actually actionable: manually
+verifying the `columns.tsx` grid editor fix in a real browser, since it had
+only been confirmed by type-check until now.
+
+Ran `dev:memory` (VITE_ADAPTER=memory, no Firestore risk) and drove it with
+Claude in Chrome. Hit an unrelated environment snag first: Chrome returned
+431 (Request Header Fields Too Large) against `localhost:5178` and
+`127.0.0.1:5178` alike - almost certainly years of accumulated cookies
+across many past local dev servers exceeding Node's default header size
+limit. Fixed by relaunching with `NODE_OPTIONS="--max-http-header-size=65536"`
+rather than touching Chrome's cookie jar. Worth remembering if this
+recurs: it's a Node http-parser limit, not an app bug.
+
+**Verified live, in the running app:**
+- `SubcontractFormDialog.tsx`'s Default Cost Code dropdown: the DOM now
+  shows `<option value="cc-100">` (an id) instead of the raw code - visible
+  directly in the page's accessibility tree before even submitting.
+- Setting a subcontract's default cost code and adding a line item with no
+  cost code of its own correctly falls back to the default, displayed
+  correctly formatted and in the expected italic/gray "inherited" style.
+- Editing a line item's own cost code cell and selecting a value from the
+  dropdown resolves and commits correctly - non-italic, correct code shown,
+  confirming the value is now the item's own explicit `costCodeId`, not the
+  fallback.
+- **The core defensive fix**: typing free text that doesn't match any cost
+  code (`"TOTALLY BOGUS INPUT"`) is rejected outright - the cell reverts to
+  its previous value instead of committing garbage. This is the exact
+  mechanism that used to allow the `"E3 - E3"` orphan pattern through;
+  confirmed it can no longer happen via this path.
+
+Did not force a live repro of the `"CODE - NAME"` label-parsing branch
+specifically (typing `"100 - Substructure"` back in) - an automation
+targeting issue (double-click landing on the wrong cell after a prior Tab)
+got in the way, and that exact path is already covered by
+`costCodes.test.ts`'s dedicated test, so didn't chase it further.
+
+No app code changed this session - verification only. Dev server stopped
+afterward; memory adapter data was in-process only, nothing to clean up.
+
+### What to do next
+
+- Firestore quota: retry `npx tsx scripts/normalize-costcode-fk.ts --all-projects`
+  again later - still don't know the actual reset schedule.
+- Everything else from the prior two entries is unchanged and still open.
