@@ -293,18 +293,49 @@ Tarek before starting 13.B2.
 
 ## Phase 13.B — Make the numbers trustworthy (~1.5–2 wks) 🔴 CORE
 ### 13.B1 — Compute-on-read for financial roll-ups (storage-agnostic; do regardless of platform)
-- [ ] 13.B1.1 Inventory stored derived fields: CostCode roll-ups (+movements), Change.budget/eac,
-      Risk.exposure, pinned betaPertImpactAmount
-- [ ] 13.B1.2 Extend `src/domain/eac.ts` / new `src/domain/rollups.ts`: pure roll-up fns from leaves
-      (actuals, budgets, etcDetails, changeRecords, riskRecords), unit tests — same pattern as
-      `betaPertExposure`
-- [ ] 13.B1.3 Selector hooks (`useCostCodeRollups(projectId)` etc.) subscribing to leaves via repos,
-      computing at render; every screen calls the same hook
-- [ ] 13.B1.4 Freeze switch with `cost-report.characterization.spec.ts` (capture → flip → assert)
+- [x] 13.B1.1 Inventory stored derived fields (v1.0.88 commit message). **Scope correction**: of the
+      original "9 Recalculate sites," only 3 are genuine SSOT violations — CostCode roll-ups, Risk.exposure,
+      Change.budget/eac. The other 6 (GlobalTimephasing/LineItemsPanel phasing regeneration,
+      BulkSubcontractInvoiceItems % fill, ProcurementProgress calendar-driven date recalc,
+      CostReportingPeriod's period-close snapshot) are legitimate explicit bulk transforms, not passively-stale
+      derived reads — left alone, not touched by 13.B1.6.
+      Also found: CostCodes.tsx has a *dead* `handleRecalculateAll` (line 170, never wired to any button,
+      writes a stale field name) alongside the real live handler `calculateCosts` (line 1851, wired to the
+      actual button at line 2476) — don't confuse the two when migrating.
+- [x] 13.B1.2 `src/domain/rollups.ts` (new): `computeChangeRollup`, `computeCostCodeRollup` (delegates to
+      existing `computePeriodEndFields` in eac.ts rather than reimplementing it — only adds
+      `resolveEacSourceValue`, the per-eacMethod dispatch). `src/domain/risk.ts`: added `computeRiskRollup`.
+      23 new unit tests, values cross-checked against the exact live inline arithmetic. (v1.0.88)
+- [x] 13.B1.3 `src/domain/rollups.ts`: `aggregateCostCodeRollups(costCodes, leaves, period)` — pure leaf
+      aggregation (id-or-code fallback preserved, tracks F5). `src/lib/costCodeRollups.ts` (new):
+      `useCostCodeRollups(project, costCodes)` — thin React hook, subscribes to the 6 leaf collections,
+      calls the domain function in a useMemo. 18 more unit tests on the pure aggregation function (no React
+      testing library in this repo yet, so kept the hook itself free of logic worth testing in isolation).
+      198/198 total unit tests, tsc clean. Not yet wired into any component. (v1.0.89)
+- [ ] 13.B1.4 Freeze switch with `cost-report.characterization.spec.ts` — **PARTIALLY BLOCKED**: probed the
+      live AG Grid DOM via Playwright (`.ag-center-cols-viewport` scroll + `[col-id]` cell query) to write
+      real money-column assertions. Found the money columns aren't reliably reachable by scrolling to grid
+      edges — some columns render with numeric auto-generated `col-id`s instead of semantic field names,
+      and virtualization means off-screen cells don't exist in the DOM at all. The existing test file's own
+      comment anticipated this ("AG Grid virtualizes off-screen columns... after compute-on-read lands").
+      Getting this reliably automatable needs either exposing the grid API on `window` for tests to query
+      directly (small app-code addition) or more iteration than is safe to rush. **Did not force a fragile
+      assertion in** — left the 4 existing lightweight tests (boots / enterprise visible / project opens /
+      cost codes visible) as the current regression guard; they're robust and unaffected by virtualization.
 - [ ] 13.B1.5 Migrate screen-by-screen: CostCodes → CostReportingPeriod → Risk →
-      Subcontracts/Invoices → Procurement. One commit each
-- [ ] 13.B1.6 Delete all 9 Recalculate sites; stop writing roll-ups to CostCode docs.
-      `periodSnapshots` stays as the only stored derived data, labelled "as of {period}" everywhere
+      Subcontracts/Invoices → Procurement. One commit each.
+      **NOT STARTED — flagged for explicit go-ahead before touching live UI.** This means: deleting a
+      user-facing button (`calculateCosts`'s Recalculate action) and changing how the biggest, most
+      business-critical screen in the app (CostCodes.tsx, 2,669 lines) computes/displays every dollar
+      figure, on real production financial software, without a strong E2E safety net for the exact
+      migrated behavior (see 13.B1.4 blocker above). The domain math is solid (41 unit tests total across
+      risk.ts/rollups.ts, cross-checked line-by-line against the real inline logic) — the remaining risk is
+      UI wiring, not arithmetic.
+- [ ] 13.B1.6 Delete all 3 genuine roll-up write sites (CostCodes.tsx `calculateCosts` incl. the dead
+      `handleRecalculateAll`, RiskManagement.tsx + BulkRiskRecords.tsx `updateParentTotals`,
+      ChangeManagement.tsx + BulkChangeRecords.tsx `updateParentTotals`) — NOT the 6 legitimate bulk-action
+      sites identified in 13.B1.1. `periodSnapshots` stays as the only stored derived data, labelled
+      "as of {period}" everywhere.
 - [ ] 13.B1.7 GATE: edit an actual cost → every screen shows new EAC with no button press; no two
       screens can disagree. E2E green
 ### 13.B2 — Canonical cost-code FK (⚠️ subject to platform decision — throwaway if Supabase starts now)
