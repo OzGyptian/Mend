@@ -59,7 +59,7 @@ import {
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import { cn, formatCurrency, formatNumber } from '../lib/utils';
-import { computePeriodEndFields } from '../domain/eac';
+import { useCostCodeRollups } from '../lib/costCodeRollups';
 import { calculatePhasing } from '../domain/phasing';
 import { isWorkingDay as domainIsWorkingDay } from '../domain/procurement';
 import { toast } from 'sonner';
@@ -120,6 +120,19 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Phase 13.B1.5: compute-on-read financial roll-ups (SYSTEM_REVIEW.md v2 / PLAN.md F1).
+  // Replaces the stored baselineBudget/approvedBudget/actualCostToDate/estimateAtCompletion/
+  // costVariance (+movements) fields and the "Recalculate" button — those fields are always
+  // live-computed from leaves now, never stale. estimateAtCompletion stays user-editable when
+  // eacMethod === 'Manual' (it's a genuine leaf in that mode, not a derived value); every other
+  // roll-up field was already read-only in the grid (see cost-codes/columns.tsx editable flags),
+  // so this changes nothing about what users can type into cells.
+  const costCodeRollups = useCostCodeRollups(project, costCodes);
+  const costCodesWithRollups = useMemo(
+    () => costCodes.map((c) => ({ ...c, ...costCodeRollups.get(c.id) })),
+    [costCodes, costCodeRollups],
+  );
   
   // Table State
   const [quickFilterText, setQuickFilterText] = useState('');
@@ -162,64 +175,8 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const [riskRecords, setRiskRecords] = useState<any[]>([]);
   const [changeRecords, setChangeRecords] = useState<ChangeRecord[]>([]);
   const [allChanges, setAllChanges] = useState<Change[]>([]);
-  const [isCalculated, setIsCalculated] = useState(false);
-  const [isCalculating, setIsCalculating] = useState(false);
   const [isChangesLoading, setIsChangesLoading] = useState(false);
   const [importPreview, setImportPreview] = useState<{ data: any[] } | null>(null);
-
-  const handleRecalculateAll = async () => {
-    if (!project.id) return;
-    setIsCalculating(true);
-    const toastId = toast.loading('Recalculating project totals...');
-
-    try {
-      // 1. Bulk fetch all relevant data for the project
-      const [actualsData, budgetsData, changesData, changeRecordsData] = await Promise.all([
-        costRepo.listActualCosts(project.id),
-        costRepo.listBaselineBudgets(project.id),
-        changeRepo.listChanges(project.id),
-        changeRepo.listChangeRecords(project.id),
-      ] as [Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>]);
-      const actualsSnap = { docs: actualsData.map(d => ({ id: d.id, data: () => d })) };
-      const budgetsSnap = { docs: budgetsData.map(d => ({ id: d.id, data: () => d })) };
-      const changesSnap = { docs: changesData.map(d => ({ id: d.id, data: () => d })) };
-      const changeRecordsSnap = { docs: changeRecordsData.map(d => ({ id: d.id, data: () => d })) };
-
-      const allActuals = actualsSnap.docs.map(d => d.data());
-      const allBudgets = budgetsSnap.docs.map(d => d.data());
-      const fetchedChanges = changesSnap.docs.map(d => ({ ...d.data(), id: d.id } as Change));
-      const allChangeRecords = changeRecordsSnap.docs.map(d => d.data());
-      
-      // APPROVED CHANGES: Only sum records from approved changes
-      const approvedChangeIds = new Set(fetchedChanges.filter(c => c.status === 'Approved').map(c => c.id));
-
-      const calcUpdates: Array<{ id: string; data: any }> = [];
-
-      for (const cc of costCodes) {
-        const ccId = cc.id;
-        const ccCode = cc.code;
-
-        const actualCost = allActuals.filter((a: any) => a.costCodeId === ccId || a.costCodeId === ccCode).reduce((sum, a: any) => sum + (Number(a.cost) || 0), 0);
-        const baselineBudget = allBudgets.filter((b: any) => b.costCodeId === ccId || b.costCodeId === ccCode).reduce((sum, b: any) => sum + (Number(b.amount) || 0), 0);
-        const approvedChanges = allChangeRecords.filter((cr: any) => (cr.costCodeId === ccId || cr.costCodeId === ccCode) && approvedChangeIds.has(cr.changeId)).reduce((sum, cr: any) => sum + (Number(cr.budgetAmount) || 0), 0);
-        let subcontractAmount = 0;
-        subcontracts.forEach(sub => { (sub.lineItems || []).forEach(li => { if (li.status === 'Rejected') return; const assignedId = li.costCodeId || sub.defaultCostCodeId; if (assignedId === ccId || assignedId === ccCode) subcontractAmount += (Number(li.total) || 0); }); });
-
-        calcUpdates.push({ id: cc.id, data: { actualCostToDate: actualCost, baselineBudget, approvedChanges, subcontractAmount } });
-      }
-
-      await costRepo.updateManyCostCodes(calcUpdates);
-      let count = calcUpdates.length;
-
-      toast.success(`Recalculated totals for ${count} cost codes`, { id: toastId });
-      setIsCalculated(true);
-    } catch (error) {
-      console.error("Recalculation error:", error);
-      toast.error("Failed to recalculate project totals", { id: toastId });
-    } finally {
-      setIsCalculating(false);
-    }
-  };
   const [changesQuickFilterText, setChangesQuickFilterText] = useState('');
   const [etcRows, setEtcRows] = useState<any[]>([]);
   const [actualsRows, setActualsRows] = useState<any[]>([]);
@@ -1848,137 +1805,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   // Visible Columns State
   const [visibleColumns, setVisibleColumns] = useState<string[]>([]);
 
-  const calculateCosts = useCallback(async () => {
-    if (!project.id) return;
-    setIsSaving(true);
-    const toastId = toast.loading('Starting project cost calculations...');
-    
-    try {
-      const codesToUpdate = selectedIds.size > 0 
-        ? costCodes.filter(c => selectedIds.has(c.id)) 
-        : costCodes;
-
-      if (codesToUpdate.length === 0) {
-        toast.error('No cost codes found to calculate.', { id: toastId });
-        setIsSaving(false);
-        return;
-      }
-
-      // 1. Use local subscribed state (already up to date)
-      const [fetchedActuals, fetchedBudgets, fetchedEtc, fetchedChanges, fetchedChangeRecords, fetchedSubcontracts] = await Promise.all([
-        costRepo.listActualCosts(project.id),
-        costRepo.listBaselineBudgets(project.id),
-        costRepo.listEtcDetails(project.id),
-        changeRepo.listChanges(project.id),
-        changeRepo.listChangeRecords(project.id),
-        subcontractRepo.listSubcontracts(project.id),
-      ] as [Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>, Promise<any[]>]);
-
-      const allActuals = fetchedActuals;
-      const allBudgets = fetchedBudgets;
-      const allEtcRows = fetchedEtc;
-      const allChanges = fetchedChanges as Change[];
-      const allChangeRecords = fetchedChangeRecords;
-      const allSubcontracts = fetchedSubcontracts as Subcontract[];
-
-      const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-      const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
-      const currentPeriodNum = currentPeriod ? project.reportingPeriods?.periods.indexOf(currentPeriod) + 1 : -1;
-      
-      const allPeriods = project.reportingPeriods?.periods || [];
-      const currentIndex = allPeriods.findIndex(p => p.id === currentPeriodId);
-      const futurePeriodIds = allPeriods.slice(currentIndex + 1).map(p => p.id);
-
-      // 2. Pre-process Approved Changes
-      const approvedChangeIds = new Set(allChanges.filter(c => c.status === 'Approved' || c.status === 'Pending').map(c => c.id));
-
-      // 3. Optimized Aggregation Lookups (O(N) instead of O(N*M))
-      const actualsToDateMap = new Map<string, number>();
-      const actualsThisPeriodMap = new Map<string, number>();
-      const baselineMap = new Map<string, number>();
-      const budgetChangeMap = new Map<string, number>();
-      const eacChangeMap = new Map<string, number>();
-      const etcMap = new Map<string, number>();
-
-      allActuals.forEach(a => {
-        const cost = Number(a.cost) || 0;
-        const key = a.costCodeId;
-        actualsToDateMap.set(key, (actualsToDateMap.get(key) || 0) + cost);
-        
-        const isCurrent = a.reportingPeriodId === currentPeriodId || 
-                         (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum));
-        if (isCurrent) {
-          actualsThisPeriodMap.set(key, (actualsThisPeriodMap.get(key) || 0) + cost);
-        }
-      });
-
-      allBudgets.forEach(b => {
-        const amount = Number(b.amount) || 0;
-        baselineMap.set(b.costCodeId, (baselineMap.get(b.costCodeId) || 0) + amount);
-      });
-
-      allChangeRecords.forEach(r => {
-        if (approvedChangeIds.has(r.changeId)) {
-          const budgetAmt = Number(r.budgetAmount) || 0;
-          const eacAmt = Number(r.eacAmount) || 0;
-          budgetChangeMap.set(r.costCodeId, (budgetChangeMap.get(r.costCodeId) || 0) + budgetAmt);
-          eacChangeMap.set(r.costCodeId, (eacChangeMap.get(r.costCodeId) || 0) + eacAmt);
-        }
-      });
-
-      allEtcRows.forEach(r => {
-        const periodValues = (r.periodValues || {}) as Record<string, number>;
-        const futureQty = futurePeriodIds.reduce((sum, pId) => sum + (periodValues[pId] || 0), 0);
-        const etcVal = futureQty * (r.rate || 0);
-        etcMap.set(r.costCode, (etcMap.get(r.costCode) || 0) + etcVal);
-      });
-
-      // 4. Calculate everything for each Cost Code
-      const getVal = (map: Map<string, number>, id: string, code: string) => (map.get(id) || 0) + (map.get(code) || 0);
-
-      // Subcontract lookup optimization
-      const subTotalsByCode = new Map<string, number>();
-      allSubcontracts.forEach(sub => {
-        (sub.lineItems || []).forEach(li => {
-          if (li.status === 'Rejected') return;
-          const assignedId = li.costCodeId || sub.defaultCostCodeId;
-          if (assignedId) {
-            subTotalsByCode.set(assignedId, (subTotalsByCode.get(assignedId) || 0) + (Number(li.total) || 0));
-          }
-        });
-      });
-
-      // 5. Bulk updates
-      const sanitize = (val: number) => isFinite(val) ? val : 0;
-      const calcUpdates2 = codesToUpdate.map(code => {
-        const baselineBudget = Number(getVal(baselineMap, code.id, code.code)) || 0;
-        const actualCostToDate = Number(getVal(actualsToDateMap, code.id, code.code)) || 0;
-        const actualCostThisPeriod = Number(getVal(actualsThisPeriodMap, code.id, code.code)) || 0;
-        const budgetChanges = Number(getVal(budgetChangeMap, code.id, code.code)) || 0;
-        const approvedBudget = baselineBudget + budgetChanges;
-        let estimateAtCompletion = 0, estimateToComplete = 0;
-        if (code.eacMethod === 'ETC Details') { estimateToComplete = Number(getVal(etcMap, code.id, code.code)) || 0; estimateAtCompletion = actualCostToDate + estimateToComplete; }
-        else if (code.eacMethod === 'Change Management') { const eacChanges = Number(getVal(eacChangeMap, code.id, code.code)) || 0; estimateAtCompletion = baselineBudget + eacChanges; estimateToComplete = estimateAtCompletion - actualCostToDate; }
-        else if (code.eacMethod === 'Sub-Contract Management') { estimateAtCompletion = Number(getVal(subTotalsByCode, code.id, code.code)) || 0; estimateToComplete = estimateAtCompletion - actualCostToDate; }
-        else { estimateAtCompletion = Number(code.estimateAtCompletion) || 0; estimateToComplete = estimateAtCompletion - actualCostToDate; }
-        const approvedBudgetMovement = approvedBudget - (Number(code.approvedBudgetPrevious) || 0);
-        const estimateAtCompletionMovement = estimateAtCompletion - (Number(code.estimateAtCompletionPrevious) || 0);
-        const costVariance = approvedBudget - estimateAtCompletion;
-        const costVarianceMovement = costVariance - (Number(code.costVariancePrevious) || 0);
-        return { id: code.id, data: { baselineBudget: sanitize(baselineBudget), budgetChanges: sanitize(budgetChanges), approvedBudget: sanitize(approvedBudget), approvedBudgetMovement: sanitize(approvedBudgetMovement), actualCostToDate: sanitize(actualCostToDate), actualCostThisPeriod: sanitize(actualCostThisPeriod), estimateToComplete: sanitize(estimateToComplete), estimateAtCompletion: sanitize(estimateAtCompletion), estimateAtCompletionMovement: sanitize(estimateAtCompletionMovement), costVariance: sanitize(costVariance), costVarianceMovement: sanitize(costVarianceMovement), projectId: code.projectId, code: code.code } };
-      });
-      await costRepo.updateManyCostCodes(calcUpdates2);
-
-      toast.success('Calculations completed successfully.', { id: toastId });
-    } catch (error: any) {
-      console.error('Error calculating costs:', error);
-      console.error(error);
-      toast.error(`Failed to complete calculations: ${error.message || 'Unknown error'}`, { id: toastId });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [project, costCodes, selectedIds, subcontracts]);
-
   const handleUpdateField = async (id: string, field: string, value: any) => {
     try {
       await costRepo.updateCostCode(id, { [field]: value } as any);
@@ -2133,41 +1959,21 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
     },
   }), []);
 
+  // Phase 13.B1.5: writes only the edited leaf field. Previously this also recomputed and
+  // force-wrote all 7 derived roll-up fields (approvedBudget, costVariance, etc.) on every
+  // cell edit in this grid, regardless of which field changed — those are compute-on-read now
+  // (useCostCodeRollups above), so there's nothing left to derive-and-store here. The only
+  // roll-up-adjacent field still genuinely editable is estimateAtCompletion, and only when
+  // eacMethod === 'Manual' (see cost-codes/columns.tsx); everything else in this grid was
+  // already read-only (editable: false / unset).
   const onCellValueChanged = async (event: CellValueChangedEvent) => {
-    const { data, colDef, newValue, oldValue } = event;
+    const { colDef, newValue, oldValue } = event;
     if (newValue === oldValue) return;
     if (!colDef.field) return;
     if (isSaving) return; // Prevent triggering during bulk calculations or imports
 
     try {
-      const updates: any = { [colDef.field]: newValue };
-
-      // Reactive calculations for immediate feedback — all formulas via domain/eac
-      const computed = computePeriodEndFields({
-        baselineBudget: Number(colDef.field === 'baselineBudget' ? newValue : data.baselineBudget) || 0,
-        approvedChanges: Number(colDef.field === 'budgetChanges' ? newValue : data.budgetChanges) || 0,
-        approvedBudgetPrev: Number(colDef.field === 'approvedBudgetPrevious' ? newValue : data.approvedBudgetPrevious) || 0,
-        actualsToDate: Number(colDef.field === 'actualCostToDate' ? newValue : data.actualCostToDate) || 0,
-        eacMethod: data.eacMethod,
-        etcFromForecast: Number(data.estimateToComplete) || 0,
-        manualEac: Number(colDef.field === 'estimateAtCompletion' ? newValue : data.estimateAtCompletion) || 0,
-        eacPrev: Number(colDef.field === 'estimateAtCompletionPrevious' ? newValue : data.estimateAtCompletionPrevious) || 0,
-        costVariancePrev: Number(colDef.field === 'costVariancePrevious' ? newValue : data.costVariancePrevious) || 0,
-      });
-
-      // Add calculated fields to updates
-      updates.approvedBudget = computed.approvedBudget;
-      updates.approvedBudgetMovement = computed.approvedBudgetMovement;
-      updates.estimateAtCompletion = computed.eac;
-      updates.estimateAtCompletionMovement = computed.eacMovement;
-      updates.estimateToComplete = computed.etc;
-      updates.costVariance = computed.costVariance;
-      updates.costVarianceMovement = computed.costVarianceMovement;
-
-      // Update grid data immediately for UI responsiveness
-      event.node.setData({ ...data, ...updates });
-
-      await costRepo.updateCostCode(data.id, updates);
+      await costRepo.updateCostCode(event.data.id, { [colDef.field]: newValue });
     } catch (error: any) {
       console.error('Update error:', error);
       console.error(error);
@@ -2480,8 +2286,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
         onQuickFilterChange={setQuickFilterText}
         onImport={() => fileInputRef.current?.click()}
         onExport={handleExport}
-        onCalculate={calculateCosts}
-        isCalculating={isSaving}
         selectedCount={selectedIds.size}
         onBulkUpdate={() => setIsBulkUpdating(true)}
         onBulkDelete={() => setDeleteConfirm({ type: 'bulk', count: selectedIds.size })}
@@ -2505,7 +2309,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
           </>
         }
         gridRef={gridRef}
-        rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) ? costCodes.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)) : costCodes}
+        rowData={(selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode) ? costCodesWithRollups.filter(c => c.code === (selectedEtcCode || selectedActualsCode || selectedTimephasingCode || selectedChangesCode || selectedBaselineCode)) : costCodesWithRollups}
         columnDefs={columnDefs}
         theme={theme}
         isMainTableCollapsed={isMainTableCollapsed}
