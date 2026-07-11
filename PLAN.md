@@ -387,9 +387,17 @@ Tarek before starting 13.B2.
 - [ ] 13.D.2 Top-level React error boundary
 
 ## Phase 13.E — Enforcement / CI (~1 day) 🟠 (do early — can precede B)
-- [ ] 13.E.1 GitHub Actions on PR/push: type-check → vitest → lint:boundary → build
-- [ ] 13.E.2 Fold `lint:boundary` into `npm run lint`
-- [ ] 13.E.3 Memory-adapter E2E smoke in CI; live-Vercel E2E stays nightly (blocked on issue #4)
+- [x] 13.E.1/13.E.3 `.github/workflows/ci.yml` (v1.0.96) — 3 parallel jobs on every push + PRs to main:
+      `verify` (lint+test+build), `rules` (Firestore emulator, needs Java), `e2e` (47 Playwright tests
+      against memory adapter, uploads HTML report artifact). Every command verified green locally first.
+      **NOT YET PUSHED to the remote** — first-ever CI run should be watched by Bernard, not fired
+      unsupervised. Live-Vercel E2E nightly still blocked on GitHub issue #4 (unchanged).
+- [x] 13.E.2 `npm run lint` now runs `tsc --noEmit && eslint src` (was just an alias for type-check).
+      Running it surfaced 5 pre-existing errors — stale `eslint-disable-line react-hooks/exhaustive-deps`
+      comments referencing a rule that was never installed/registered in this project's eslint.config.js
+      (so they were already no-ops, just triggering a "rule not found" error). Removed all 5, plus one
+      similarly-stale `@typescript-eslint/no-explicit-any` disable in Header.tsx that ESLint itself flagged
+      as unused. `npm run lint` now exits 0 with zero errors, zero warnings. (v1.0.95)
 - [ ] 13.E.4 (N4) Repo hygiene: delete `* 2.*` Finder duplicates, organise loose scripts/docx, gitignore
 
 ## Phase 13.F — Continuous ratchets (ongoing, timeboxed)
