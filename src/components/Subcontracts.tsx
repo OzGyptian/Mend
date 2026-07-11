@@ -1013,7 +1013,7 @@ export default function SubcontractManagement({ enterprise, project, user, theme
                   >
                     <option value="">None</option>
                     {[...costCodes].sort((a, b) => a.code.localeCompare(b.code)).map(c => (
-                      <option key={c.id} value={c.code}>{c.code} - {c.name}</option>
+                      <option key={c.id} value={c.id}>{c.code} - {c.name}</option>
                     ))}
                   </select>
                 </div>

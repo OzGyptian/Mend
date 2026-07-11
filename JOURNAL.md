@@ -676,3 +676,79 @@ coverage confirmation matters.
 - Everything else from the prior entry's "ACTION NEEDED FROM BERNARD" list
   is still open (CI push, untracked scripts/docs decision,
   `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel, 13.A.4/13.A.5).
+
+## 2026-07-11 (continued, same day #2) — root cause of the orphan bug found and fixed
+
+Continued from the FK audit session. Went looking for the write path
+producing the `"E3 - E3"` / `"E2 - E2"` orphaned records and found something
+bigger than expected: the actual root cause of most of today's ambiguity,
+not just the orphan pattern.
+
+**Root cause:** `src/components/subcontracts/columns.tsx` had two AG Grid
+columns — `costCodeId` (subcontract line items) and `defaultCostCodeId`
+(subcontract-level default) — using `agRichSelectCellEditor` with
+`values: sortedCostCodes.map(c => c.code)` (the underlying value list was
+the CODE, not the id) and `allowTyping: true`, with **no `valueSetter`**.
+AG Grid's default behavior with no valueSetter writes `newValue` straight
+to the field, so this column has been storing the raw code in `costCodeId`
+by design — contradicting `domain/rollups.ts`, which trusts `costCodeId` as
+an id with no fallback. This is the everyday interactive editing path for
+subcontract line items, far more heavily used than CSV import, so it's the
+most likely dominant source of the 535 ambiguous records fixed earlier. It
+also explains the orphan pattern: `allowTyping` with no validation lets a
+user leave the *formatted display label itself* (`"E3 - E3"`, when a cost
+code's `name` happens to equal its `code`) in the cell, which then gets
+committed verbatim.
+
+Two more instances of the identical bug found while tracing this:
+`Subcontracts.tsx` and `SubcontractFormDialog.tsx` both have a plain HTML
+`<select><option value={c.code}>` for setting a subcontract's
+`defaultCostCodeId` on create/edit — same root cause, simpler fix (native
+select only allows listed options, no free-typing risk).
+
+**Fix, after checking with Bernard on the failure-mode design (reject
+silently, keep old value — matches the audit script's philosophy of never
+guessing on bad data):**
+- `columns.tsx`: both columns' `values`/`formatValue`/`valueFormatter`
+  switched from matching `.code` to matching `.id`. Added a `valueSetter`
+  to each that resolves the entered value (by id, by code, or by parsing a
+  `"CODE - NAME"` label back to its code) to the cost code's `.id`, and
+  returns `false` (rejects the edit, keeps the old value) if nothing
+  resolves — closing off future orphans at the source instead of just
+  cleaning them up after the fact.
+- `Subcontracts.tsx` / `SubcontractFormDialog.tsx`: `<option value={c.code}>`
+  → `<option value={c.id}>`.
+- Confirmed via grep that every other read site for `defaultCostCodeId`
+  (`CostCodes.tsx`, `GlobalTimephasing.tsx`, `domain/rollups.ts`) already
+  treated it as an id — only the write paths were wrong, so this closes the
+  loop rather than opening a new inconsistency.
+
+**Extended the audit script** (`scripts/normalize-costcode-fk.ts`) to also
+check `subcontracts.defaultCostCodeId` (a scalar field on the subcontract
+doc, separate from the already-audited `lineItems[].costCodeId` array) —
+this field was never in scope of the original audit, so any pre-existing
+bad data there is still live and unconfirmed. Generalized
+`auditTopLevelCollection` to accept a field name instead of hardcoding
+`costCodeId`. **Could not run it today** — hit the Firestore free-tier
+daily read quota (exhausted from today's two earlier full scans across all
+projects). The script change itself is inert until run, so safe to commit;
+the actual data check is still pending.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 252/252,
+`npx playwright test` 47/47 — all after the `columns.tsx` change (no
+existing test exercises editing a subcontract line item's cost code cell or
+the subcontract create/edit forms directly, so this fix is confirmed by
+type-check/lint only; genuinely untested at the interaction level, and no
+browser session was available this session to check manually).
+
+### What to do next
+
+- Run `npx tsx scripts/normalize-costcode-fk.ts --all-projects` once the
+  Firestore free daily quota resets, to check `defaultCostCodeId` for
+  existing bad data (never previously audited) and to finish the
+  `YYAvcfIxOuu4BSz3eYai` regression check from the prior entry.
+- Consider adding E2E/unit coverage for the `columns.tsx` valueSetter logic
+  and the subcontract create/edit cost-code dropdowns — currently
+  unexercised by any automated test.
+- Everything else from the prior two entries' outstanding items is still
+  open and unchanged.

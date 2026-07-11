@@ -131,7 +131,7 @@ export function SubcontractFormDialog({
                 {[...costCodes]
                   .sort((a, b) => a.code.localeCompare(b.code))
                   .map((c) => (
-                    <option key={c.id} value={c.code}>
+                    <option key={c.id} value={c.id}>
                       {c.code} - {c.name}
                     </option>
                   ))}

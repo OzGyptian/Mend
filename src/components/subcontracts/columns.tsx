@@ -186,9 +186,9 @@ export function buildSubcontractColumnDefs(deps: SubcontractColumnDeps): any[] {
           enableRowGroup: true,
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: sortedCostCodes.map(c => c.code),
+            values: sortedCostCodes.map(c => c.id),
             formatValue: (val: string) => {
-              const code = sortedCostCodes.find(c => c.code === val);
+              const code = sortedCostCodes.find(c => c.id === val);
               return code ? `${code.code} - ${code.name}` : val;
             },
             searchType: 'match',
@@ -197,8 +197,22 @@ export function buildSubcontractColumnDefs(deps: SubcontractColumnDeps): any[] {
             highlightMatch: true
           },
           valueFormatter: (params: any) => {
-            const code = sortedCostCodes.find(c => c.code === params.value);
+            const code = sortedCostCodes.find(c => c.id === params.value);
             return code ? `${code.code} - ${code.name}` : params.value;
+          },
+          valueSetter: (params: any) => {
+            const raw = String(params.newValue ?? '').trim();
+            if (!raw) {
+              params.data.defaultCostCodeId = '';
+              return true;
+            }
+            const codePart = raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw;
+            const match = sortedCostCodes.find(
+              c => c.id === raw || c.code === raw || c.id === codePart || c.code === codePart
+            );
+            if (!match) return false;
+            params.data.defaultCostCodeId = match.id;
+            return true;
           }
         },
         {
@@ -934,7 +948,7 @@ export function buildLineItemColumnDefs(deps: LineItemColumnDeps): any[] {
           },
           valueFormatter: (params: any) => {
             const val = params.value;
-            const code = sortedCostCodes.find(c => c.code === val);
+            const code = sortedCostCodes.find(c => c.id === val);
             return code ? `${code.code} - ${code.name}` : val;
           },
           cellStyle: (params: any) => {
@@ -946,15 +960,29 @@ export function buildLineItemColumnDefs(deps: LineItemColumnDeps): any[] {
           },
           cellEditor: 'agRichSelectCellEditor',
           cellEditorParams: {
-            values: sortedCostCodes.map(c => c.code),
+            values: sortedCostCodes.map(c => c.id),
             formatValue: (val: string) => {
-              const code = sortedCostCodes.find(c => c.code === val);
+              const code = sortedCostCodes.find(c => c.id === val);
               return code ? `${code.code} - ${code.name}` : val;
             },
             searchType: 'match',
             allowTyping: true,
             filterList: true,
             highlightMatch: true
+          },
+          valueSetter: (params: any) => {
+            const raw = String(params.newValue ?? '').trim();
+            if (!raw) {
+              params.data.costCodeId = '';
+              return true;
+            }
+            const codePart = raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw;
+            const match = sortedCostCodes.find(
+              c => c.id === raw || c.code === raw || c.id === codePart || c.code === codePart
+            );
+            if (!match) return false;
+            params.data.costCodeId = match.id;
+            return true;
           }
         },
         {

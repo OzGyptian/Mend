@@ -8,6 +8,7 @@
  *   - baselineBudgets    (BaselineBudgetRecord.costCodeId)
  *   - changeRecords      (ChangeRecord.costCodeId)
  *   - subcontracts       (Subcontract.lineItems[].costCodeId, embedded array)
+ *   - subcontracts       (Subcontract.defaultCostCodeId, scalar field)
  *
  * NOT in scope: costPhasing and etcDetails key by `code` consistently (no
  * ambiguity — a different convention, not a bug), so they're left alone.
@@ -74,25 +75,27 @@ async function auditTopLevelCollection(
   projectId: string,
   lookup: CostCodeLookup,
   result: AuditResult,
+  fieldName: string = 'costCodeId',
+  sampleLabel: string = collectionName,
 ): Promise<Array<{ ref: FirebaseFirestore.DocumentReference; newCostCodeId: string }>> {
   const snap = await db.collection(collectionName).where('projectId', '==', projectId).get();
   const fixes: Array<{ ref: FirebaseFirestore.DocumentReference; newCostCodeId: string }> = [];
 
   snap.docs.forEach((doc) => {
-    const costCodeId = doc.data().costCodeId as string | undefined;
+    const costCodeId = doc.data()[fieldName] as string | undefined;
     const status = classify(costCodeId, lookup);
     if (status === 'ok' || status === 'empty') { if (status === 'ok') result.ok++; return; }
     if (status === 'ambiguous') {
       const resolvesToId = lookup.codeToId.get(costCodeId!)!;
       result.ambiguous++;
       if (result.ambiguousSamples.length < 10) {
-        result.ambiguousSamples.push({ collection: collectionName, docId: doc.id, costCodeId: costCodeId!, resolvesToId });
+        result.ambiguousSamples.push({ collection: sampleLabel, docId: doc.id, costCodeId: costCodeId!, resolvesToId });
       }
       fixes.push({ ref: doc.ref, newCostCodeId: resolvesToId });
     } else {
       result.orphaned++;
       if (result.orphanedSamples.length < 10) {
-        result.orphanedSamples.push({ collection: collectionName, docId: doc.id, costCodeId: costCodeId! });
+        result.orphanedSamples.push({ collection: sampleLabel, docId: doc.id, costCodeId: costCodeId! });
       }
     }
   });
@@ -146,6 +149,9 @@ async function auditProject(projectId: string): Promise<void> {
   const baselineFixes = await auditTopLevelCollection('baselineBudgets', projectId, lookup, result);
   const changeRecordFixes = await auditTopLevelCollection('changeRecords', projectId, lookup, result);
   const subcontractFixes = await auditSubcontractLineItems(projectId, lookup, result);
+  const defaultCostCodeFixes = await auditTopLevelCollection(
+    'subcontracts', projectId, lookup, result, 'defaultCostCodeId', 'subcontracts.defaultCostCodeId'
+  );
 
   console.log(`  ok: ${result.ok}  ambiguous (code used as id): ${result.ambiguous}  orphaned (matches nothing): ${result.orphaned}`);
   if (result.ambiguousSamples.length > 0) {
@@ -170,6 +176,7 @@ async function auditProject(projectId: string): Promise<void> {
     ...baselineFixes.map((fix) => (b: FirebaseFirestore.WriteBatch) => b.update(fix.ref, { costCodeId: fix.newCostCodeId })),
     ...changeRecordFixes.map((fix) => (b: FirebaseFirestore.WriteBatch) => b.update(fix.ref, { costCodeId: fix.newCostCodeId })),
     ...subcontractFixes.map((fix) => (b: FirebaseFirestore.WriteBatch) => b.update(fix.ref, { lineItems: fix.lineItems })),
+    ...defaultCostCodeFixes.map((fix) => (b: FirebaseFirestore.WriteBatch) => b.update(fix.ref, { defaultCostCodeId: fix.newCostCodeId })),
   ];
 
   const BATCH_LIMIT = 400; // stay under Firestore's 500-write-per-batch limit
