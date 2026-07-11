@@ -373,12 +373,24 @@ Tarek before starting 13.B2.
 - [ ] 13.B2.4 GATE: `grep -rn "costCodeId === .*||" src` = 0; audit script reports 0 ambiguous rows
 
 ## Phase 13.C — Data lifecycle integrity (~4 days) 🟠 (⚠️ subject to platform decision)
-- [ ] 13.C.1 (F4) `PROJECT_CHILD_COLLECTIONS` registry in platform; `deleteProjectCascade` /
-      `deleteCostCodeCascade` chunked batched deletes; audit scripts consume the same registry.
-      GATE: delete seeded project → audit finds 0 orphans
-- [ ] 13.C.2 (F14 minimal) Zod schema per collection in `src/domain/schemas/`; adapters parse on
-      read (log+quarantine) and write (throw); seed script builds from schemas. No migration
-      framework on Firestore — schemas become the Postgres DDL spec
+- [ ] 13.C.1 (F4) — **DELIBERATELY SKIPPED for now.** Genuinely throwaway if the Supabase migration
+      starts (Postgres gives `ON DELETE CASCADE` natively) — unlike 13.C.2 below, there's no
+      "becomes the spec either way" argument for doing this on Firestore. `PROJECT_CHILD_COLLECTIONS`
+      registry in platform; `deleteProjectCascade`/`deleteCostCodeCascade` chunked batched deletes;
+      audit scripts consume the same registry. GATE: delete seeded project → audit finds 0 orphans
+- [x] 13.C.2 (F14, schemas only) `src/domain/schemas/` (v1.0.102) — 40 zod schemas across 8 files
+      mirroring every type in `domain/types.ts` exactly, cross-checked manually against the raw
+      source for several of the more complex ones (Project, Risk, RiskRecord) since the originally-
+      planned compile-time `z.ZodType<T>` equivalence check turned out to be silently broken by this
+      repo's non-strict tsconfig (caught before committing — it was producing 36 false-positive
+      errors that would have broken `npm run lint`/CI). 49 runtime parse tests instead (valid-shape
+      acceptance for all 40, invalid-shape rejection for the 6 most load-bearing types). `zod` added
+      as a real dependency (was previously only present transitively/undeclared).
+      **NOT YET DONE**: wiring these schemas into the Firestore adapters (parse-on-read with
+      log+quarantine, parse-on-write with throw) and rebuilding the seed script from schemas — that's
+      the much larger, higher-risk remainder of this item (touches ~10 adapters' read/write paths;
+      parse-on-write-throws could break currently-tolerated slightly-malformed real data). Deliberately
+      left as its own follow-up rather than rushed through in the same session as everything else.
 
 ## Phase 13.D — Onboarding & error surfaces (~3 days) 🟠 (storage-agnostic) — COMPLETE
 - [x] 13.D.1 (F10) All done: `prompt()` at App.tsx replaced with an inline create-enterprise form
