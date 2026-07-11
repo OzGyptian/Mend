@@ -347,9 +347,28 @@ Tarek before starting 13.B2.
       browser check was done beyond Playwright-driven — flagged explicitly since CostCodes is the app's
       primary financial screen. **F1 (SYSTEM_REVIEW.md) is now closed.**
 ### 13.B2 — Canonical cost-code FK (⚠️ subject to platform decision — throwaway if Supabase starts now)
-- [ ] 13.B2.1 `scripts/normalize-costcode-fk.ts`: resolve code-string `costCodeId`s to doc ids across
-      all child collections; report unresolvables. Run on backup/emulator, then live
-- [ ] 13.B2.2 Delete all 11 `=== id || === code` fallbacks (8 files); match on id only
+- [x] 13.B2.1 (partial) `scripts/normalize-costcode-fk.ts` written and type-checked, NOT yet run against
+      real data (session Bernard was away from his computer for — built the safe/local/reversible part
+      only, per "check before affecting shared systems" when unsupervised). Re-scoped during
+      investigation: re-grepping `costCodeId ===` found the true ambiguous-FK sites are narrower than the
+      original "11 sites, 8 files" count — several matches were UI-selection-state comparisons
+      (`selectedXCode === code.code`) or a `'_'` sentinel check, not FK ambiguity. The **real** ambiguity is
+      exactly 4 collections: `actualCosts`, `baselineBudgets`, `changeRecords` (all `.costCodeId`), and
+      `subcontracts[].lineItems[].costCodeId` (embedded array). `costPhasing` and `etcDetails` key by `code`
+      consistently — a different convention, not a bug — left out of scope.
+      Script defaults to **report-only** (dry run); requires an explicit `--apply` flag to write anything,
+      and even then never auto-fixes orphaned records (costCodeId matching neither an id nor a code) —
+      those are reported for manual review only. Batches writes in chunks of 400 (fixed a real bug caught
+      before ever running: the first draft didn't actually split batches past Firestore's 500-write limit).
+      **Next step (needs Bernard at his computer):** run report-only first —
+      `npx tsx scripts/normalize-costcode-fk.ts --all-projects` — review the ambiguous/orphaned counts,
+      then decide whether to `--apply`. If the report comes back near-zero, 13.B2.2 may barely matter and
+      the Supabase-timing conversation (§13.X) becomes even less urgent to have first.
+- [ ] 13.B2.2 Delete the id-or-code fallbacks (4 real sites: ActualCost.tsx, CostReportingPeriod.tsx x2,
+      BaselineBudget.tsx, GlobalTimephasing.tsx, plus `sumByIdOrCode` in src/domain/rollups.ts) — match on
+      id only. **Blocked on 13.B2.1's live data audit/fix actually running first** — removing the fallback
+      before the data is normalized would silently break cost tracking for any still-ambiguous record
+      (worse than the current state, not better).
 - [ ] 13.B2.3 Rule + schema validation for `costCodeId`
 - [ ] 13.B2.4 GATE: `grep -rn "costCodeId === .*||" src` = 0; audit script reports 0 ambiguous rows
 
