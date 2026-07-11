@@ -480,7 +480,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
 
   const riskColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
     buildRiskColumnDefs({ project, enterprise, setSelectedRiskId, setRiskToDelete, setIsDeleteRiskOpen }),
-    [project, enterprise, risks] // eslint-disable-line react-hooks/exhaustive-deps
+    [project, enterprise, risks]
   );
 
   // Handle cell value changes
@@ -504,7 +504,7 @@ export default function RiskManagement({ project, enterprise }: RiskManagementPr
 
   const recordColumnDefs = useMemo<(ColDef | ColGroupDef)[]>(() =>
     buildRiskRecordColumnDefs({ costCodes, enterpriseLineItemAttrs, projectLineItemAttrs, riskRepo }),
-    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs] // eslint-disable-line react-hooks/exhaustive-deps
+    [costCodes, enterpriseLineItemAttrs, projectLineItemAttrs]
   );
 
   const onRecordCellValueChanged = async (params: CellValueChangedEvent) => {

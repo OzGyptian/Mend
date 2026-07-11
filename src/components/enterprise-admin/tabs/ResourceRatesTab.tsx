@@ -81,7 +81,6 @@ export default function ResourceRatesTab({
           });
         },
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [enterprise.resourceRates]
   );
 

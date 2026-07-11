@@ -17,7 +17,6 @@ import { useNavigate, useLocation, useParams, matchPath } from 'react-router-dom
 import { useProjectRepo, useUtilityRepo } from '../platform/firestore/hooks';
 
 interface HeaderProps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   user: any;
   enterprise: Enterprise | null;
   enterprises?: Enterprise[];

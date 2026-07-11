@@ -1484,7 +1484,6 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
       dateFormatter,
       safeDateSetter,
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.reportingPeriods?.periods, project.reportingPeriods?.currentPeriodId, scheduleItems]);
 
   const handleCalculateAutoPhasing = useCallback(async () => {
