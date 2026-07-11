@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface CalendarManagerProps {
   projectId?: string;
@@ -54,6 +55,7 @@ const DAYS = [
 
 export default function CalendarManager({ projectId, enterpriseId, title, description, allowImport }: CalendarManagerProps) {
   const scheduleRepo = useScheduleRepo();
+  const confirmDialog = useConfirm();
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
   const [enterpriseCalendars, setEnterpriseCalendars] = useState<ProjectCalendar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,7 +149,7 @@ export default function CalendarManager({ projectId, enterpriseId, title, descri
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this calendar?')) return;
+    if (!(await confirmDialog('Are you sure you want to delete this calendar?'))) return;
     try {
       await scheduleRepo.deleteCalendar(id);
       toast.success('Calendar deleted');

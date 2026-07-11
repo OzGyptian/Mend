@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { AgGridReact } from 'ag-grid-react';
 import { ColDef, GridReadyEvent, CellValueChangedEvent } from 'ag-grid-community';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface ProcurementStepConfigProps {
   project: Project;
@@ -16,6 +17,7 @@ interface ProcurementStepConfigProps {
 
 export default function ProcurementStepConfig({ project, enterprise, currentSteps, enterpriseSteps }: ProcurementStepConfigProps) {
   const procurementRepo = useProcurementRepo();
+  const confirmDialog = useConfirm();
   const scheduleRepo = useScheduleRepo();
   const projectRepo = useProjectRepo();
   const [isAdding, setIsAdding] = useState(false);
@@ -144,7 +146,7 @@ export default function ProcurementStepConfig({ project, enterprise, currentStep
       cellRenderer: (params: any) => (
         <button 
           onClick={async () => {
-            if (confirm(`Delete step "${params.data.name}"?`)) {
+            if (await confirmDialog(`Delete step "${params.data.name}"?`)) {
               await procurementRepo.deleteStepDefinition(params.data.id);
               toast.success('Step deleted');
             }

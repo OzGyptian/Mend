@@ -41,6 +41,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Project, Enterprise, Calendar as ProjectCalendar } from '../../../types';
 import { useCostRepo } from '../../../platform/firestore/hooks';
+import { useConfirm } from '../../ConfirmDialogProvider';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-quartz.css';
 import 'ag-grid-enterprise';
@@ -125,6 +126,7 @@ export default function EtcDetailsPanel({
   onSelectedEtcIdsChange,
 }: EtcDetailsPanelProps) {
   const costRepo = useCostRepo();
+  const confirmDialog = useConfirm();
 
   // ── Local UI state ──────────────────────────────────────────────────────────
   const [etcQuickFilterText, setEtcQuickFilterText] = useState('');
@@ -247,7 +249,7 @@ export default function EtcDetailsPanel({
       : etcRows.map(r => r.id);
 
     if (rowsToDelete.length === 0) return;
-    if (!confirm(`Are you sure you want to delete ${type === 'selected' ? rowsToDelete.length : 'all'} row(s)?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${type === 'selected' ? rowsToDelete.length : 'all'} row(s)?`))) return;
 
     try {
       await costRepo.deleteManyEtcDetails(rowsToDelete);

@@ -31,6 +31,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { AgGridReact } from 'ag-grid-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
+import { useConfirm } from './ConfirmDialogProvider';
 import {
   ColDef,
   ColGroupDef,
@@ -61,6 +62,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   const progressRepo = useProgressRepo();
   const scheduleRepo = useScheduleRepo();
   const costRepo = useCostRepo();
+  const confirmDialog = useConfirm();
   const { user: authUser, isPlatformAdmin } = useAuth();
   const [packages, setPackages] = useState<ProgressPackage[]>([]);
   const [items, setItems] = useState<ProgressItem[]>([]);
@@ -146,7 +148,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   };
 
   const deletePackage = async (pkg: ProgressPackage) => {
-    if (!window.confirm(`Are you sure you want to delete commodity ${pkg.packageId}? This will also delete all related items.`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete commodity ${pkg.packageId}? This will also delete all related items.`))) return;
     try {
       const itemIds = items.filter(i => (i as any).packageDocId === pkg.id).map(i => i.id);
       await Promise.all(itemIds.map(id => progressRepo.deleteProgressItem(id)));
@@ -170,7 +172,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
 
   const handleBulkDelete = async () => {
     if (selectedPackageIds.length === 0) return;
-    if (!window.confirm(`Delete ${selectedPackageIds.length} commodities and all their related items?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedPackageIds.length} commodities and all their related items?`))) return;
     try {
       for (const id of selectedPackageIds) {
         const itemIds = items.filter(i => (i as any).packageDocId === id).map(i => i.id);
@@ -259,7 +261,7 @@ export default function ProgressTracking({ enterprise, project, user, theme = 'l
   };
 
   const deleteItem = async (item: ProgressItem) => {
-    if (!window.confirm(`Delete commodity item ${item.description}?`)) return;
+    if (!(await confirmDialog(`Delete commodity item ${item.description}?`))) return;
     try {
       await progressRepo.deleteProgressItem(item.id);
     } catch (error) {

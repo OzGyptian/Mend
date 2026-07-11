@@ -42,6 +42,7 @@ import 'ag-grid-community/styles/ag-theme-quartz.css';
 import 'ag-grid-enterprise';
 import { buildLineItemColumnDefs } from '../columns';
 import { X } from 'lucide-react';
+import { useConfirm } from '../../ConfirmDialogProvider';
 
 export interface LineItemsPanelProps {
   selectedSubcontractId: string | null;
@@ -71,6 +72,8 @@ export function LineItemsPanel({
   isBottomPanelCollapsed,
   onClose,
 }: LineItemsPanelProps) {
+  const confirmDialog = useConfirm();
+
   // --- Local state owned by this panel ---
   const [selectedLineItemIds, setSelectedLineItemIds] = useState<Set<string>>(new Set());
   const [lineItemQuickFilterText, setLineItemQuickFilterText] = useState('');
@@ -164,6 +167,7 @@ export function LineItemsPanel({
         lineItemInvoiceAggregates,
         subcontractRepo,
         toast,
+        confirmDialog,
       }),
     [selectedSubcontractId, selectedSubcontract, costCodes, enterprise, project]
   );
@@ -267,9 +271,9 @@ export function LineItemsPanel({
   const handleLineItemBulkDelete = async () => {
     if (!selectedSubcontractId || !selectedSubcontract || selectedLineItemIds.size === 0) return;
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Are you sure you want to delete ${selectedLineItemIds.size} selected line items?`
-      )
+      ))
     )
       return;
 

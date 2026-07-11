@@ -6,6 +6,7 @@ import SheetSettings from './SheetSettings';
 import AgGridSheet, { AgGridSheetRef } from './AgGridSheet';
 import { useCostRepo, useUtilityRepo, useAuthRepo } from '../platform/firestore/hooks';
 import * as XLSX from 'xlsx';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface ForecastGridProps {
   sheet: Sheet;
@@ -18,6 +19,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
   const costRepo = useCostRepo();
   const utilityRepo = useUtilityRepo();
   const authRepo = useAuthRepo();
+  const confirmDialog = useConfirm();
   const [rows, setRows] = useState<ForecastRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
@@ -109,7 +111,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
       toast.error('No rows selected for deletion.');
       return;
     }
-    if (!confirm(`Are you sure you want to delete ${selectedRows.length} selected row(s)?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${selectedRows.length} selected row(s)?`))) return;
     try {
       await costRepo.deleteManyForecastRows(sheet.id, selectedRows.map(r => r.id));
       await audit('DELETE_ROWS', { sheetId: sheet.id, rowCount: selectedRows.length, rowIds: selectedRows.map(r => r.id) });
@@ -141,7 +143,7 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
           return;
         }
 
-        if (!confirm(`Import ${data.length} rows? This will add them to the current sheet.`)) {
+        if (!(await confirmDialog(`Import ${data.length} rows? This will add them to the current sheet.`))) {
           return;
         }
 

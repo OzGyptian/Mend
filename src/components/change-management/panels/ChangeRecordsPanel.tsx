@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn } from '../../../lib/utils';
 import { useChangeRepo } from '../../../platform/firestore/hooks';
+import { useConfirm } from '../../ConfirmDialogProvider';
 import {
   Dialog,
   DialogContent,
@@ -68,6 +69,7 @@ export default function ChangeRecordsPanel({
   onCellValueChanged,
 }: ChangeRecordsPanelProps) {
   const changeRepo = useChangeRepo();
+  const confirmDialog = useConfirm();
 
   const [recordsQuickFilterText, setRecordsQuickFilterText] = useState('');
   const [selectedRecordIds, setSelectedRecordIds] = useState<Set<string>>(new Set());
@@ -363,7 +365,7 @@ export default function ChangeRecordsPanel({
                     </button>
                     <button
                       onClick={async () => {
-                        if (confirm(`Delete ${selectedRecordIds.size} records?`)) {
+                        if (await confirmDialog(`Delete ${selectedRecordIds.size} records?`)) {
                           await Promise.all([...selectedRecordIds].map(id => changeRepo.deleteChangeRecord(id)));
                           setSelectedRecordIds(new Set());
                           toast.success(`Deleted ${selectedRecordIds.size} records`);

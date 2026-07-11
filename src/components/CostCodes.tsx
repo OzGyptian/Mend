@@ -98,6 +98,7 @@ import SubcontractBreakdownPanel from './cost-codes/panels/SubcontractBreakdownP
 import ChangesPanel from './cost-codes/panels/ChangesPanel';
 import CostCodeFormDialog from './cost-codes/CostCodeFormDialog';
 import ImportPreviewDialog from './cost-codes/ImportPreviewDialog';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface CostCodesProps {
   project: Project;
@@ -116,6 +117,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
   const subcontractRepo = useSubcontractRepo();
   const projectRepo = useProjectRepo();
   const navigate = useNavigate();
+  const confirmDialog = useConfirm();
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [scheduleItems, setScheduleItems] = useState<ScheduleItem[]>([]);
   const [calendars, setCalendars] = useState<ProjectCalendar[]>([]);
@@ -1222,7 +1224,7 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
     if (rowsToDelete.length === 0) return;
 
-    if (!confirm(`Are you sure you want to delete ${type === 'selected' ? rowsToDelete.length : 'all'} row(s)?`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${type === 'selected' ? rowsToDelete.length : 'all'} row(s)?`))) return;
 
     try {
       await costRepo.deleteManyEtcDetails(rowsToDelete);

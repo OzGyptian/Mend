@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface BulkSubcontractItemsProps {
   project: Project;
@@ -39,6 +40,7 @@ interface FlattenedLineItem extends SubcontractLineItem {
 const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, enterprise }) => {
   const subcontractRepo = useSubcontractRepo();
   const costRepo = useCostRepo();
+  const confirmDialog = useConfirm();
   const [subcontracts, setSubcontracts] = useState<Subcontract[]>([]);
   const [costCodes, setCostCodes] = useState<CostCode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,7 +58,7 @@ const BulkSubcontractItems: React.FC<BulkSubcontractItemsProps> = ({ project, en
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedIds.length} items? This will remove them from their respective subcontracts.`)) return;
+    if (!(await confirmDialog(`Are you sure you want to delete ${selectedIds.length} items? This will remove them from their respective subcontracts.`))) return;
 
     try {
       const subcontractsToUpdate = new Map<string, Subcontract>();

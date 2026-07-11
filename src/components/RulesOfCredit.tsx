@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { AgGridReact } from 'ag-grid-react';
 import { ColDef, ICellRendererParams } from 'ag-grid-community';
 import * as XLSX from 'xlsx';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface RulesOfCreditProps {
   project: Project;
@@ -20,6 +21,7 @@ interface RulesOfCreditProps {
 
 export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCreditProps) {
   const progressRepo = useProgressRepo();
+  const confirmDialog = useConfirm();
   const [rules, setRules] = useState<RuleOfCredit[]>([]);
   const [packages, setPackages] = useState<ProgressPackage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +79,7 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
 
   const deleteRule = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Delete this Rule of Credit and all its steps?')) return;
+    if (!(await confirmDialog('Delete this Rule of Credit and all its steps?'))) return;
     const path = `rulesOfCredit/${id}`;
     try {
       await progressRepo.deleteRuleOfCredit(id);
@@ -131,7 +133,7 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
 
   const deleteStep = async (stepId: string) => {
     if (!selectedRuleId || !selectedRule) return;
-    if (!window.confirm('Delete this step?')) return;
+    if (!(await confirmDialog('Delete this step?'))) return;
 
     const newSteps = (selectedRule.steps || []).filter(s => s.id !== stepId);
     await updateRule(selectedRuleId, { steps: newSteps });
@@ -141,7 +143,7 @@ export default function RulesOfCredit({ project, theme = 'light' }: RulesOfCredi
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return;
-    if (!window.confirm(`Delete ${selectedIds.length} Rules of Credit and all their steps?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedIds.length} Rules of Credit and all their steps?`))) return;
 
     try {
       await Promise.all(selectedIds.map(id => progressRepo.deleteRuleOfCredit(id)));

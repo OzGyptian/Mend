@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
+import { useConfirm } from './ConfirmDialogProvider';
 
 interface EnterpriseProcurementStepsProps {
   enterpriseId: string;
@@ -19,6 +20,7 @@ interface EnterpriseProcurementStepsProps {
 
 export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseProcurementStepsProps) {
   const repo = useProcurementRepo();
+  const confirmDialog = useConfirm();
   const [steps, setSteps] = useState<ProcurementStepDefinition[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [newStepName, setNewStepName] = useState('');
@@ -70,7 +72,7 @@ export default function EnterpriseProcurementSteps({ enterpriseId }: EnterpriseP
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this standard step? Projects already using it will not be affected.')) return;
+    if (!(await confirmDialog('Are you sure you want to delete this standard step? Projects already using it will not be affected.'))) return;
     try {
       await repo.deleteStepDefinition(id);
       toast.success('Standard step deleted');

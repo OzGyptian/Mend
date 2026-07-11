@@ -53,6 +53,7 @@ export interface LineItemColumnDeps {
   lineItemInvoiceAggregates: Record<string, { claimed: number; certified: number }>;
   subcontractRepo: { updateSubcontract: (id: string, data: Partial<Subcontract>) => Promise<void> };
   toast: { success: (msg: string) => void; error: (msg: string) => void };
+  confirmDialog: (message: string) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -880,6 +881,7 @@ export function buildLineItemColumnDefs(deps: LineItemColumnDeps): any[] {
     lineItemInvoiceAggregates,
     subcontractRepo,
     toast,
+    confirmDialog,
   } = deps;
 
   const sortedCostCodes = [...costCodes].sort((a, b) => a.code.localeCompare(b.code));
@@ -1415,7 +1417,7 @@ export function buildLineItemColumnDefs(deps: LineItemColumnDeps): any[] {
       return (
         <button
           onClick={async () => {
-            if (!window.confirm('Delete this line item?')) return;
+            if (!(await confirmDialog('Delete this line item?'))) return;
             const updatedItems = (selectedSubcontract?.lineItems || []).filter(i => i.id !== params.data.id);
             const newTotal = updatedItems.reduce((sum, i) => sum + (i.total || 0), 0);
             await subcontractRepo.updateSubcontract(selectedSubcontractId!, { lineItems: updatedItems, totalAmount: newTotal });

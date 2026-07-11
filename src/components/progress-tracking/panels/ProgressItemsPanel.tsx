@@ -34,6 +34,7 @@ import {
   DialogFooter,
 } from '../../ui/dialog';
 import { useProgressRepo } from '../../../platform/firestore/hooks';
+import { useConfirm } from '../../ConfirmDialogProvider';
 
 interface ProgressItemsPanelProps {
   project: Project;
@@ -65,6 +66,7 @@ export default function ProgressItemsPanel({
   onCloseDetails,
 }: ProgressItemsPanelProps) {
   const progressRepo = useProgressRepo();
+  const confirmDialog = useConfirm();
 
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [isItemBulkUpdateOpen, setIsItemBulkUpdateOpen] = useState(false);
@@ -139,7 +141,7 @@ export default function ProgressItemsPanel({
 
   const handleItemBulkDelete = async () => {
     if (selectedItemIds.length === 0) return;
-    if (!window.confirm(`Delete ${selectedItemIds.length} commodity items?`)) return;
+    if (!(await confirmDialog(`Delete ${selectedItemIds.length} commodity items?`))) return;
     try {
       await Promise.all(selectedItemIds.map(id => progressRepo.deleteProgressItem(id)));
       toast.success(`Deleted ${selectedItemIds.length} commodity items`);
