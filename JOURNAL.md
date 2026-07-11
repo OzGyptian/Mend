@@ -752,3 +752,19 @@ browser session was available this session to check manually).
   unexercised by any automated test.
 - Everything else from the prior two entries' outstanding items is still
   open and unchanged.
+
+## 2026-07-11 (continued, same day #3) — DRY cleanup + test coverage for the cost code fix
+
+Noticed after the columns.tsx fix: the same "resolve raw id/code/label
+input to the cost code's canonical id" logic had been independently
+written 5 times across today's session (3 CSV import fixes, 2 columns.tsx
+valueSetters) - a DRY violation per the project's own coding standards.
+Extracted to `src/domain/costCodes.ts::resolveCostCodeId`, a pure function,
+and refactored all 5 call sites to use it. Added 10 unit tests covering id
+passthrough, code lookup, "CODE - NAME" label parsing, the doubled
+"E3 - E3" case specifically (the shape that caused today's orphaned
+records), whitespace trimming, and no-match. This also closes the test
+coverage gap flagged in the prior entry - the valueSetter logic was
+previously verified by type-check only.
+
+Verified: tsc+eslint clean, 262/262 unit (252 + 10 new), 47/47 E2E.
