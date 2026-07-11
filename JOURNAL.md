@@ -405,3 +405,204 @@ boundary violation, not introduced by this session).
 5. Then Phase 13.B1 (compute-on-read roll-ups) — the core fragility fix,
    storage-agnostic, should proceed regardless of the Supabase timing
    decision.
+
+---
+
+## 2026-07-11 (continued, same day) — Phase 13.A deploy, 13.B1 complete, 13.E complete, 13.D complete, 13.C.2 (schemas only)
+
+Branch: `refactor/phase-12-file-splits` · v1.0.87 → v1.0.102, 23 commits. This
+continues directly from the entry above — same session, picked back up after
+Bernard stepped away from his computer partway through, worked everything
+that didn't need him present, deployed what he explicitly approved.
+
+### ⚠️ ACTION NEEDED FROM BERNARD (read this first)
+
+1. **Run the FK audit report** (safe, read-only, any time):
+   `npx tsx scripts/normalize-costcode-fk.ts --all-projects`
+   Tells you how many `costCodeId` values are actually ambiguous across
+   `actualCosts`/`baselineBudgets`/`changeRecords`/`subcontracts[].lineItems`.
+   If near-zero, 13.B2.2 (deleting the `id||code` fallbacks) and the whole
+   Supabase-timing conversation matter a lot less than the plan assumed.
+2. **Review and push `.github/workflows/ci.yml`** — built, every command
+   verified green locally, but deliberately not pushed to
+   `github.com/OzGyptian/Mend`. First CI run should be something you watch.
+3. **Decide on the 5 untracked `scripts/*.ts` admin tools** and the docx/md
+   docs at `Mend/` root — see the "repo hygiene" section below. Not touched
+   without your say-so; at least one script has a real production UID
+   hardcoded in it.
+4. **Set `FIREBASE_SERVICE_ACCOUNT_KEY` in Vercel** if not already done —
+   still the one thing blocking `/api/accept-invite` from working in prod
+   (flagged in the entry above, still outstanding as far as I know).
+5. Whenever you're ready: **13.A.4** (custom-claim admin model — needs a
+   live admin-script run with real credentials) and **13.A.5**
+   (enterprise-create policy — needs a decision, possibly with Tarek) are
+   the only remaining pieces of Phase 13.A.
+
+Everything else below is done, committed, and verified — nothing else is
+waiting on you specifically.
+
+### Phase 13.A — rules deployed
+
+`firebase deploy --only firestore:rules --project gen-lang-client-0160759254`
+— ran with Bernard's explicit go-ahead. The F3 (invitation hole) and F2
+residue (platformRole self-grant) fixes are **live in production** as of
+this session.
+
+### Phase 13.B1 — compute-on-read for all three financial roll-ups (F1 CLOSED)
+
+The core fragility fix from SYSTEM_REVIEW.md v2. Re-scoped during inventory:
+of the original "9 Recalculate sites," only 3 were genuine single-source-of-
+truth violations — the other 6 (GlobalTimephasing/LineItemsPanel phasing
+regen, BulkSubcontractInvoiceItems % fill, ProcurementProgress calendar date
+recalc, CostReportingPeriod's period-close snapshot) are legitimate
+user-triggered bulk actions, not passively-stale reads — left alone.
+
+- **Domain layer** (`src/domain/rollups.ts`, extended `risk.ts`): pure
+  aggregation functions taking raw leaf arrays, returning computed roll-ups.
+  `computeCostCodeRollup` delegates to the existing `computePeriodEndFields`
+  in `eac.ts` rather than reimplementing it. 44 new unit tests, every
+  formula cross-checked line-by-line against the real inline arithmetic
+  before it was deleted.
+- While tracing the exact live write path, found `CostCodes.tsx` had **two**
+  "recalculate" functions: `handleRecalculateAll` was dead code (never wired
+  to any button, wrote a stale field name that doesn't match the current
+  type) sitting alongside the real live handler `calculateCosts`. Deleted
+  the dead one, replaced the real one.
+- **E2E verification problem solved**: AG Grid virtualizes off-screen
+  columns (don't exist in the DOM until scrolled into view) and some render
+  with non-semantic auto-generated col-ids, so scroll-and-read-text
+  assertions were unreliable. Exposed the AG Grid API on
+  `window.__costCodesGridApi`, gated strictly to `VITE_ADAPTER === 'memory'`
+  (never present in a real build) — `tests/e2e/cost-report.characterization.spec.ts`
+  now reads exact cell values via `api.getCellValue()`.
+- Migrated all three screens — **CostCodes.tsx** (v1.0.91), **RiskManagement.tsx**
+  (v1.0.92, also fixed the duplicate in BulkRiskRecords.tsx), **ChangeManagement.tsx**
+  (v1.0.93, also fixed the duplicate in BulkChangeRecords.tsx) — to
+  compute-on-read. Deleted 3 Recalculate buttons and ~400 lines of
+  duplicated recalculation logic across 9 files. Confirmed safe to swap the
+  grid data source without touching column defs: every roll-up field was
+  already `editable: false` except `estimateAtCompletion` (only editable
+  when `eacMethod === 'Manual'`, where it's a genuine leaf, not derived).
+
+**F1 from SYSTEM_REVIEW.md v2 is closed** — no financial roll-up in the app
+is stored-and-manually-refreshed anymore.
+
+### Phase 13.B2.1 — FK audit script (built, NOT run against real data)
+
+`scripts/normalize-costcode-fk.ts` — see "ACTION NEEDED" above. Report-only
+by default, requires `--apply` to write, never auto-fixes orphaned records.
+Caught and fixed a real bug before it ever ran: the first draft's
+batch-write loop didn't actually split at Firestore's 500-write-per-batch
+limit. Re-scoped during investigation: the real ambiguity is 4 collections
+(`actualCosts`, `baselineBudgets`, `changeRecords`, embedded
+`subcontracts[].lineItems[].costCodeId`), not the "11 sites/8 files" the
+original review counted (some of those were false positives — unrelated
+UI-selection-state comparisons).
+
+### Phase 13.E — CI, lint, hygiene (all done, CI not pushed)
+
+- **`.github/workflows/ci.yml`** — 3 parallel jobs (lint+test+build, Firestore
+  rules emulator, 47-test Playwright suite) on every push + PRs to main. See
+  "ACTION NEEDED" above — not pushed yet.
+- **`npm run lint` genuinely green** — folded `lint:boundary` in (now runs
+  `tsc --noEmit && eslint`), which surfaced 5 pre-existing errors: stale
+  `eslint-disable-line react-hooks/exhaustive-deps` comments referencing a
+  rule that was never actually installed in this project's `eslint.config.js`
+  — dead no-ops, just triggering a "rule not found" error. Removed all 5
+  (plus one similarly-stale `no-explicit-any` disable in Header.tsx). Zero
+  errors, zero warnings now.
+- **Repo hygiene**: deleted 15 verified-safe Finder/iCloud-sync duplicate
+  artifacts (6 in `src/domain/`, 7 in `tests/e2e/`, `.git/index 2`, two empty
+  duplicated directories) — each one diffed/verified before deletion, not
+  assumed. One (`dashboard.spec 2.ts`) actually differed from its tracked
+  counterpart — turned out to be the pre-fix version from before v1.0.84's
+  "dashboard spec fix," confirmed safe to remove. Tracked `.firebaserc` +
+  `firestore.indexes.json` (standard non-secret Firebase config, previously
+  untracked). **Left alone, needs Bernard's decision**: 5 untracked
+  `scripts/*.ts` admin tools (`audit-user-access.ts`, `audit2.ts`,
+  `check-data.ts`, `check-procurement.ts`, `fix-enterprise-membership.ts` —
+  the last one hardcodes Bernard's real Firebase UID and an enterprise doc
+  id, session-specific, not generic tooling) and the docx/md/UUID/html
+  personal documents at `Mend/` root.
+- Added `firebase-tools` and `zod` as real devDependencies/dependencies
+  (both were previously either absent or only present transitively).
+
+### Phase 13.D — onboarding & error surfaces (F10 CLOSED)
+
+- **The `prompt()` dead-end** at App.tsx (a brand-new user with zero
+  enterprises hit a bare browser `prompt('Enter your Enterprise Name:')`)
+  replaced with an inline expand-to-form in the existing "Welcome to Mend"
+  card. While wiring this up, found a real bug: `<Toaster/>` was mounted
+  deep inside `AuthenticatedApp`'s main-shell render branch — only reached
+  once authenticated AND enterprise-selected — meaning toast calls during
+  login/registration or the pre-enterprise screen had no host to render
+  into and would have silently done nothing. Moved `<Toaster/>` and a new
+  `<ConfirmDialogProvider/>` to wrap the entire app.
+- Added `src/components/ConfirmDialogProvider.tsx` — async replacement for
+  `window.confirm()`, backed by the existing shadcn Dialog primitive.
+- **26 `alert()` calls** across 12 files → `toast.success`/`toast.error`
+  (delegated the mechanical sweep to an agent, independently verified every
+  diff myself before trusting it). **22 `confirm()` calls** across 16 files
+  → the new async `useConfirm()` hook (also agent-assisted, also
+  independently verified) — one site required real restructuring
+  (`subcontracts/columns.tsx`'s confirm lives in a plain builder function,
+  not a component, so `useConfirm()` had to be threaded through as a dep
+  from `LineItemsPanel.tsx` instead of called directly, to respect Rules of
+  Hooks).
+- `bootstrapIfEmpty` failures now surface via `toast.error`, not just
+  `console.error`.
+- Invite-token URL cleanup was already done as a side effect of the Phase
+  13.A invite rewrite (confirmed still in place, not redone).
+- **13.D.2 (top-level error boundary) was already done** before this
+  session — `src/components/ErrorBoundary.tsx` already wraps the whole app
+  in `main.tsx` with a proper fallback UI. Nothing to build.
+
+Zero `alert()`/`confirm()`/`prompt()` calls remain anywhere in `src/`
+(verified via grep). Not visually verified in an actual browser (none
+available this session) — verified via tsc, unit tests, and the full E2E
+suite at every step, plus direct diff review of every agent-produced change.
+
+### Phase 13.C.2 — zod schemas (definitions only, NOT wired into adapters)
+
+`src/domain/schemas/` — 40 zod schemas across 8 files, one per type in
+`domain/types.ts`, plus 49 runtime parse tests. Deliberately scoped down
+from the full 13.C.2 item: **adapter wiring (parse-on-read with
+log+quarantine, parse-on-write with throw) is NOT done** — that's a much
+larger, higher-risk change touching ~10 adapters' read/write paths
+(parse-on-write-throws could reject currently-tolerated real production
+data), left as its own clearly-separate follow-up rather than rushed
+through at the end of an already-long session.
+
+Caught a real problem before committing: the schemas were originally
+written as `const XSchema: z.ZodType<X> = z.object({...})` — the standard
+pattern for a compile-time guarantee that the zod shape matches the TS
+interface exactly. That guarantee silently doesn't work in this repo
+because `tsconfig.json` has no `strictNullChecks` — without it, TS treats
+every zod-object field as optional regardless of the interface, producing
+36 false-positive errors that would have broken `npm run lint` (the same
+command CI runs). Verified this directly before it shipped. Enabling
+`strictNullChecks` repo-wide to make the pattern work is a much bigger,
+separate initiative (surfaces ~132 unrelated pre-existing errors elsewhere
+when tested — did not pursue). Removed the `z.ZodType<T>` annotations;
+correctness now rests on the 49 runtime tests plus manual cross-referencing
+against the raw `types.ts` source (spot-checked several of the more complex
+ones — `Project`, `Risk`, `RiskRecord` — directly against the interface
+text).
+
+**13.C.1 (cascade-delete registry) deliberately skipped** — unlike the
+schemas, this one is genuinely throwaway if the Supabase migration starts
+(Postgres gives `ON DELETE CASCADE` for free), so not worth building on
+Firestore right now.
+
+### Verified clean throughout (every commit, not just at the end)
+
+`tsc --noEmit`, `npm run lint` (tsc + eslint boundary), `npx vitest run`
+(252/252 by the end), `npm run test:rules` (7/7, Firestore emulator),
+`npm run build`, `npx playwright test` (47/47).
+
+### What to do next
+
+See "ACTION NEEDED FROM BERNARD" at the top of this entry. After those:
+wire the zod schemas into the Firestore adapters (rest of 13.C.2), then
+either the Supabase migration conversation or 13.B2.2 depending on what the
+FK audit report shows.
