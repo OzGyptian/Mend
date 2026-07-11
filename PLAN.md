@@ -398,7 +398,14 @@ Tarek before starting 13.B2.
       (so they were already no-ops, just triggering a "rule not found" error). Removed all 5, plus one
       similarly-stale `@typescript-eslint/no-explicit-any` disable in Header.tsx that ESLint itself flagged
       as unused. `npm run lint` now exits 0 with zero errors, zero warnings. (v1.0.95)
-- [ ] 13.E.4 (N4) Repo hygiene: delete `* 2.*` Finder duplicates, organise loose scripts/docx, gitignore
+- [x] 13.E.4 (N4, partial) All 15 Finder-duplicate artifacts deleted (verified byte-identical or confirmed
+      superseded before deleting — see v1.0.97 commit for the per-file breakdown). Tracked `.firebaserc` +
+      `firestore.indexes.json` (standard, non-secret, already referenced by tracked firebase.json).
+      **Left for Bernard to decide** (not deleted/moved unilaterally): the 5 untracked scripts/*.ts admin
+      tools — at least one (fix-enterprise-membership.ts) hardcodes a real Firebase UID + enterprise doc id,
+      session-specific personal work, not generic reusable tooling — and the docx/md/UUID/html personal
+      documents at Mend/ root. Options once he's back: commit the generic-looking scripts, gitignore the
+      personal-data ones, move the docs elsewhere, or leave everything as intentionally-untracked local files.
 
 ## Phase 13.F — Continuous ratchets (ongoing, timeboxed)
 - [ ] 13.F.1 File-size ratchet: split >800-line files only when already touching them (Phase-12 pattern)
