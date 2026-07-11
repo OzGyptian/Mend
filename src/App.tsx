@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Navigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import { useAuthRepo, useEnterpriseRepo, useProjectRepo, useAuth } from './platform/firestore/hooks';
 import type { AuthUser } from './platform/ports/auth.port';
 import { Enterprise, Project, Sheet } from './types';
@@ -15,6 +16,7 @@ import UserProfile from './components/UserProfile';
 import LandingPage from './components/LandingPage';
 import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2, Eye, EyeOff } from 'lucide-react';
 import { Toaster } from 'sonner';
+import { ConfirmDialogProvider } from './components/ConfirmDialogProvider';
 
 export default function App() {
   const authRepo = useAuthRepo();
@@ -92,7 +94,7 @@ export default function App() {
     if (!token) return;
     try {
       const result = await enterpriseRepo.acceptInvitation(token);
-      if (result) alert(`Welcome! You've been added to ${result.enterpriseName}.`);
+      if (result) toast.success(`Welcome! You've been added to ${result.enterpriseName}.`);
     } catch (error: unknown) {
       setAuthError(error instanceof Error ? error.message : 'Failed to process invitation.');
       console.error('Failed to process invitation:', error);
@@ -162,7 +164,7 @@ export default function App() {
       if (isRegistering) {
         await authRepo.registerWithCredentials(email, password);
         await authRepo.sendVerificationEmail();
-        alert('A verification email has been sent. Please check your inbox to complete registration.');
+        toast.success('A verification email has been sent. Please check your inbox to complete registration.');
       } else {
         await authRepo.signInWithCredentials(email, password);
       }
@@ -187,9 +189,12 @@ export default function App() {
   };
 
   return (
-    <BrowserRouter>
-      <AuthenticatedApp 
-        user={user} 
+    <>
+      <Toaster position="top-right" richColors />
+      <ConfirmDialogProvider>
+      <BrowserRouter>
+      <AuthenticatedApp
+        user={user}
         loading={loading} 
         currentEnterprise={currentEnterprise}
         setCurrentEnterprise={setCurrentEnterprise}
@@ -218,7 +223,9 @@ export default function App() {
         enterprises={enterprises}
         onEnterpriseChange={handleEnterpriseSwitch}
       />
-    </BrowserRouter>
+      </BrowserRouter>
+      </ConfirmDialogProvider>
+    </>
   );
 }
 
@@ -267,6 +274,9 @@ function AuthenticatedApp({
   const authRepo = useAuthRepo();
   const enterpriseRepo = useEnterpriseRepo();
   const [showPassword, setShowPassword] = useState(false);
+  const [isCreatingEnterprise, setIsCreatingEnterprise] = useState(false);
+  const [newEnterpriseName, setNewEnterpriseName] = useState('');
+  const [isSubmittingEnterprise, setIsSubmittingEnterprise] = useState(false);
 
   if (loading) {
     return (
@@ -293,7 +303,7 @@ function AuthenticatedApp({
           </p>
           <div className="space-y-4">
             <button 
-              onClick={() => authRepo.sendVerificationEmail().then(() => alert('Verification email resent!'))}
+              onClick={() => authRepo.sendVerificationEmail().then(() => toast.success('Verification email resent!'))}
               className="w-full py-3 bg-black text-white rounded-lg font-medium hover:bg-black/90 transition-colors"
             >
               Resend Verification Email
@@ -495,23 +505,63 @@ function AuthenticatedApp({
             You are not currently associated with an enterprise. Please contact your administrator or create a new enterprise workspace.
           </p>
           <div className="space-y-4">
-            <button 
-              onClick={async () => {
-                const name = prompt('Enter your Enterprise Name:');
-                if (name) {
+            {isCreatingEnterprise ? (
+              <form
+                className="space-y-3 text-left"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const name = newEnterpriseName.trim();
+                  if (!name) return;
+                  setIsSubmittingEnterprise(true);
                   try {
                     await enterpriseRepo.create({ name, adminUsers: [user.id], users: { [user.id]: { name: user.displayName || user.email?.split('@')[0] || 'Admin', email: user.email, role: 'Enterprise System Admin', joinedAt: new Date().toISOString() } } } as any);
                   } catch (e) {
-                    alert('Failed to create enterprise. Please try again.');
+                    toast.error('Failed to create enterprise. Please try again.');
+                    setIsSubmittingEnterprise(false);
                   }
-                }
-              }}
-              className="w-full py-3 bg-black text-white rounded-lg font-medium hover:bg-black/90 transition-colors flex items-center justify-center gap-2"
-            >
-              <Plus className="w-4 h-4" />
-              Create New Enterprise
-            </button>
-            <button 
+                }}
+              >
+                <label htmlFor="new-enterprise-name" className="block text-sm font-medium text-gray-900">
+                  Enterprise Name
+                </label>
+                <input
+                  id="new-enterprise-name"
+                  autoFocus
+                  type="text"
+                  value={newEnterpriseName}
+                  onChange={(e) => setNewEnterpriseName(e.target.value)}
+                  placeholder="e.g. Acme Construction"
+                  disabled={isSubmittingEnterprise}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF6321]/40 disabled:opacity-50"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={isSubmittingEnterprise}
+                    onClick={() => { setIsCreatingEnterprise(false); setNewEnterpriseName(''); }}
+                    className="flex-1 py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSubmittingEnterprise || !newEnterpriseName.trim()}
+                    className="flex-1 py-3 bg-black text-white rounded-lg font-medium hover:bg-black/90 transition-colors disabled:opacity-50"
+                  >
+                    {isSubmittingEnterprise ? 'Creating...' : 'Create'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <button
+                onClick={() => setIsCreatingEnterprise(true)}
+                className="w-full py-3 bg-black text-white rounded-lg font-medium hover:bg-black/90 transition-colors flex items-center justify-center gap-2"
+              >
+                <Plus className="w-4 h-4" />
+                Create New Enterprise
+              </button>
+            )}
+            <button
               onClick={() => authRepo.signOut()}
               className="w-full py-3 border border-gray-200 hover:bg-gray-50 text-black rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
             >
@@ -575,7 +625,6 @@ function AuthenticatedApp({
           </Routes>
         </main>
       </div>
-      <Toaster position="top-right" richColors />
     </div>
   );
 }
