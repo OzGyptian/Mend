@@ -121,7 +121,10 @@ export default function App() {
       });
       if (ents.length === 0) {
         try { await enterpriseRepo.bootstrapIfEmpty(user.id, 'Global Construction Corp', 'Enterprise System Admin'); }
-        catch (error) { console.error('Bootstrap failed', error); }
+        catch (error) {
+          console.error('Bootstrap failed', error);
+          toast.error('Failed to set up your workspace. Please refresh the page or contact support.');
+        }
       }
     });
   }, [user?.id]);
