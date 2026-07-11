@@ -431,9 +431,17 @@ Tarek before starting 13.B2.
 - [ ] 13.F.2 `: any` ratchet: no-explicit-any as warn; record 764; CI fails if count rises
 - [ ] 13.F.3 F8/F13 god-documents: DEFERRED to Postgres schema design
 
-## §13.X — Platform decision (Firebase → Supabase/Postgres) — PENDING DISCUSSION
+## §13.X — Platform decision (Firebase → Supabase/Postgres) — DESIGN DRAFTED, 2026-07-12
 - Supabase **is** hosted Postgres — one migration, not two. Self-hosting later is trivial (pg_dump).
 - The seam (12 ports, memory fakes) was built precisely to make this swap adapter-work.
-- If migration starts after 13.A + 13.B1: skip 13.B2/13.C on Firestore (the SQL schema does FK
-  normalisation, cascades, and validation natively) — saves ~1.5 wks of throwaway work.
-- Needs Tarek's buy-in. Sequencing options and analysis: see discussion notes / SYSTEM_REVIEW v2 Part 4.
+- Triggered by the 2026-07-11/12 FK ambiguity work (575 records, root-caused to a UI write path
+  with no DB-level constraint stopping it) — Postgres FKs close this bug class permanently.
+- Bernard made the load-bearing scope decisions on 2026-07-12: migrate to Supabase Auth (not just
+  data), Postgres RLS from day one, regenerate IDs as UUIDs, big-bang cutover across all 26
+  collections. Full design: **POSTGRES_MIGRATION_PLAN.md**.
+- Still needs Tarek's buy-in before implementation starts — specifically the auth-cutover UX
+  (forced password reset, since Firebase/Supabase password hashes can't be migrated losslessly)
+  is his call, not just a technical one. See "Open risks needing explicit sign-off" in the plan doc.
+- Scope note from the original plan still holds: once migration starts, skip 13.B2.2-equivalent
+  Firestore normalisation work and 13.C (the SQL schema does FK normalisation, cascades, and
+  validation natively) — no need to keep hardening Firestore for a platform being retired.
