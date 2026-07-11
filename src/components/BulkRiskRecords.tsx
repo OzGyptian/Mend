@@ -36,6 +36,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 import { cn, formatCurrency } from '../lib/utils';
 import { betaPertExposure } from '../domain/risk';
+import { resolveCostCodeId } from '../domain/costCodes';
 import {
   Dialog,
   DialogContent, 
@@ -221,7 +222,7 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
           const max = Number(row['Max Value $']) || 0;
           const prob = (Number(row['Prob %']) || 100) / 100;
           const rawCostCode = String(row['Cost Code'] || '').trim();
-          const resolvedCostCodeId = costCodes.find(c => c.id === rawCostCode || c.code === rawCostCode)?.id || rawCostCode;
+          const resolvedCostCodeId = resolveCostCodeId(rawCostCode, costCodes) || rawCostCode;
           toCreate.push({ riskId, projectId: project.id, costCodeId: resolvedCostCodeId, scope: String(row['Scope'] || ''), probability: prob, minImpactAmount: min, mostLikelyImpactAmount: ml, maxImpactAmount: max, betaPertImpactAmount: betaPertExposure(min, ml, max, prob) } as any);
           addedCount++;
         }

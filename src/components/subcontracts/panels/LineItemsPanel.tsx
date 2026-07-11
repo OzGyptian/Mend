@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
+import { resolveCostCodeId } from '../../../domain/costCodes';
 import {
   Enterprise,
   Project,
@@ -418,7 +419,7 @@ export function LineItemsPanel({
             description: String(description),
             costCodeId: (() => {
               const raw = row['Cost Code ID'] || row.costCodeId || '';
-              return costCodes.find((c) => c.id === raw || c.code === raw)?.id || raw;
+              return resolveCostCodeId(raw, costCodes) || raw;
             })(),
             date: row['Date'] || row.date || dateToISO(new Date()),
             qty: Number(row['Qty'] || row.qty) || 0,

@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { Project, Enterprise, ProgressPackage, ProgressItem, CostCode } from '../../../types';
+import { resolveCostCodeId } from '../../../domain/costCodes';
 import {
   Activity,
   Download,
@@ -220,7 +221,7 @@ export default function ProgressItemsPanel({
           const payload = {
             itemId,
             description: row['Description']?.toString() || '',
-            costCodeId: costCodes.find((c) => c.id === rawCostCode || c.code === rawCostCode)?.id || rawCostCode,
+            costCodeId: resolveCostCodeId(rawCostCode, costCodes) || rawCostCode,
             totalQty: parseFloat(row['Total Qty']) || 0,
             plannedStartDate: row['Pl Start']?.toString() || '',
             plannedEndDate: row['Pl End']?.toString() || '',

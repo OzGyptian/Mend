@@ -4,6 +4,7 @@ import { ColDef, ICellRendererParams } from 'ag-grid-community';
 import { cn, formatCurrency, formatDate, dateToISO } from '@/lib/utils';
 import { Enterprise, Project, Subcontract, CostCode } from '../../types';
 import { InvoiceActionsCellRenderer } from './SubcontractsCellRenderers';
+import { resolveCostCodeId } from '../../domain/costCodes';
 
 // ---------------------------------------------------------------------------
 // Types for deps objects
@@ -206,12 +207,9 @@ export function buildSubcontractColumnDefs(deps: SubcontractColumnDeps): any[] {
               params.data.defaultCostCodeId = '';
               return true;
             }
-            const codePart = raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw;
-            const match = sortedCostCodes.find(
-              c => c.id === raw || c.code === raw || c.id === codePart || c.code === codePart
-            );
-            if (!match) return false;
-            params.data.defaultCostCodeId = match.id;
+            const resolvedId = resolveCostCodeId(raw, sortedCostCodes);
+            if (!resolvedId) return false;
+            params.data.defaultCostCodeId = resolvedId;
             return true;
           }
         },
@@ -976,12 +974,9 @@ export function buildLineItemColumnDefs(deps: LineItemColumnDeps): any[] {
               params.data.costCodeId = '';
               return true;
             }
-            const codePart = raw.includes(' - ') ? raw.split(' - ')[0].trim() : raw;
-            const match = sortedCostCodes.find(
-              c => c.id === raw || c.code === raw || c.id === codePart || c.code === codePart
-            );
-            if (!match) return false;
-            params.data.costCodeId = match.id;
+            const resolvedId = resolveCostCodeId(raw, sortedCostCodes);
+            if (!resolvedId) return false;
+            params.data.costCodeId = resolvedId;
             return true;
           }
         },
