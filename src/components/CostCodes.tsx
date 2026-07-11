@@ -2013,6 +2013,13 @@ export default function CostCodes({ project, enterprise, theme = 'light' }: Cost
 
   const onGridReady = (params: GridReadyEvent) => {
     setGridApi(params.api);
+    // Test-only: exposes the grid API so Playwright can read exact cell
+    // values via getCellValue() instead of fighting AG Grid's virtualized
+    // DOM (off-screen columns don't exist in the DOM at all). Only present
+    // when running against the memory adapter — never in a real build.
+    if ((import.meta as any).env?.VITE_ADAPTER === 'memory') {
+      (window as any).__costCodesGridApi = params.api;
+    }
   };
 
   const movementRenderer = (params: any, type: 'budget' | 'eac' | 'variance') => {
