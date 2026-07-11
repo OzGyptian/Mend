@@ -317,28 +317,35 @@ Tarek before starting 13.B2.
       (never present in a real build) — reads exact cell values via `api.getCellValue()` instead of fighting
       virtualized DOM/scroll. Captured real seeded values by querying the live grid: Substructure
       500k/550k/200k/500k, Superstructure 400k/400k/100k/350k (baseline/approved/actual/EAC). (v1.0.90)
-- [x] 13.B1.5 CostCodes.tsx migrated (v1.0.91) — wired `useCostCodeRollups(project, costCodes)`, merged
-      live-computed values onto row data feeding the grid (`costCodesWithRollups`); every column definition
-      left unchanged, only the rowData source changed. Confirmed safe because baselineBudget/
-      actualCostToDate/budgetChanges/approvedBudget(+movements)/estimateToComplete/costVariance(+movements)
-      were already `editable: false`; only `estimateAtCompletion` is genuinely editable, gated to
-      `eacMethod === 'Manual'` (a real leaf in that mode) — unaffected. CostReportingPeriod → Risk →
-      Subcontracts/Invoices → Procurement **not yet migrated** (see 13.B1.1 scope correction — only the
-      Risk.exposure and Change.budget/eac write sites are genuine SSOT violations needing this treatment;
-      the others were already correctly out of scope).
-- [x] 13.B1.6 (CostCode only) Deleted `calculateCosts` (~130 lines, the live Recalculate handler) and the
-      dead `handleRecalculateAll` (never wired to any button, wrote a stale field name). Simplified
-      `onCellValueChanged` — previously every cell edit in this grid force-rewrote all 7 derived fields
-      regardless of which field changed; now an edit writes only the field actually edited. `periodSnapshots`
-      untouched, still the only stored derived data.
-      **NOT YET DONE**: RiskManagement.tsx + BulkRiskRecords.tsx `updateParentTotals` (Risk.exposure),
-      ChangeManagement.tsx + BulkChangeRecords.tsx `updateParentTotals` (Change.budget/eac) — the domain
-      functions exist (`computeRiskRollup`, `computeChangeRollup`, tested) but aren't wired into those
-      components yet, and the write sites/buttons haven't been removed.
-- [x] 13.B1.7 GATE (CostCode only): verified via `cost-report.characterization.spec.ts` (money values
-      identical pre/post migration) + full 47-test E2E suite green + 198/198 unit tests + tsc/build clean.
-      No manual/visual browser check was done beyond Playwright-driven — flagged explicitly since this is
-      the app's primary financial screen. **Full gate (Risk + Change too) not yet met.**
+- [x] 13.B1.5 All three roll-up families migrated:
+      - **CostCodes.tsx** (v1.0.91) — `useCostCodeRollups(project, costCodes)` merged onto row data
+        (`costCodesWithRollups`); every column definition left unchanged, only the rowData source changed.
+        Safe because baselineBudget/actualCostToDate/budgetChanges/approvedBudget(+mvmt)/
+        estimateToComplete/costVariance(+mvmt) were already `editable: false`; only `estimateAtCompletion`
+        is genuinely editable, gated to `eacMethod === 'Manual'` (a real leaf in that mode) — unaffected.
+      - **RiskManagement.tsx** (v1.0.92) — `useRiskRollups(project.id, risks)` merged onto risks
+        (`risksWithRollups`), also feeding the pinned-totals row and the visible "Total Exposure" header.
+      - **ChangeManagement.tsx** (v1.0.93) — `useChangeRollups(project.id, changes)` merged onto changes
+        (`changesWithRollups`), also feeding the period chart, pinned-totals row, and CSV export.
+      CostReportingPeriod/Subcontracts/Invoices/Procurement intentionally untouched (see 13.B1.1 scope
+      correction — those "Recalculate" sites were already legitimate bulk actions, not SSOT violations).
+- [x] 13.B1.6 All 3 genuine roll-up write sites deleted:
+      - CostCodes.tsx: `calculateCosts` (~130 lines, live handler) + dead `handleRecalculateAll` (never
+        wired to any button, stale field name). Simplified `onCellValueChanged` — was force-rewriting all
+        7 derived fields on every cell edit regardless of which field changed; now writes only the edited
+        field.
+      - RiskManagement.tsx + BulkRiskRecords.tsx: `updateParentTotals` (6 + 5 call sites respectively,
+        including RiskRecordsPanel's manual "Recalculate" button — removed, meaningless now).
+      - ChangeManagement.tsx + ChangeRecordsPanel + BulkChangeRecords.tsx: `updateParentTotals` (3 + 3 + 5
+        call sites). Column-def factories (risk-management/columns.tsx, change-management/columns.tsx) no
+        longer take an `updateParentTotals` dep for their delete-row actions.
+      `periodSnapshots` untouched, still the only stored derived data (legitimate frozen snapshot).
+- [x] 13.B1.7 GATE MET for all three: `cost-report.characterization.spec.ts` money values identical
+      pre/post migration; full 47-test E2E suite green after each of the 3 migrations (incl.
+      betaPert-formula-visible-in-grid and seeded-change-budget-visible tests); 203/203 unit tests; tsc/build
+      clean throughout; boundary lint unchanged (7 pre-existing errors, none introduced). No manual/visual
+      browser check was done beyond Playwright-driven — flagged explicitly since CostCodes is the app's
+      primary financial screen. **F1 (SYSTEM_REVIEW.md) is now closed.**
 ### 13.B2 — Canonical cost-code FK (⚠️ subject to platform decision — throwaway if Supabase starts now)
 - [ ] 13.B2.1 `scripts/normalize-costcode-fk.ts`: resolve code-string `costCodeId`s to doc ids across
       all child collections; report unresolvables. Run on backup/emulator, then live
