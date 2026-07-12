@@ -1202,3 +1202,99 @@ same open question as the last three days) to get a real end-to-end
 validation. This closes out everything Bernard asked for this session --
 next real decision point is either the auth migration (needs Tarek) or
 holding here until the quota situation is resolved.
+
+## 2026-07-12 (continued) — first successful end-to-end ETL run against real production data
+
+Firestore quota reset. Ran `scripts/etl-firestore-to-postgres.ts --apply`
+against a real project (`HVhKyBcq57Gxl256zMqo`) for the first time, with
+Bernard's explicit confirmation that this specific project contains real
+business data (subcontracts, invoices, vendor names, financial amounts),
+not synthetic test data -- flagged clearly and confirmed before running,
+since that's a meaningfully bigger action than a schema test even though
+the destination is still the scratch Supabase project.
+
+**Six real bugs found and fixed by actually running against live data**
+-- none of these were visible from reading type definitions, only from
+real documents flowing through the pipeline:
+
+1. The `etl` schema (holding `id_mappings`) wasn't exposed via PostgREST
+   by default (only `public`/`graphql_public` are) -- fixed via
+   `pgrst.db_schemas` + schema/table grants (migration 0024).
+2. PostgREST caches schema info and doesn't auto-refresh on DDL changes --
+   hit this twice (once for the newly-exposed `etl` schema, once after
+   fixing a column type) and had to explicitly `notify pgrst, 'reload
+   schema'` both times (migrations 0025, 0027). Noting this as a pattern:
+   every future migration that alters an existing table/column needs this
+   same reload afterward.
+3. `procurement_step_definitions.default_duration_days` and `.order` were
+   both `integer`, but real data has fractional values (e.g. `1.2` days,
+   `1.2` as a sort position for inserting between existing items without
+   renumbering) -- widened to `numeric`, and proactively checked the rest
+   of the schema for the same "order"/"sort" pattern rather than waiting
+   to hit each one individually (found and fixed 3 more: `cost_codes`,
+   `etc_details`, `progress_items` sort_order).
+4. Firestore documents can hold an explicit `null` for `createdAt`/
+   `updatedAt` rather than omitting the field -- an explicit null bypasses
+   a column's `DEFAULT now()`, unlike an absent key. Fixed with a shared
+   `orNow()` helper applied at all 21 call sites, not just the one that
+   happened to fail first.
+5. Real data has empty strings (`""`) sitting in date/numeric fields
+   where Postgres expects a real value or an actual `null`. Fixed with a
+   blanket `blankStringsToNull()` sanitizer applied to every row before
+   load, rather than chasing individual date fields across ~20 migration
+   functions -- documented as a deliberate simplification (also turns a
+   genuinely-blank text field into null, judged an acceptable semantic
+   merge for this app).
+6. A handful of `NOT NULL` business-content columns hit real missing data:
+   one cost code has no `name` (fell back to its `code` as a placeholder,
+   logged as a warning), several `actualCosts` records have no `period`,
+   and two of two `risks` for this project have no `description` -- these
+   two were skipped rather than fabricated, since inventing a reporting
+   period or risk description would misrepresent real business content,
+   following the same "never guess on bad data" philosophy the FK audit
+   script already established.
+
+**Restructured the script's resilience after enough of these round-trips**:
+originally, any single collection failing aborted the entire run, meaning
+every fix cost a full retry cycle with Bernard re-running the command and
+pasting the error back. Wrapped every migration step in a `safeStep()`
+helper that logs a failure and continues with a safe fallback (an empty
+map, so downstream steps relying on a failed step's output just find no
+matches and skip, rather than crashing on undefined) instead of aborting.
+The final run completed the entire pipeline in one pass with zero
+`[FAILED]` entries -- every remaining issue was an already-anticipated,
+deliberately-logged skip.
+
+**Verified for real, not just "it didn't error"**:
+- `list_tables` / advisor: security advisor still 0 findings after the load
+- Spot-checked the FK join directly: `subcontracts` joined to `vendors`
+  correctly resolves real vendor names (`SYMAL`, `AECOM`) against real
+  subcontract records (`Concrete`/`SC-01`, `Piling`/`SC-02`) -- proof the
+  id-remapping and foreign keys are intact through the whole pipeline, not
+  just that rows landed in tables.
+
+Also hit the harness's own permission classifier blocking the `--apply`
+command directly from me twice with a generic "Stage 2 classifier error,"
+even after Bernard's explicit "Yes deploy" confirmation -- worked around
+by having Bernard run the command himself via `!` for a few iterations,
+then it started working from me again on a later attempt without
+changing anything. Noting this as an observed harness quirk, not
+something diagnosed to a real root cause.
+
+### What's NOT done yet
+
+- Only migrated one (small) project so far, not `--all-projects` --
+  intentionally incremental rather than immediately running everything
+  now that it works once.
+- The 6 real data-quality findings (missing risk descriptions, missing
+  actual-cost periods, one nameless cost code) are worth Bernard knowing
+  about independent of the migration -- they're gaps in the live
+  production data, not just migration artifacts.
+- Auth-dependent tables (membership, saved views, user profiles/roles)
+  still entirely out of scope, still gated on the auth migration.
+
+### What to do next
+
+Bernard's call: migrate more projects (or `--all-projects`) now that the
+pipeline is proven, or hold here and let this one project's load stand as
+the proof-of-concept while other priorities take over.

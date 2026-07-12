@@ -110,17 +110,51 @@ async function mapIdIfPresent(collectionName: string, firestoreId: string | unde
   return mapId(collectionName, firestoreId);
 }
 
+// Some real Firestore documents have an explicit `null` stored for
+// createdAt/updatedAt rather than simply omitting the field (confirmed by
+// the ETL's first --apply run hitting a not-null violation on
+// cost_codes.created_at) -- an explicit null bypasses the column's
+// DEFAULT now(), unlike an omitted/undefined key. Falls back to "now" as
+// a reasonable stamp for "we don't know when this was really created."
+function orNow(value: string | null | undefined): string {
+  return value ?? new Date().toISOString();
+}
+
 // ---- Load helper: chunked insert, report-only unless --apply ----
 
 interface LoadStats { collection: string; read: number; loaded: number; }
 const stats: LoadStats[] = [];
 
+// Firestore doesn't enforce types, so real documents have empty strings
+// ("") sitting in fields that should be a date, number, or absent entirely
+// -- Postgres rejects "" for date/numeric/uuid columns (unlike null, which
+// is fine for nullable columns). Blanket-converts exactly-empty strings to
+// null before every load rather than chasing each date/numeric field
+// individually across ~20 migration functions. Deliberate simplification:
+// for the handful of genuine optional text fields (description, note,
+// scope) this also turns "" into null, which is an acceptable semantic
+// merge for this app -- nothing here distinguishes "explicitly blank" from
+// "no value" in a way that matters.
+function blankStringsToNull(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = value === '' ? null : value;
+  }
+  return out;
+}
+
 async function loadRows(table: string, rows: Record<string, unknown>[]): Promise<void> {
   stats.push({ collection: table, read: rows.length, loaded: APPLY ? rows.length : 0 });
   if (!APPLY || rows.length === 0) return;
-  for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-    const chunk = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabase.from(table).insert(chunk);
+  const sanitized = rows.map(blankStringsToNull);
+  for (let i = 0; i < sanitized.length; i += BATCH_SIZE) {
+    const chunk = sanitized.slice(i, i + BATCH_SIZE);
+    // Upsert on id, not a plain insert -- ids are already stable across runs
+    // via etl.id_mappings, so a retry after a partial failure (a later
+    // collection erroring after earlier ones already loaded) re-applies the
+    // same rows instead of hitting duplicate-key errors on what succeeded
+    // last time.
+    const { error } = await supabase.from(table).upsert(chunk, { onConflict: 'id' });
     if (error) throw new Error(`Insert into ${table} failed: ${error.message}`);
   }
 }
@@ -153,7 +187,7 @@ async function migrateEnterprise(enterpriseId: string): Promise<void> {
     categories: data.categories ?? [],
     controlAccounts: data.controlAccounts ?? [],
     orderNumbers: data.orderNumbers ?? [],
-    createdAt: data.createdAt,
+    createdAt: orNow(data.createdAt),
   });
   await loadRows('enterprises', [row]);
 
@@ -229,7 +263,7 @@ async function migrateCalendars(projectId: string, newProjectId: string): Promis
     return camelToRow({
       id, projectId: newProjectId, enterpriseId: null,
       name: data.name, weekends: data.weekends ?? [], holidays: data.holidays ?? [],
-      createdAt: data.createdAt,
+      createdAt: orNow(data.createdAt),
     });
   }));
   await loadRows('calendars', rows);
@@ -265,8 +299,11 @@ async function migrateCostCodes(projectId: string, newProjectId: string): Promis
     const id = await mapId('costCodes', d.id);
     idMap.set(d.id, id);
     codeMap.set(data.code, id);
+    if (!data.name) {
+      console.warn(`  [warn] cost code ${d.id} (code "${data.code}") has no name in Firestore -- using code as a placeholder`);
+    }
     return camelToRow({
-      id, projectId: newProjectId, code: data.code, name: data.name,
+      id, projectId: newProjectId, code: data.code, name: data.name || data.code || '(unnamed)',
       enterpriseAttributes: data.enterpriseAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
       eacMethod: data.eacMethod ?? 'Auto',
@@ -279,7 +316,7 @@ async function migrateCostCodes(projectId: string, newProjectId: string): Promis
       estimateAtCompletionMovement: data.estimateAtCompletionMovement,
       costVariancePrevious: data.costVariancePrevious,
       costVarianceMovement: data.costVarianceMovement,
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       // approvedBudget/actualCostToDate/estimateToComplete/estimateAtCompletion/
       // costVariance/budgetChanges are compute-on-read (Phase 13.B1) -- not
       // stored, matching the schema's own single-source-of-truth design.
@@ -300,7 +337,7 @@ async function migrateSheets(projectId: string, newProjectId: string): Promise<M
       id, projectId: newProjectId, sheetName: data.sheetName,
       forecastMethod: data.forecastMethod ?? 'Manual', version: data.version ?? '1',
       lockedStatus: data.lockedStatus ?? false, createdBy: null,
-      users: [], createdAt: data.createdAt, updatedAt: data.updatedAt,
+      users: [], createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }));
   await loadRows('sheets', rows);
@@ -351,7 +388,7 @@ async function migrateEtcDetails(projectId: string, newProjectId: string, costCo
       enterpriseAttributes: data.enterpriseAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
       periodValues: data.periodValues ?? {}, sortOrder: data.sortOrder ?? 0,
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       isEnterpriseResource: data.isEnterpriseResource ?? false,
       resourceId: data.resourceId, totalEtcPrevious: data.totalEtcPrevious,
     });
@@ -365,10 +402,14 @@ async function migrateActualCosts(projectId: string, newProjectId: string, costC
     const data = d.data();
     const costCodeId = costCodeIdMap.get(data.costCodeId) ?? costCodeCodeMap.get(data.costCodeId);
     if (!costCodeId) return null; // orphaned reference -- see normalize-costcode-fk.ts's philosophy, skip rather than guess
+    if (!data.period) {
+      console.warn(`  [warn] actualCosts/${d.id} has no period -- skipping rather than guessing which reporting period it belongs to`);
+      return null;
+    }
     return camelToRow({
       id: await mapId('actualCosts', d.id), projectId: newProjectId, costCodeId,
       period: data.period, amount: data.amount ?? 0, description: data.description,
-      createdAt: data.createdAt,
+      createdAt: orNow(data.createdAt),
     });
   }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('actual_costs', rows);
@@ -382,7 +423,7 @@ async function migrateBaselineBudgets(projectId: string, newProjectId: string, c
     if (!costCodeId) return null;
     return camelToRow({
       id: await mapId('baselineBudgets', d.id), projectId: newProjectId, costCodeId,
-      amount: data.amount ?? 0, effectiveDate: data.effectiveDate, createdAt: data.createdAt,
+      amount: data.amount ?? 0, effectiveDate: data.effectiveDate, createdAt: orNow(data.createdAt),
     });
   }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('baseline_budgets', rows);
@@ -397,7 +438,7 @@ async function migrateCostPhasing(projectId: string, newProjectId: string, costC
     return camelToRow({
       id: await mapId('costPhasing', d.id), projectId: newProjectId, costCodeId,
       periodValues: data.periodValues ?? {}, distributionMethod: data.distributionMethod ?? 'Even',
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('cost_phasing', rows);
@@ -410,7 +451,7 @@ async function migratePeriodSnapshots(projectId: string, newProjectId: string): 
     return camelToRow({
       id: await mapId('periodSnapshots', d.id), projectId: newProjectId,
       periodId: data.periodId, periodName: data.periodName,
-      costCodes: data.costCodes ?? [], createdAt: data.createdAt,
+      costCodes: data.costCodes ?? [], createdAt: orNow(data.createdAt),
     });
   }));
   await loadRows('period_snapshots', rows);
@@ -419,8 +460,12 @@ async function migratePeriodSnapshots(projectId: string, newProjectId: string): 
 async function migrateRisksAndRecords(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>): Promise<void> {
   const risksSnap = await firestore.collection('risks').where('projectId', '==', projectId).get();
   const riskIdMap = new Map<string, string>();
-  const riskRows = await Promise.all(risksSnap.docs.map(async (d) => {
+  const riskRows = (await Promise.all(risksSnap.docs.map(async (d) => {
     const data = d.data();
+    if (!data.description) {
+      console.warn(`  [warn] risks/${d.id} has no description -- skipping rather than fabricating substantive content`);
+      return null;
+    }
     const id = await mapId('risks', d.id);
     riskIdMap.set(d.id, id);
     return camelToRow({
@@ -431,9 +476,9 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
       periodId: data.periodId,
       enterpriseAttributes: data.enterpriseAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('risks', riskRows);
 
   const recordRows: Record<string, unknown>[] = [];
@@ -450,7 +495,7 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
         probability: data.probability, minImpactAmount: data.minImpactAmount ?? 0,
         mostLikelyImpactAmount: data.mostLikelyImpactAmount ?? 0, maxImpactAmount: data.maxImpactAmount ?? 0,
         // betaPertImpactAmount is GENERATED -- never write it.
-        createdAt: data.createdAt, updatedAt: data.updatedAt,
+        createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       }, {}, ['beta_pert_impact_amount']));
     }
   }
@@ -469,7 +514,7 @@ async function migrateChangesAndRecords(projectId: string, newProjectId: string,
       description: data.description, status: data.status,
       enterpriseAttributes: data.enterpriseAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }));
   await loadRows('changes', changeRows);
@@ -485,7 +530,7 @@ async function migrateChangesAndRecords(projectId: string, newProjectId: string,
         costCodeId, budgetAmount: data.budgetAmount ?? 0, eacAmount: data.eacAmount ?? 0,
         enterpriseAttributes: data.enterpriseAttributes ?? {},
         projectAttributes: data.projectAttributes ?? {},
-        createdAt: data.createdAt, updatedAt: data.updatedAt,
+        createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       }));
     }
   }
@@ -503,7 +548,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
       id, projectId: newProjectId, ruleCode: data.ruleId, description: data.description,
       packageId: null, // resolved after packages are migrated, if needed
       userField1: data.userField1, userField2: data.userField2, userField3: data.userField3,
-      userField4: data.userField4, userField5: data.userField5, createdAt: data.createdAt,
+      userField4: data.userField4, userField5: data.userField5, createdAt: orNow(data.createdAt),
     });
   }));
   await loadRows('rules_of_credit', ruleRows);
@@ -532,7 +577,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
       unit: data.unit, attributes: data.attributes ?? {},
       defaultStartDate: data.defaultStartDate, defaultEndDate: data.defaultEndDate,
       defaultPhasingMethod: data.defaultPhasingMethod, defaultPhasingCurve: data.defaultPhasingCurve,
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }));
   await loadRows('progress_packages', packageRows);
@@ -557,7 +602,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
         currentStartDate: data.currentStartDate, currentEndDate: data.currentEndDate,
         currentPhasingMethod: data.currentPhasingMethod, currentPhasingCurve: data.currentPhasingCurve,
         currentPeriodValues: data.currentPeriodValues ?? {}, actualPeriodValues: data.actualPeriodValues ?? {},
-        sortOrder: data.sortOrder, createdAt: data.createdAt, updatedAt: data.updatedAt,
+        sortOrder: data.sortOrder, createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       }));
     }
   }
@@ -569,7 +614,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
     return camelToRow({
       id: await mapId('progressReportingPeriods', d.id), projectId: newProjectId,
       periodName: data.periodName, startDate: data.startDate, endDate: data.endDate,
-      status: data.status ?? 'Open', createdAt: data.createdAt,
+      status: data.status ?? 'Open', createdAt: orNow(data.createdAt),
     });
   }));
   await loadRows('progress_reporting_periods', periodRows);
@@ -596,7 +641,7 @@ async function migrateScheduleItems(projectId: string, newProjectId: string): Pr
       baselineStartDate: data.baselineStartDate, baselineEndDate: data.baselineEndDate,
       plannedStartDate: data.plannedStartDate, plannedEndDate: data.plannedEndDate,
       currentStartDate: data.currentStartDate, currentEndDate: data.currentEndDate,
-      updatedAt: data.updatedAt,
+      updatedAt: orNow(data.updatedAt),
     });
   }));
   await loadRows('schedule_items', rows);
@@ -613,7 +658,7 @@ async function migrateProcurementItems(projectId: string, newProjectId: string, 
       category: data.category,
       enterpriseAttributes: data.enterpriseAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
-      stepData: data.stepData ?? {}, createdAt: data.createdAt, updatedAt: data.updatedAt,
+      stepData: data.stepData ?? {}, createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }));
   await loadRows('procurement_items', rows);
@@ -640,7 +685,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
       forecastChanges: data.forecastChanges,
       enterpriseSubcontractAttributes: data.enterpriseSubcontractAttributes ?? {},
       projectAttributes: data.projectAttributes ?? {},
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       // createdBy (auth.users FK) intentionally left null for now.
     });
   }));
@@ -684,7 +729,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
       submittedDate: data.submittedDate, certifiedDate: data.certifiedDate, paymentDate: data.paymentDate,
       status: data.status ?? 'Draft', initiator: data.initiator, vendorId,
       totalAmount: data.totalAmount ?? 0, certifiedAmount: data.certifiedAmount ?? 0,
-      createdAt: data.createdAt, updatedAt: data.updatedAt,
+      createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
   }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('invoices', invoiceRows);
@@ -728,39 +773,69 @@ async function migrateAuditLogs(projectId: string, newProjectId: string, newEnte
 
 // ---- Orchestration ----
 
+const failures: Array<{ step: string; error: string }> = [];
+
+// One collection's data-quality surprise (a not-null violation, a bad type,
+// etc.) used to abort the entire run at the first hit -- every fix meant
+// another full round-trip. This runs every step to completion regardless,
+// logging failures instead of throwing, and returns the fallback so
+// downstream steps that depend on this one's output degrade gracefully
+// (e.g. everything referencing cost codes just finds no matches and skips,
+// rather than crashing on an undefined map) instead of also aborting.
+async function safeStep<T>(label: string, fallback: T, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`  [FAILED] ${label}: ${message}`);
+    failures.push({ step: label, error: message });
+    return fallback;
+  }
+}
+
 async function migrateProjectFull(projectId: string): Promise<void> {
   console.log(`\n=== Project ${projectId} ===`);
   const projSnap = await firestore.collection('projects').doc(projectId).get();
   if (!projSnap.exists) { console.log('  not found, skipping'); return; }
   const enterpriseFirestoreId = projSnap.data()!.enterpriseId;
 
-  await migrateEnterprise(enterpriseFirestoreId);
-  const { enterpriseId: newEnterpriseId } = await migrateProject(projectId);
+  await safeStep('enterprise', undefined, () => migrateEnterprise(enterpriseFirestoreId));
+  const { enterpriseId: newEnterpriseId } = await safeStep('project', { enterpriseId: '' }, () => migrateProject(projectId));
   const newProjectId = await mapId('projects', projectId);
 
-  await migrateCalendars(projectId, newProjectId);
+  await safeStep('calendars', undefined, () => migrateCalendars(projectId, newProjectId));
   const calendarsSnap = await firestore.collection('calendars').where('projectId', '==', projectId).get();
   const calendarIdMap = new Map<string, string>();
   for (const d of calendarsSnap.docs) calendarIdMap.set(d.id, await mapId('calendars', d.id));
 
-  await migrateProcurementStepDefinitions(projectId, newProjectId);
-  const { idMap: costCodeIdMap, codeMap: costCodeCodeMap } = await migrateCostCodes(projectId, newProjectId);
-  const sheetsIdMap = await migrateSheets(projectId, newProjectId);
-  await migrateForecastRows(sheetsIdMap);
+  await safeStep('procurementStepDefinitions', undefined, () => migrateProcurementStepDefinitions(projectId, newProjectId));
+  const { idMap: costCodeIdMap, codeMap: costCodeCodeMap } = await safeStep(
+    'costCodes', { idMap: new Map<string, string>(), codeMap: new Map<string, string>() },
+    () => migrateCostCodes(projectId, newProjectId)
+  );
+  const sheetsIdMap = await safeStep('sheets', new Map<string, string>(), () => migrateSheets(projectId, newProjectId));
+  await safeStep('forecastRows', undefined, () => migrateForecastRows(sheetsIdMap));
 
-  await migrateEtcDetails(projectId, newProjectId, costCodeIdMap, costCodeCodeMap);
-  await migrateActualCosts(projectId, newProjectId, costCodeIdMap, costCodeCodeMap);
-  await migrateBaselineBudgets(projectId, newProjectId, costCodeIdMap, costCodeCodeMap);
-  await migrateCostPhasing(projectId, newProjectId, costCodeIdMap, costCodeCodeMap);
-  await migratePeriodSnapshots(projectId, newProjectId);
+  await safeStep('etcDetails', undefined, () => migrateEtcDetails(projectId, newProjectId, costCodeIdMap, costCodeCodeMap));
+  await safeStep('actualCosts', undefined, () => migrateActualCosts(projectId, newProjectId, costCodeIdMap, costCodeCodeMap));
+  await safeStep('baselineBudgets', undefined, () => migrateBaselineBudgets(projectId, newProjectId, costCodeIdMap, costCodeCodeMap));
+  await safeStep('costPhasing', undefined, () => migrateCostPhasing(projectId, newProjectId, costCodeIdMap, costCodeCodeMap));
+  await safeStep('periodSnapshots', undefined, () => migratePeriodSnapshots(projectId, newProjectId));
 
-  await migrateRisksAndRecords(projectId, newProjectId, costCodeIdMap);
-  await migrateChangesAndRecords(projectId, newProjectId, costCodeIdMap);
-  await migrateProgressDomain(projectId, newProjectId, costCodeIdMap);
-  await migrateScheduleItems(projectId, newProjectId);
-  await migrateProcurementItems(projectId, newProjectId, calendarIdMap);
-  await migrateSubcontractsInvoicesAndLineItems(projectId, newProjectId, newEnterpriseId, costCodeIdMap);
-  await migrateAuditLogs(projectId, newProjectId, newEnterpriseId);
+  await safeStep('risksAndRecords', undefined, () => migrateRisksAndRecords(projectId, newProjectId, costCodeIdMap));
+  await safeStep('changesAndRecords', undefined, () => migrateChangesAndRecords(projectId, newProjectId, costCodeIdMap));
+  await safeStep('progressDomain', undefined, () => migrateProgressDomain(projectId, newProjectId, costCodeIdMap));
+  await safeStep('scheduleItems', undefined, () => migrateScheduleItems(projectId, newProjectId));
+  await safeStep('procurementItems', undefined, () => migrateProcurementItems(projectId, newProjectId, calendarIdMap));
+  await safeStep(
+    'subcontractsInvoicesAndLineItems', undefined,
+    () => migrateSubcontractsInvoicesAndLineItems(projectId, newProjectId, newEnterpriseId, costCodeIdMap)
+  );
+  await safeStep('auditLogs', undefined, () => migrateAuditLogs(projectId, newProjectId, newEnterpriseId));
+
+  if (failures.length > 0) {
+    console.log(`\n=== ${failures.length} step(s) failed for this project (see [FAILED] lines above) ===`);
+  }
 }
 
 async function verify(): Promise<void> {
@@ -787,6 +862,12 @@ async function main(): Promise<void> {
   }
 
   await verify();
+
+  if (failures.length > 0) {
+    console.log(`\n=== TOTAL: ${failures.length} failure(s) across this run ===`);
+    for (const f of failures) console.log(`  - ${f.step}: ${f.error}`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch((err) => {
