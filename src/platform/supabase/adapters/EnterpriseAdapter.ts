@@ -163,15 +163,29 @@ export class PostgresEnterpriseAdapter implements EnterpriseRepository {
   }
 
   async create(data: Omit<Enterprise, 'id'>): Promise<Enterprise> {
-    const { adminUsers, users: _users, ...rest } = data;
-    const row = toRow<EnterpriseInsert>(rest);
-    const { data: inserted, error } = await supabase.from('enterprises').insert(row).select().single();
+    const { adminUsers, users: _users, name, theme, logoURL } = data;
+    // A brand-new enterprise has no enterprise_members row yet, so a plain
+    // insert().select() (RETURNING under the hood) fails RLS even though the
+    // insert itself is allowed -- Postgres checks RETURNING against the
+    // SELECT policy too, and reports it with the exact same error as an
+    // INSERT policy failure. create_enterprise_with_admins() creates the
+    // enterprise and its first admin membership atomically as one
+    // SECURITY DEFINER call (see supabase/migrations/0034), so there's no
+    // window where the row exists without anyone able to see it -- and no
+    // general-purpose "zero members means it's new" policy loophole either.
+    const { data: created, error } = await supabase.rpc('create_enterprise_with_admins', {
+      p_name: name,
+      p_theme: theme,
+      p_logo_url: logoURL ?? null,
+      p_admin_user_ids: adminUsers?.length ? adminUsers : null,
+    });
     if (error) throw error;
-    if (adminUsers?.length) {
-      const memberRows = adminUsers.map((uid) => ({ enterprise_id: inserted.id, user_id: uid, role: 'admin' as const }));
-      const { error: memberError } = await supabase.from('enterprise_members').insert(memberRows);
-      if (memberError) throw memberError;
-    }
-    return attachMembers(fromRow<Enterprise>(inserted));
+    const { data: fetched, error: fetchError } = await supabase
+      .from('enterprises')
+      .select()
+      .eq('id', created.id)
+      .single();
+    if (fetchError) throw fetchError;
+    return attachMembers(fromRow<Enterprise>(fetched));
   }
 }

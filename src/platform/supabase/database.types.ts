@@ -2209,6 +2209,44 @@ export type Database = {
     Functions: {
       can_access_enterprise: { Args: { ent_id: string }; Returns: boolean }
       can_access_project: { Args: { proj_id: string }; Returns: boolean }
+      create_enterprise_with_admins: {
+        Args: {
+          p_admin_user_ids?: string[]
+          p_logo_url?: string
+          p_name: string
+          p_theme?: string
+        }
+        Returns: {
+          categories: string[]
+          change_attributes: Json
+          change_types: string[]
+          control_accounts: string[]
+          cost_code_attributes: Json
+          cost_elements: Json
+          created_at: string
+          enterprise_code: string | null
+          id: string
+          line_item_attributes: Json
+          logo_url: string | null
+          name: string
+          order_numbers: string[]
+          procurement_attributes: Json
+          progress_attributes: Json
+          project_attributes: Json
+          resource_rates: Json
+          risk_attributes: Json
+          risk_types: string[]
+          subcontract_attributes: Json
+          theme: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "enterprises"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       is_enterprise_admin: { Args: { ent_id: string }; Returns: boolean }
       is_platform_admin: { Args: never; Returns: boolean }
       is_project_admin: { Args: { proj_id: string }; Returns: boolean }
