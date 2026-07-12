@@ -761,7 +761,7 @@ export type Database = {
           id: string
           invited_by: string | null
           invited_email: string
-          role: Database["public"]["Enums"]["enterprise_member_role"]
+          role: Database["public"]["Enums"]["enterprise_member_role"] | null
           status: string
           token: string
         }
@@ -773,7 +773,7 @@ export type Database = {
           id?: string
           invited_by?: string | null
           invited_email: string
-          role?: Database["public"]["Enums"]["enterprise_member_role"]
+          role?: Database["public"]["Enums"]["enterprise_member_role"] | null
           status?: string
           token: string
         }
@@ -785,7 +785,7 @@ export type Database = {
           id?: string
           invited_by?: string | null
           invited_email?: string
-          role?: Database["public"]["Enums"]["enterprise_member_role"]
+          role?: Database["public"]["Enums"]["enterprise_member_role"] | null
           status?: string
           token?: string
         }

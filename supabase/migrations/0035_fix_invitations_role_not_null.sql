@@ -1,0 +1,11 @@
+-- invitations.role is NOT NULL, but createInvitation() -- the port
+-- interface, both the Postgres and Firestore adapters, and the one real UI
+-- caller (UsersTab.tsx) -- never supplies a role at all. Confirmed against
+-- the original Firestore behavior too: the invitation doc never had a role
+-- field, and /api/accept-invite (server.ts) hardcodes the joining member's
+-- role to "Enterprise User" itself at acceptance time, ignoring whatever
+-- the invitation might contain. The column is vestigial from the domain's
+-- perspective; every real invitation created through the app would violate
+-- this constraint. Relaxing rather than inventing a default the domain
+-- model never established.
+alter table invitations alter column role drop not null;
