@@ -4,6 +4,7 @@ import { PostgresProjectAdapter } from '../../src/platform/supabase/adapters/Pro
 import {
   addEnterpriseMember,
   addProjectMember,
+  adminClient,
   cleanupEnterprise,
   createFixtureEnterprise,
   createTestUser,
@@ -27,6 +28,13 @@ describe('PostgresProjectAdapter', () => {
     projectUser = await createTestUser('proj-user');
     outsider = await createTestUser('proj-outsider');
     userIds.push(enterpriseAdmin.id, projectUser.id, outsider.id);
+    // resolveUserId() (used by list()'s email-scoped path) looks up
+    // user_profiles by email, which createTestUser doesn't populate.
+    const { error: profilesError } = await adminClient.from('user_profiles').insert([
+      { user_id: enterpriseAdmin.id, email: enterpriseAdmin.email },
+      { user_id: outsider.id, email: outsider.email },
+    ]);
+    if (profilesError) throw profilesError;
 
     enterpriseId = await createFixtureEnterprise('Project Test Enterprise');
     enterpriseIds.push(enterpriseId);
@@ -101,6 +109,34 @@ describe('PostgresProjectAdapter', () => {
     await adapter.update(created.id, { projectName: 'Test Project Delta Renamed' });
     const fetched = await adapter.get(created.id);
     expect(fetched?.projectName).toBe('Test Project Delta Renamed');
+  });
+
+  it('list() with an empty userEmail returns every project in the enterprise, not none -- matches the original Firestore falsy-check behavior', async () => {
+    await signInAs(supabase, enterpriseAdmin);
+    const created = await adapter.create({
+      enterpriseId,
+      projectName: 'Test Project Zeta',
+      projectCode: 'TPZ-001',
+      users: { [enterpriseAdmin.id]: 'Project Admin' },
+    } as never);
+
+    const all = await adapter.list(enterpriseId, '');
+    expect(all.map((p) => p.id)).toContain(created.id);
+  });
+
+  it('list() with a real userEmail filters to that user\'s project memberships', async () => {
+    await signInAs(supabase, enterpriseAdmin);
+    const created = await adapter.create({
+      enterpriseId,
+      projectName: 'Test Project Eta',
+      projectCode: 'TPE-2-001',
+      users: { [enterpriseAdmin.id]: 'Project Admin' },
+    } as never);
+
+    const scoped = await adapter.list(enterpriseId, enterpriseAdmin.email);
+    expect(scoped.map((p) => p.id)).toContain(created.id);
+    const scopedToOutsider = await adapter.list(enterpriseId, outsider.email);
+    expect(scopedToOutsider.map((p) => p.id)).not.toContain(created.id);
   });
 
   it('lets the enterprise admin delete the project', async () => {

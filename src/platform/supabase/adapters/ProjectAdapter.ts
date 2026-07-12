@@ -31,6 +31,15 @@ export class PostgresProjectAdapter implements ProjectRepository {
   }
 
   async list(enterpriseId: string, userEmail: string): Promise<Project[]> {
+    // Matches the original Firestore adapter: an empty/falsy userEmail means
+    // "no member filter -- return every project in the enterprise" (callers
+    // like EnterpriseDashboard.tsx pass '' deliberately and do their own
+    // admin-vs-member filtering afterward). The Postgres port dropped this
+    // branch and always filtered by membership, so an empty string resolved
+    // to no user and silently returned nothing for every caller relying on
+    // the "give me everything" behavior -- e.g. the enterprise admin's own
+    // "Active Projects" grid never showing newly created projects.
+    if (!userEmail) return this.listByEnterprise(enterpriseId);
     const userId = await resolveUserId(userEmail);
     if (!userId) return [];
     const { data: memberships } = await supabase.from('project_members').select('project_id').eq('user_id', userId);
