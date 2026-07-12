@@ -1128,3 +1128,77 @@ project and re-verified with `list_tables`/`get_advisors` before moving on
 
 Build the ETL script next, now that both the schema and the adapters it
 needs to write to for the "load" phase are in place and verified.
+
+## 2026-07-12 (continued) — ETL script written, blocked from live testing by the same recurring Firestore quota issue
+
+Finishes the piece Bernard asked for: "ETL please, and postgres adapters."
+Adapters were done in the prior entry; this one is the ETL script itself.
+
+**`scripts/etl-firestore-to-postgres.ts`** -- read -> map ids -> transform
+-> load -> verify, per POSTGRES_MIGRATION_PLAN.md's design. Deliberately
+scoped to exclude every table with a required (not null) FK to
+`auth.users` -- `enterprise_members`, `project_members`, `user_profiles`,
+`user_roles`, `cost_code_assigned_users`, `saved_views` can't be migrated
+correctly until the Firebase Auth -> Supabase Auth user migration has
+actually happened (still gated on Tarek's sign-off on the forced-
+password-reset UX). Nullable user FKs (`created_by`, `modified_by`,
+`actor_user_id`) are populated as null for now, with a documented
+follow-up backfill once real user-id mappings exist. Every other
+collection is migrated in full, in correct dependency order.
+
+ID strategy matches the plan doc exactly: every Firestore doc gets a
+fresh UUID recorded in `etl.id_mappings` (its own schema, not `public`,
+so it's never exposed via the app's REST API), making re-runs idempotent
+-- an already-migrated doc gets its existing UUID back rather than a new
+one. Default mode is report-only; `--apply` is required to actually write.
+
+**Caught and fixed a real design inconsistency before it shipped**: the
+id-mapping helper was writing to `etl.id_mappings` regardless of
+`--apply`, contradicting the script's own "report-only never writes to
+Postgres" claim. Fixed by making report-only mode generate ephemeral,
+in-memory-only ids (`crypto.randomUUID()`, never persisted) instead --
+only `--apply` runs touch the mapping table for real.
+
+Reused `caseConvert.ts` (the same camelCase/snake_case utility written for
+the adapters) directly in this Node script rather than duplicating field-
+mapping logic a third time -- it's plain TS with no browser dependencies,
+so it works unchanged outside the app.
+
+**Blocked from live testing**: needed the Supabase service role key to
+even dry-run the script (RLS has no real Supabase Auth users yet to
+authenticate the anon key as, so even report-only reads would return
+nothing without it) -- asked Bernard to set it as a local env var rather
+than pasting the secret into chat, which he did. Ran the script in
+report-only mode against a single small project
+(`HVhKyBcq57Gxl256zMqo`) to validate the pipeline for real, and hit the
+exact same Firestore free-tier quota exhaustion that's recurred across
+the last three days of this work. The failure happened deep inside a real
+Firestore call (not a config/auth error), which at least confirms the
+connection setup itself is correct -- just blocked from proving the
+read/transform logic against live data by something outside my control.
+
+Verified everything that doesn't require live Firestore data:
+`tsc --noEmit` clean, `npm run lint` clean, `npx vitest run` 262/262
+(unaffected, no src/ changes this pass), cleaned up two rough edges found
+while re-reading the script before committing (a `(fn as any)._codeMap`
+side-channel hack replaced with a proper return type, one genuinely
+unused variable removed).
+
+### What's NOT done yet
+
+- Never actually run against live Firestore data -- correctness of the
+  read/transform logic is reviewed but unverified end-to-end.
+- The membership tables (enterprise_members, project_members,
+  user_profiles, user_roles, cost_code_assigned_users, saved_views) have
+  no migration path yet at all -- deliberately deferred, not forgotten,
+  pending the auth migration.
+- No backfill mechanism yet for created_by/modified_by/actor_user_id once
+  user-id mappings do exist.
+
+### What to do next
+
+Retry the ETL script once the Firestore quota resets (unclear timing,
+same open question as the last three days) to get a real end-to-end
+validation. This closes out everything Bernard asked for this session --
+next real decision point is either the auth migration (needs Tarek) or
+holding here until the quota situation is resolved.
