@@ -818,3 +818,70 @@ afterward; memory adapter data was in-process only, nothing to clean up.
 - Firestore quota: retry `npx tsx scripts/normalize-costcode-fk.ts --all-projects`
   again later - still don't know the actual reset schedule.
 - Everything else from the prior two entries is unchanged and still open.
+
+## 2026-07-12 (continued) — Postgres migration: core + cost-management schema, validated
+
+First real implementation slice of POSTGRES_MIGRATION_PLAN.md, per Bernard's
+"let's implement." Scoped this to core identity/membership (enterprises,
+projects, memberships, user_profiles) plus the cost-management domain —
+the one that actually motivated the whole migration — rather than
+attempting all 26 collections in one unreviewed pass.
+
+Provisioned a scratch Supabase project (`mend-migration-scratch`,
+$10/month, confirmed with Bernard before creating) specifically to validate
+the schema/RLS pattern for real before committing to it across the rest of
+the domains.
+
+**Applied and verified against a live Postgres instance** (not just written
+and hoped): 14 tables, every membership relationship (enterprise/project)
+as a real join table replacing Firestore's array/map fields, every FK a
+real `REFERENCES` constraint, RLS enabled on every table with policies
+translated directly from `firestore.rules` (read all 579 lines to keep
+authorization behavior from drifting during the migration).
+
+Deliberately excluded `cost_codes.approvedBudget` / `actualCostToDate` /
+`estimateAtCompletion` / `costVariance` / `budgetChanges` as stored
+columns — those were made compute-on-read by the Phase 13.B1 (F1) fix, so
+the schema now *enforces* the single-source-of-truth rule at the DB layer
+by simply not giving those fields anywhere to drift. Kept the
+`*Previous`/`*Movement` snapshot-cache fields as real columns, matching
+current Firestore behavior exactly — a data-layer migration isn't the
+place to redesign the period-close feature.
+
+**Ran the Supabase advisor tools and fixed everything real they found**,
+rather than treating "it applied without erroring" as good enough:
+- Security: `SECURITY DEFINER` functions had a mutable search_path (a real
+  hijacking risk); the RLS helper functions were directly callable via the
+  public REST API when they should only be used internally by policies.
+  Both fixed — security advisor is now clean (0 findings).
+- Performance: several FK columns had no covering index; two
+  `user_profiles` policies re-evaluated `auth.uid()` per row instead of
+  once; the enterprise/project/member "admin" policies used `for all`,
+  which overlaps with the plain read policy on SELECT (Postgres evaluates
+  every permissive policy for a role+action, even redundant ones). Fixed
+  all three — remaining advisor output is just expected noise (indexes
+  flagged "unused" on a zero-row scratch database, an unrelated Auth
+  connection-strategy setting).
+
+Kept the advisor-driven fixes as their own migration files (0003, 0004)
+rather than rewriting 0001/0002 in place — the history should honestly
+show what was actually caught and when, matching how this project's
+journal entries already work.
+
+### What's NOT done yet
+
+- The other ~20 collections (risk, change, subcontracts, invoices,
+  progress, procurement, schedule, calendars, saved views, audit logs) —
+  scoped out of this pass deliberately, to check in before continuing
+  through the same pattern 20 more times.
+- No ETL script yet, no Postgres adapters, no auth migration tooling.
+- The vendor-by-email RLS edge case from the plan doc is still an open
+  design question, not yet touched.
+
+### What to do next
+
+Check in with Bernard: continue mechanically through the remaining
+domains using this now-validated pattern (join tables for memberships,
+compute-on-read fields excluded from storage, RLS translated from
+firestore.rules, advisor-clean before moving on), or pause for review of
+this slice first.
