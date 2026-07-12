@@ -74,15 +74,25 @@ export class PostgresProjectAdapter implements ProjectRepository {
   async create(data: Omit<Project, 'id' | 'dateCreated' | 'dateLastModified'>): Promise<Project> {
     const { users, ...rest } = data;
     const row = toRow<ProjectInsert>(rest);
-    const { data: inserted, error } = await supabase.from('projects').insert(row).select().single();
+    // insert().select() (RETURNING under the hood) can fail RLS here even
+    // though both the insert and a same-row select immediately afterward
+    // (as two separate statements) succeed -- can_access_project() re-queries
+    // projects by id, and within a single RETURNING command that subquery
+    // doesn't reliably see the row it's part of inserting yet. Splitting into
+    // a bare insert followed by a separate select avoids it (see the
+    // matching fix and longer note in EnterpriseAdapter.create()).
+    const id = crypto.randomUUID();
+    const { error } = await supabase.from('projects').insert({ ...row, id });
     if (error) throw error;
     const memberRows = Object.entries(users ?? {}).map(([userId, role]) => ({
-      project_id: inserted.id, user_id: userId, role,
+      project_id: id, user_id: userId, role,
     }));
     if (memberRows.length > 0) {
       const { error: memberError } = await supabase.from('project_members').insert(memberRows);
       if (memberError) throw memberError;
     }
+    const { data: inserted, error: fetchError } = await supabase.from('projects').select().eq('id', id).single();
+    if (fetchError) throw fetchError;
     return attachMembers(fromRow<Project>(inserted));
   }
 
