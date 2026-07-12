@@ -11,6 +11,18 @@ import { ScheduleAdapter } from './adapters/ScheduleAdapter';
 import { UtilityAdapter } from './adapters/UtilityAdapter';
 import { AuthAdapter } from './adapters/AuthAdapter';
 import { UserRoleAdapter } from './adapters/UserRoleAdapter';
+import { PostgresEnterpriseAdapter } from '../supabase/adapters/EnterpriseAdapter';
+import { PostgresProjectAdapter } from '../supabase/adapters/ProjectAdapter';
+import { PostgresCostAdapter } from '../supabase/adapters/CostAdapter';
+import { PostgresChangeAdapter } from '../supabase/adapters/ChangeAdapter';
+import { PostgresRiskAdapter } from '../supabase/adapters/RiskAdapter';
+import { PostgresSubcontractAdapter } from '../supabase/adapters/SubcontractAdapter';
+import { PostgresProgressAdapter } from '../supabase/adapters/ProgressAdapter';
+import { PostgresProcurementAdapter } from '../supabase/adapters/ProcurementAdapter';
+import { PostgresScheduleAdapter } from '../supabase/adapters/ScheduleAdapter';
+import { PostgresUtilityAdapter } from '../supabase/adapters/UtilityAdapter';
+import { PostgresAuthAdapter } from '../supabase/adapters/AuthAdapter';
+import { PostgresUserRoleAdapter } from '../supabase/adapters/UserRoleAdapter';
 import {
   MemoryAuthAdapter, MemoryEnterpriseAdapter, MemoryProjectAdapter,
   MemoryCostAdapter, MemoryChangeAdapter, MemoryRiskAdapter,
@@ -48,27 +60,48 @@ interface Platform {
 
 const PlatformContext = createContext<Platform | null>(null);
 
-const USE_MEMORY = (import.meta as any).env?.VITE_ADAPTER === 'memory';
+const VITE_ADAPTER = (import.meta as any).env?.VITE_ADAPTER;
+const USE_MEMORY = VITE_ADAPTER === 'memory';
+const USE_POSTGRES = VITE_ADAPTER === 'postgres';
 
 // Populate deterministic demo fixtures once when running on the memory adapter
 // (local dev + E2E characterization tests). Idempotent.
 if (USE_MEMORY) seedMemory();
 
-export function FirestoreProvider({ children }: { children: React.ReactNode }) {
-  const platform = useMemo<Platform>(() => USE_MEMORY ? ({
-    enterprise: new MemoryEnterpriseAdapter(),
-    project: new MemoryProjectAdapter(),
-    cost: new MemoryCostAdapter(),
-    change: new MemoryChangeAdapter(),
-    risk: new MemoryRiskAdapter(),
-    subcontract: new MemorySubcontractAdapter(),
-    progress: new MemoryProgressAdapter(),
-    procurement: new MemoryProcurementAdapter(),
-    schedule: new MemoryScheduleAdapter(),
-    utility: new MemoryUtilityAdapter(),
-    auth: new MemoryAuthAdapter(),
-    userRole: new MemoryUserRoleAdapter(),
-  } as unknown as Platform) : ({
+function buildPlatform(): Platform {
+  if (USE_MEMORY) {
+    return {
+      enterprise: new MemoryEnterpriseAdapter(),
+      project: new MemoryProjectAdapter(),
+      cost: new MemoryCostAdapter(),
+      change: new MemoryChangeAdapter(),
+      risk: new MemoryRiskAdapter(),
+      subcontract: new MemorySubcontractAdapter(),
+      progress: new MemoryProgressAdapter(),
+      procurement: new MemoryProcurementAdapter(),
+      schedule: new MemoryScheduleAdapter(),
+      utility: new MemoryUtilityAdapter(),
+      auth: new MemoryAuthAdapter(),
+      userRole: new MemoryUserRoleAdapter(),
+    } as unknown as Platform;
+  }
+  if (USE_POSTGRES) {
+    return {
+      enterprise: new PostgresEnterpriseAdapter(),
+      project: new PostgresProjectAdapter(),
+      cost: new PostgresCostAdapter(),
+      change: new PostgresChangeAdapter(),
+      risk: new PostgresRiskAdapter(),
+      subcontract: new PostgresSubcontractAdapter(),
+      progress: new PostgresProgressAdapter(),
+      procurement: new PostgresProcurementAdapter(),
+      schedule: new PostgresScheduleAdapter(),
+      utility: new PostgresUtilityAdapter(),
+      auth: new PostgresAuthAdapter(),
+      userRole: new PostgresUserRoleAdapter(),
+    };
+  }
+  return {
     enterprise: new EnterpriseAdapter(),
     project: new ProjectAdapter(),
     cost: new CostAdapter(),
@@ -81,7 +114,11 @@ export function FirestoreProvider({ children }: { children: React.ReactNode }) {
     utility: new UtilityAdapter(),
     auth: new AuthAdapter(),
     userRole: new UserRoleAdapter(),
-  }), []);
+  };
+}
+
+export function FirestoreProvider({ children }: { children: React.ReactNode }) {
+  const platform = useMemo<Platform>(() => buildPlatform(), []);
 
   return <PlatformContext.Provider value={platform}>{children}</PlatformContext.Provider>;
 }

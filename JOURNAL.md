@@ -1032,3 +1032,99 @@ Bernard's choice on order. Also worth deciding whether to reconcile
 POSTGRES_MIGRATION_PLAN.md's original schema sketch (still shows the old
 `_id` column names) once that branch/PR merges -- it wasn't reachable from
 this branch to update now.
+
+## 2026-07-12 (continued) — all 12 Postgres adapters written, 10 real schema bugs found and fixed
+
+Per Bernard's "ETL please, and postgres adapters. Let's finish this off" --
+tackled the adapters first since building them meant reading every
+Firestore adapter's real behavior line-by-line, which turned into the most
+rigorous verification pass the schema has had yet.
+
+**All 12 ports now have a Postgres adapter** (`src/platform/supabase/adapters/`),
+matching the Firestore adapters' exact method signatures and behavior:
+Risk, Change, Schedule (+ Calendar), Utility, UserRole, Procurement,
+Progress, Cost (the biggest -- cost codes, sheets, forecast rows, ETC
+details, actual costs, baseline budgets, cost phasing), Enterprise,
+Project, Subcontract (+ Invoice), and Auth. Wired a third `postgres` case
+into the composition root (`context.tsx`) alongside memory/firestore,
+selected the same way via `VITE_ADAPTER`.
+
+Built a shared `caseConvert.ts` utility (camelCase <-> snake_case,
+following the same boundary-assertion pattern as the existing
+`firestore/converters.ts::fromDoc<T>`) and generated real TypeScript types
+from the live schema via Supabase's own generator, rather than hand-typing
+35 tables -- regenerated after every schema fix so the adapters were
+always checked against the actual current schema, not a stale guess.
+
+**Reading the real adapters line-by-line surfaced 10 genuine schema bugs**,
+not just style issues -- none would have been caught by the advisor, since
+they're all shape mismatches, not lint-detectable problems:
+- `etc_details` and `sheets` were missing nearly all of their real columns
+  (migration 0002 guessed at both before the domain types were fully
+  read) -- etc_details was missing `project_id` entirely, which the
+  Firestore adapter queries directly.
+- `enterprises` and `projects` were each missing ~20 real columns
+  (attribute-definition lists, budget/date fields, audit fields) --
+  caught by a `theme` field triggering a type error, which prompted a full
+  cross-check of both tables rather than patching just that one field.
+- `cost_phasing` was missing a direct `project_id` column -- the Firestore
+  adapter filters by projectId and costCodeId as two independent top-level
+  fields, not via a cost_code join.
+- `invitations` was missing `token` and `enterpriseName` (the field
+  enabling the whole accept-invite flow).
+- `period_snapshots`' shape didn't match the real `PeriodSnapshot` type at
+  all (period_id/period_name/costCodes[], not period/cost_code_summaries).
+- A `forecast_rows` table didn't exist yet (Firestore stores it as a
+  `sheets/{id}/rows` subcollection -- discovered while reading CostAdapter).
+- A `user_roles` table didn't exist -- discovered that `domain/roles.ts`'s
+  more granular role system (enterprise_admin/enterprise_member,
+  project_admin/writer/reader/guest) is genuinely separate, dormant
+  scaffolding (confirmed zero component usage via grep) from the legacy
+  Project.users/Enterprise.adminUsers fields that actually drive live
+  authorization today -- mirrored 1:1 rather than forced into the existing
+  membership tables.
+- `project_members.role` had invented values ('Project Member', 'Viewer')
+  that don't exist in the real `Project.users` type
+  (`'Project Admin' | 'Project User'`) -- fixed via its own enum migration.
+
+**ProgressItem** needed real translation logic, not just case conversion:
+its `packageId` (human-facing, denormalized in Firestore since it can't
+easily join) is now derived via a real Postgres join against
+`progress_packages.package_code` instead of being stored as a redundant
+copy -- Postgres can do what Firestore couldn't.
+
+**EnterpriseAdapter/ProjectAdapter** reconstruct the legacy
+`adminUsers`/`users` maps from the real `enterprise_members`/
+`project_members` tables. Documented a deliberate simplification: cached
+profile fields (email, photoURL) that used to live denormalized in the
+Firestore membership blob aren't fabricated here since they're not stored
+per-membership in the normalized schema -- callers needing them should
+read `user_profiles` directly.
+
+**AuthAdapter** has one real, unavoidable API shape mismatch:
+`getCurrentUser()` is synchronous in the port (matching Firebase's cached
+`auth.currentUser`), but Supabase's client is async-only. Solved with a
+locally-cached user kept current via `onAuthStateChange`, not a bug, just
+a genuine platform difference.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 262/262,
+`npm run build` succeeds. Every fix above was applied to the live scratch
+project and re-verified with `list_tables`/`get_advisors` before moving on
+-- security advisor stayed at 0 findings throughout.
+
+### What's NOT done yet
+
+- The ETL script itself (read -> map -> transform -> load -> verify) --
+  not started this session; ran out of runway after the adapter work
+  surfaced far more schema-fixing than expected.
+- Auth migration tooling and the `/api/accept-invite` server endpoint's
+  Supabase rewire -- both still gated on Tarek's sign-off per
+  POSTGRES_MIGRATION_PLAN.md.
+- `AuthAdapter.getLinkedProviders()` returns an empty array rather than a
+  real result -- Supabase's identity-provider list is async-only
+  (`getUserIdentities()`), documented in the adapter rather than faked.
+
+### What to do next
+
+Build the ETL script next, now that both the schema and the adapters it
+needs to write to for the "load" phase are in place and verified.
