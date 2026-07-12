@@ -623,29 +623,36 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
   }));
   await loadRows('progress_packages', packageRows);
 
+  // Single project-scoped query, filtered by packageDocId in memory below --
+  // the previous per-package compound where('projectId', ...).where('packageDocId', ...)
+  // requires a composite index that was never deployed (missing from
+  // firestore.indexes.json), so it threw FAILED_PRECONDITION on every project,
+  // silently skipping every progress item (and, since the throw happened
+  // inside migrateProgressDomain before the code below it ran, every
+  // reporting period and attribute too). This form also costs one read per
+  // project instead of one per package, which matters given the quota.
   const itemRows: Record<string, unknown>[] = [];
-  for (const [firestorePackageDocId, newPackageId] of packageIdMap) {
-    const itemsSnap = await firestore.collection('progressItems')
-      .where('projectId', '==', projectId).where('packageDocId', '==', firestorePackageDocId).get();
-    for (const d of itemsSnap.docs) {
-      const data = docData(d);
-      const costCodeId = costCodeIdMap.get(data.costCodeId);
-      if (!costCodeId) continue; // orphaned reference, skip rather than guess
-      itemRows.push(camelToRow({
-        id: await mapId('progressItems', d.id), projectId: newProjectId, packageId: newPackageId,
-        itemCode: data.itemId, activityId: data.activityId, description: data.description, costCodeId,
-        totalQty: data.totalQty ?? 0, totalQtyPrevious: data.totalQtyPrevious, earnedQtyPrevious: data.earnedQtyPrevious,
-        plannedStartDate: data.plannedStartDate, plannedEndDate: data.plannedEndDate,
-        phasingMethod: data.phasingMethod ?? 'Auto', phasingCurve: data.phasingCurve ?? 'even',
-        projectAttributes: data.projectAttributes ?? {}, enterpriseAttributes: data.enterpriseAttributes ?? {},
-        ruleOfCreditId: data.ruleOfCreditId ? ruleIdMap.get(data.ruleOfCreditId) ?? null : null,
-        ruleOfCreditProgress: data.ruleOfCreditProgress ?? {}, periodValues: data.periodValues ?? {},
-        currentStartDate: data.currentStartDate, currentEndDate: data.currentEndDate,
-        currentPhasingMethod: data.currentPhasingMethod, currentPhasingCurve: data.currentPhasingCurve,
-        currentPeriodValues: data.currentPeriodValues ?? {}, actualPeriodValues: data.actualPeriodValues ?? {},
-        sortOrder: data.sortOrder, createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
-      }));
-    }
+  const allItemsSnap = await firestore.collection('progressItems').where('projectId', '==', projectId).get();
+  for (const d of allItemsSnap.docs) {
+    const data = docData(d);
+    const newPackageId = data.packageDocId ? packageIdMap.get(data.packageDocId) : undefined;
+    if (!newPackageId) continue; // orphaned reference, skip rather than guess
+    const costCodeId = costCodeIdMap.get(data.costCodeId);
+    if (!costCodeId) continue; // orphaned reference, skip rather than guess
+    itemRows.push(camelToRow({
+      id: await mapId('progressItems', d.id), projectId: newProjectId, packageId: newPackageId,
+      itemCode: data.itemId, activityId: data.activityId, description: data.description, costCodeId,
+      totalQty: data.totalQty ?? 0, totalQtyPrevious: data.totalQtyPrevious, earnedQtyPrevious: data.earnedQtyPrevious,
+      plannedStartDate: data.plannedStartDate, plannedEndDate: data.plannedEndDate,
+      phasingMethod: data.phasingMethod ?? 'Auto', phasingCurve: data.phasingCurve ?? 'even',
+      projectAttributes: data.projectAttributes ?? {}, enterpriseAttributes: data.enterpriseAttributes ?? {},
+      ruleOfCreditId: data.ruleOfCreditId ? ruleIdMap.get(data.ruleOfCreditId) ?? null : null,
+      ruleOfCreditProgress: data.ruleOfCreditProgress ?? {}, periodValues: data.periodValues ?? {},
+      currentStartDate: data.currentStartDate, currentEndDate: data.currentEndDate,
+      currentPhasingMethod: data.currentPhasingMethod, currentPhasingCurve: data.currentPhasingCurve,
+      currentPeriodValues: data.currentPeriodValues ?? {}, actualPeriodValues: data.actualPeriodValues ?? {},
+      sortOrder: data.sortOrder, createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
+    }));
   }
   await loadRows('progress_items', itemRows);
 
