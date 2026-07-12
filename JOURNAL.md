@@ -818,3 +818,217 @@ afterward; memory adapter data was in-process only, nothing to clean up.
 - Firestore quota: retry `npx tsx scripts/normalize-costcode-fk.ts --all-projects`
   again later - still don't know the actual reset schedule.
 - Everything else from the prior two entries is unchanged and still open.
+
+## 2026-07-12 (continued) — Postgres migration: core + cost-management schema, validated
+
+First real implementation slice of POSTGRES_MIGRATION_PLAN.md, per Bernard's
+"let's implement." Scoped this to core identity/membership (enterprises,
+projects, memberships, user_profiles) plus the cost-management domain —
+the one that actually motivated the whole migration — rather than
+attempting all 26 collections in one unreviewed pass.
+
+Provisioned a scratch Supabase project (`mend-migration-scratch`,
+$10/month, confirmed with Bernard before creating) specifically to validate
+the schema/RLS pattern for real before committing to it across the rest of
+the domains.
+
+**Applied and verified against a live Postgres instance** (not just written
+and hoped): 14 tables, every membership relationship (enterprise/project)
+as a real join table replacing Firestore's array/map fields, every FK a
+real `REFERENCES` constraint, RLS enabled on every table with policies
+translated directly from `firestore.rules` (read all 579 lines to keep
+authorization behavior from drifting during the migration).
+
+Deliberately excluded `cost_codes.approvedBudget` / `actualCostToDate` /
+`estimateAtCompletion` / `costVariance` / `budgetChanges` as stored
+columns — those were made compute-on-read by the Phase 13.B1 (F1) fix, so
+the schema now *enforces* the single-source-of-truth rule at the DB layer
+by simply not giving those fields anywhere to drift. Kept the
+`*Previous`/`*Movement` snapshot-cache fields as real columns, matching
+current Firestore behavior exactly — a data-layer migration isn't the
+place to redesign the period-close feature.
+
+**Ran the Supabase advisor tools and fixed everything real they found**,
+rather than treating "it applied without erroring" as good enough:
+- Security: `SECURITY DEFINER` functions had a mutable search_path (a real
+  hijacking risk); the RLS helper functions were directly callable via the
+  public REST API when they should only be used internally by policies.
+  Both fixed — security advisor is now clean (0 findings).
+- Performance: several FK columns had no covering index; two
+  `user_profiles` policies re-evaluated `auth.uid()` per row instead of
+  once; the enterprise/project/member "admin" policies used `for all`,
+  which overlaps with the plain read policy on SELECT (Postgres evaluates
+  every permissive policy for a role+action, even redundant ones). Fixed
+  all three — remaining advisor output is just expected noise (indexes
+  flagged "unused" on a zero-row scratch database, an unrelated Auth
+  connection-strategy setting).
+
+Kept the advisor-driven fixes as their own migration files (0003, 0004)
+rather than rewriting 0001/0002 in place — the history should honestly
+show what was actually caught and when, matching how this project's
+journal entries already work.
+
+### What's NOT done yet
+
+- The other ~20 collections (risk, change, subcontracts, invoices,
+  progress, procurement, schedule, calendars, saved views, audit logs) —
+  scoped out of this pass deliberately, to check in before continuing
+  through the same pattern 20 more times.
+- No ETL script yet, no Postgres adapters, no auth migration tooling.
+- The vendor-by-email RLS edge case from the plan doc is still an open
+  design question, not yet touched.
+
+### What to do next
+
+Check in with Bernard: continue mechanically through the remaining
+domains using this now-validated pattern (join tables for memberships,
+compute-on-read fields excluded from storage, RLS translated from
+firestore.rules, advisor-clean before moving on), or pause for review of
+this slice first.
+
+## 2026-07-12 (continued) — Postgres migration: complete schema, all 26 collections
+
+Continued from the core + cost-management checkpoint, per Bernard's "keep
+going." Built out the remaining ~20 collections using the now-validated
+pattern (real FKs, RLS translated from firestore.rules, compute-on-read
+fields excluded from storage, advisor-clean before moving on).
+
+**Precision problem worth recording**: reading `src/domain/types.ts` through
+the normal Read tool kept hitting aggressive content compression that
+silently stripped field names while keeping literal values -- multiple
+techniques (smaller ranges, `sed`, `awk`) hit the same wall inconsistently.
+Base64-encoding chunks before reading reliably bypassed it every time, so
+every interface used in this session's schema work was extracted that way
+and cross-checked against actual usage in components (not just the type
+comment) where the two could plausibly differ -- e.g. confirmed
+`RiskRecord.betaPertImpactAmount`'s real formula includes a probability
+factor by reading `domain/risk.ts`'s actual `betaPertExposure()` function,
+since the type comment omits it.
+
+**Domains added**: risks/risk_records, changes/change_records,
+vendors/subcontracts/subcontract_line_items/invoices/invoice_items,
+progress_packages/progress_items/progress_reporting_periods/
+progress_attributes/rules_of_credit/rule_of_credit_steps,
+procurement_step_definitions/procurement_items/schedule_items/calendars,
+saved_views, audit_logs. 35 tables total (26 collections plus join/child
+tables normalizing embedded arrays and membership maps).
+
+**Went further than "just migrate the data" in one place, on purpose**:
+`risk_records.beta_pert_impact_amount` is a real Postgres `GENERATED
+ALWAYS AS ... STORED` column, not just a copied value. CLAUDE.md flags
+this exact field as existing tech debt ("stored derived value... never
+trust as authoritative"). Since the formula only references columns on
+the same row, Postgres can enforce it can never drift, for real --
+stronger than what the current app does today.
+
+**Caught while reading Project's real fields precisely**: migration 0001's
+`project_member_role` enum had guessed values (`'Project Member'`,
+`'Viewer'`) that don't exist in the actual domain type
+(`Record<string, 'Project Admin' | 'Project User'>`). Fixed via its own
+correction migration (0005) before it was used by any RLS policy that
+would've silently never matched.
+
+**Resolved the vendor-by-email RLS open question** from
+POSTGRES_MIGRATION_PLAN.md: kept `vendor_users` as a plain email array
+(matching `Subcontract.vendorUsers` exactly, not redesigned into a real
+membership table), with a combined SELECT policy
+(`can_access_project(...) OR email in vendor_users`) plus separate
+project-member-only write policies -- avoids the "multiple permissive
+policies" issue a `for all` + `for select` pair would cause.
+
+**Real bug caught by `apply_migration` failing, not by the advisor**: a
+genuine SQL naming collision -- `invoices.invoice_id` (human-readable text
+id) and `invoice_items.invoice_id` (uuid FK) share a name, so a bare
+`invoice_id` reference inside a subquery over `invoices` silently resolved
+to the wrong (text) column via normal SQL scope shadowing, producing a
+`uuid = text` type error. Isolated by applying the migration in
+progressively smaller pieces until the exact failing statement was found,
+confirmed with a standalone `execute_sql` call showing the caret position,
+then fixed by qualifying every outer reference as `invoice_items.invoice_id`
+rather than renaming the column (keeps parity with the domain type's own
+field name).
+
+**Verified**: ran the security and performance advisors against the
+complete 35-table schema, fixed the real findings (4 missing FK indexes),
+left the expected noise (unused-index warnings on a zero-row scratch
+database, one project-level Auth connection-strategy setting unrelated to
+schema). Security advisor: 0 findings. `list_tables` confirms all 35 with
+RLS enabled.
+
+### What's NOT done yet
+
+- No ETL script, no Postgres adapters, no auth migration tooling.
+- `ProcurementItem.stepData` and several other dynamic per-key maps
+  (`period_values`, `rule_of_credit_progress`, etc.) are JSONB rather than
+  fully normalized child tables -- a deliberate, flagged tradeoff, not an
+  oversight; revisit only if step/period-level querying becomes a real
+  product need.
+- Schema hasn't been checked against a sample of real production documents
+  yet -- built from the domain type definitions and cross-referenced
+  against actual usage, but the type definitions are the source of truth
+  used, not live data.
+
+### What to do next
+
+Check in with Bernard: this closes out the schema portion of
+POSTGRES_MIGRATION_PLAN.md entirely. Next real piece of work is the ETL
+script (read -> map -> transform -> load -> verify) or the Postgres
+adapters behind the existing 12 ports -- whichever Bernard wants to tackle
+first, since both are independent of each other and could go in either
+order.
+
+## 2026-07-12 (continued) — root-caused two issues Bernard asked about before continuing
+
+Bernard asked to properly diagnose rather than keep building: the type.ts
+read-compression friction from the schema session, and whether the
+invoice_id naming collision was a one-off or something to fix at the root.
+
+**types.ts compression, diagnosed for real via `headroom_stats` rather
+than guessed**: "Headroom" is a real, active token-compression proxy that's
+been running the entire session (8,783 of 9,635 API requests compressed,
+"token" mode, ~$910/39.6% saved this session). Not a bug. It compresses
+predictable/repetitive token sequences to save cost -- exactly why a long
+TypeScript interface (dozens of near-identical `fieldName: type;` lines)
+got hit hard while literal strings/numbers survived, and exactly why
+base64-encoding a chunk before reading reliably bypassed it every time
+(near-uniform high-entropy bytes give the compressor nothing repetitive to
+exploit). Practical takeaway for future sessions needing exact field-level
+precision from a similarly repetitive file: base64 first, don't gamble on
+a small-enough byte range.
+
+**Naming collision, audited across all 11 migration files rather than
+assumed fixed**: found the identical `<parent business-id> / <child FK>`
+name collision in 3 more dormant spots -- `risks.risk_id` /
+`risk_records.risk_id`, `changes.change_id` / `change_records.change_id`,
+`progress_packages.package_id` / `progress_items.package_id` +
+`rules_of_credit.package_id`. None had triggered a visible bug yet, only
+because no policy or query happened to reference them in a colliding way
+-- structurally identical to the invoice_id case, not a different problem.
+Worth noting: the invoice_id bug failed loudly (`uuid = text` type
+mismatch) purely because the two colliding columns happened to have
+different types -- if a future case had matching types, the same shadowing
+would return silently wrong data instead of erroring.
+
+Root cause of the whole class: naming every human-facing business code
+`<entity>_id` when a child table's FK to that same parent conventionally
+*also* gets named `<entity>_id` (which is itself completely normal,
+correct FK-naming practice). Fixed at the source instead of patching each
+site: renamed every business-id column to `<entity>_code`
+(`risk_id`→`risk_code`, `change_id`→`change_code`,
+`package_id`→`package_code`, `invoice_id`→`invoice_code` on the parent
+tables) via migration 0012. Also renamed `order_id`→`order_code`,
+`rule_id`→`rule_code`, `item_id`→`item_code`, which followed the same
+risky pattern but hadn't collided with anything yet -- closing the
+landmine before a future table steps on it, not just patching the two
+that had already gone off.
+
+Verified: security advisor 0 findings, all 35 tables intact and RLS
+enabled after the rename.
+
+### What to do next
+
+Same as before this diagnostic detour: ETL script or Postgres adapters,
+Bernard's choice on order. Also worth deciding whether to reconcile
+POSTGRES_MIGRATION_PLAN.md's original schema sketch (still shows the old
+`_id` column names) once that branch/PR merges -- it wasn't reachable from
+this branch to update now.
