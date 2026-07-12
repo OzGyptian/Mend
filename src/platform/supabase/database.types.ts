@@ -257,7 +257,7 @@ export type Database = {
       }
       changes: {
         Row: {
-          change_code: string
+          change_code: string | null
           created_at: string
           description: string | null
           enterprise_attributes: Json
@@ -268,7 +268,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          change_code: string
+          change_code?: string | null
           created_at?: string
           description?: string | null
           enterprise_attributes?: Json
@@ -279,7 +279,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          change_code?: string
+          change_code?: string | null
           created_at?: string
           description?: string | null
           enterprise_attributes?: Json
@@ -984,6 +984,7 @@ export type Database = {
       period_snapshots: {
         Row: {
           cost_codes: Json
+          created_at: string
           id: string
           period_id: string
           period_name: string
@@ -991,6 +992,7 @@ export type Database = {
         }
         Insert: {
           cost_codes: Json
+          created_at?: string
           id?: string
           period_id: string
           period_name: string
@@ -998,6 +1000,7 @@ export type Database = {
         }
         Update: {
           cost_codes?: Json
+          created_at?: string
           id?: string
           period_id?: string
           period_name?: string
@@ -1021,7 +1024,7 @@ export type Database = {
           description: string
           enterprise_attributes: Json
           id: string
-          package_id: string
+          package_id: string | null
           project_attributes: Json
           project_id: string
           step_data: Json
@@ -1034,7 +1037,7 @@ export type Database = {
           description: string
           enterprise_attributes?: Json
           id?: string
-          package_id: string
+          package_id?: string | null
           project_attributes?: Json
           project_id: string
           step_data?: Json
@@ -1047,7 +1050,7 @@ export type Database = {
           description?: string
           enterprise_attributes?: Json
           id?: string
-          package_id?: string
+          package_id?: string | null
           project_attributes?: Json
           project_id?: string
           step_data?: Json
@@ -1626,12 +1629,12 @@ export type Database = {
           enterprise_attributes: Json
           id: string
           initiator: string | null
-          mitigation: number | null
+          mitigation: string | null
           period_id: string | null
           project_attributes: Json
           project_id: string
           reference: string | null
-          residual_exposure: number | null
+          residual_exposure: string | null
           risk_code: string
           status: string
           strategy: string | null
@@ -1644,12 +1647,12 @@ export type Database = {
           enterprise_attributes?: Json
           id?: string
           initiator?: string | null
-          mitigation?: number | null
+          mitigation?: string | null
           period_id?: string | null
           project_attributes?: Json
           project_id: string
           reference?: string | null
-          residual_exposure?: number | null
+          residual_exposure?: string | null
           risk_code: string
           status?: string
           strategy?: string | null
@@ -1662,12 +1665,12 @@ export type Database = {
           enterprise_attributes?: Json
           id?: string
           initiator?: string | null
-          mitigation?: number | null
+          mitigation?: string | null
           period_id?: string | null
           project_attributes?: Json
           project_id?: string
           reference?: string | null
-          residual_exposure?: number | null
+          residual_exposure?: string | null
           risk_code?: string
           status?: string
           strategy?: string | null
@@ -1724,11 +1727,11 @@ export type Database = {
           package_id: string | null
           project_id: string
           rule_code: string
-          user_field_1: string | null
-          user_field_2: string | null
-          user_field_3: string | null
-          user_field_4: string | null
-          user_field_5: string | null
+          user_field1: string | null
+          user_field2: string | null
+          user_field3: string | null
+          user_field4: string | null
+          user_field5: string | null
         }
         Insert: {
           created_at?: string
@@ -1737,11 +1740,11 @@ export type Database = {
           package_id?: string | null
           project_id: string
           rule_code: string
-          user_field_1?: string | null
-          user_field_2?: string | null
-          user_field_3?: string | null
-          user_field_4?: string | null
-          user_field_5?: string | null
+          user_field1?: string | null
+          user_field2?: string | null
+          user_field3?: string | null
+          user_field4?: string | null
+          user_field5?: string | null
         }
         Update: {
           created_at?: string
@@ -1750,11 +1753,11 @@ export type Database = {
           package_id?: string | null
           project_id?: string
           rule_code?: string
-          user_field_1?: string | null
-          user_field_2?: string | null
-          user_field_3?: string | null
-          user_field_4?: string | null
-          user_field_5?: string | null
+          user_field1?: string | null
+          user_field2?: string | null
+          user_field3?: string | null
+          user_field4?: string | null
+          user_field5?: string | null
         }
         Relationships: [
           {

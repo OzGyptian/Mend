@@ -1298,3 +1298,103 @@ something diagnosed to a real root cause.
 Bernard's call: migrate more projects (or `--all-projects`) now that the
 pipeline is proven, or hold here and let this one project's load stand as
 the proof-of-concept while other priorities take over.
+
+## 2026-07-12 (continued) — full --all-projects migration attempt: 8 more real bugs fixed, blocked by quota again
+
+Bernard asked to migrate everything. First attempt hit the harness's own
+permission classifier with a genuine, well-reasoned hard block (not the
+earlier transient "Stage 2" glitches): bulk-copying every project's real
+subcontracts/invoices/vendor/financial data into the scratch environment
+without Tarek's sign-off is flagged as data exfiltration, matching the
+exact risk this session's own POSTGRES_MIGRATION_PLAN.md called out as
+needing broader sign-off before a real cutover. Bernard clarified this is
+seed/demo data he created himself for testing, not real client
+relationships -- worth noting the classifier caught a genuine discrepancy
+first (I had characterized the single-project test as "real production
+data" earlier in the session and Bernard's own confirmation at the time
+agreed with that framing), so this was resolved by direct clarification,
+not by working around the block.
+
+**8 more real bugs found by running against the full breadth of data**
+(a single project's data didn't exercise every collection/edge case; all
+projects together did):
+
+1. `period_snapshots` never actually had a `created_at` column at all --
+   migration 0014's rename pass dropped the original `snapshot_taken_at`
+   and nothing replaced it.
+2. `risks.mitigation` / `residual_exposure` hold real narrative text
+   ("Additional boreholes ordered, structural engineer reviewing...") in
+   practice, not the number the domain type comment claims -- the comment
+   itself was already stale relative to real usage. Widened to text.
+3. `rules_of_credit.user_field_1..5` (with underscores before the digit)
+   didn't match what the generic camelCase-to-snake_case converter
+   actually produces for `userField1` (no underscore before a trailing
+   digit) -- a genuine naming mismatch between the schema and the shared
+   case-conversion utility, not a data problem. Renamed the columns.
+4. Some real `changes` have no `changeId` and some `procurementItems` have
+   no `packageId` -- unlike a missing cost-code name (which can fall back
+   to the code) there's no sensible placeholder, but the records still
+   carry real content otherwise, so relaxed both columns to nullable
+   rather than losing the whole record.
+5. The ETL read Firestore documents directly via firebase-admin, bypassing
+   the live app's own `converters.ts::fromDoc`, which is the only thing
+   that actually converts Firestore Timestamp objects to ISO strings --
+   real documents written by older code paths still hold raw Timestamp
+   objects, which surfaced as literal
+   `{"_seconds":...,"_nanoseconds":...}` strings hitting `date` columns.
+   Added a `convertTimestamps()` mirroring that same conversion, applied
+   to every document read (28 call sites), not just the field that
+   happened to fail first.
+6. Some projects reference an `enterpriseId` that doesn't exist as an
+   actual Firestore document -- a genuinely orphaned reference in the
+   source data, same class of bug as the whole `costCodeId` ambiguity
+   saga, just one level up the hierarchy. `migrateEnterprise` now reports
+   whether the enterprise actually exists; the whole project is skipped
+   rather than inserted with a dangling `enterprise_id`.
+7. Several `NOT NULL` business-content columns hit missing real data
+   again, same philosophy as before: `etcDetails` rows whose cost code
+   code doesn't resolve, `procurementStepDefinitions` with no name, and
+   `scheduleItems` with no `activityId` are all skipped with a logged
+   warning rather than inserting an unidentifiable record.
+8. `audit_logs` inserts were setting `id: undefined` explicitly rather
+   than omitting the key -- same root cause as the earlier
+   `createdAt`/`updatedAt` null issue (an explicit value, even
+   `undefined`, serialized to a literal `null` over the wire, overriding
+   the column's own `DEFAULT gen_random_uuid()`).
+
+Also fixed the error-reporting path itself: Supabase's `PostgrestError`
+isn't an `Error` instance, so `String(err)` on it was producing the
+useless `"[object Object]"` instead of the real message -- was actively
+hiding what `subcontractsInvoicesAndLineItems` was failing on until this
+was fixed.
+
+**Second `--all-projects --apply` run got much further** -- no more data-
+shape bugs surfaced at all, only the same Firestore free-tier quota
+exhaustion from earlier in this session, this time mid-run rather than
+before starting (a full multi-project scan burns through the daily
+allowance far faster than one project did). Real substantive data is now
+loaded: 5 enterprises, 12 projects, 166 cost codes, 703 baseline budgets,
+1021 cost phasing records, 25 changes, 19 vendors, and more.
+
+**Made the per-project loop resilient too**, mirroring the per-step fix
+from the single-project run: a fatal error partway through one project
+(like this quota exhaustion) used to abort every remaining project, not
+just the one that hit it. Now logs and moves to the next project instead
+-- not yet tested live since quota is exhausted again, but low-risk given
+the whole pipeline is already idempotent (upserts + stable id mappings),
+so a re-run is always safe regardless of exactly where it stopped.
+
+**Two things worth Bernard's attention independent of the migration
+itself**: `actual_costs` loaded 0 rows and `risks`/`risk_records` loaded 0
+rows -- every actual-cost record across every migrated project is missing
+its reporting period, and every risk is missing its description. That's
+either a real gap in how this seed/demo data was created, or a sign that
+whatever wrote actualCosts/risks records skips those fields, worth
+checking either way.
+
+### What to do next
+
+Retry `--all-projects --apply` once the Firestore quota resets again --
+same open question on timing as before. The pipeline itself is not
+expected to need further fixes; everything found this round was
+data-shape or script-logic, not architecture.

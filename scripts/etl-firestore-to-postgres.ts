@@ -42,7 +42,7 @@
  * client-side, same handling as FIREBASE_SERVICE_ACCOUNT_KEY).
  */
 import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import { readFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
@@ -52,6 +52,30 @@ const serviceAccount = JSON.parse(readFileSync('./scripts/service-account.json',
 const config = JSON.parse(readFileSync('./firebase-applet-config.json', 'utf8'));
 initializeApp({ credential: cert(serviceAccount), projectId: config.projectId });
 const firestore: Firestore = getFirestore(config.firestoreDatabaseId);
+
+// Mirrors src/platform/firestore/converters.ts::fromDoc's Timestamp handling.
+// The live app always reads through that converter, which turns every
+// Firestore Timestamp into an ISO string -- this ETL script reads via
+// firebase-admin directly, bypassing it entirely. Some real documents
+// still hold raw Timestamp objects (older write paths, before the field
+// was consistently written as an ISO string by the app), which surfaced
+// as literal "{"_seconds":...,"_nanoseconds":...}" objects hitting `date`
+// columns. Applied to every document read, not just the field that
+// happened to fail first.
+function convertTimestamps(value: unknown): unknown {
+  if (value instanceof Timestamp) return value.toDate().toISOString();
+  if (Array.isArray(value)) return value.map(convertTimestamps);
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = convertTimestamps(v);
+    return out;
+  }
+  return value;
+}
+
+function docData(doc: FirebaseFirestore.DocumentSnapshot | FirebaseFirestore.QueryDocumentSnapshot): Record<string, any> {
+  return convertTimestamps(doc.data() ?? {}) as Record<string, any>;
+}
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -161,10 +185,17 @@ async function loadRows(table: string, rows: Record<string, unknown>[]): Promise
 
 // ---- Per-collection migration functions, in dependency order ----
 
-async function migrateEnterprise(enterpriseId: string): Promise<void> {
+// Returns false when the enterprise doc referenced by a project doesn't
+// actually exist in Firestore -- a genuinely orphaned reference in the
+// source data (same class of bug as the costCodeId ambiguity that started
+// this whole migration, just one level up the hierarchy). Callers must
+// check this before migrating the project itself: mapId() still hands
+// back a stable uuid for a non-existent Firestore doc, so proceeding
+// anyway would insert a project with a dangling enterprise_id FK.
+async function migrateEnterprise(enterpriseId: string): Promise<boolean> {
   const snap = await firestore.collection('enterprises').doc(enterpriseId).get();
-  if (!snap.exists) return;
-  const data = snap.data()!;
+  if (!snap.exists) return false;
+  const data = docData(snap)!;
   const id = await mapId('enterprises', enterpriseId);
   const row = camelToRow({
     id,
@@ -202,12 +233,13 @@ async function migrateEnterprise(enterpriseId: string): Promise<void> {
     });
   }));
   await loadRows('vendors', vendorRows);
+  return true;
 }
 
 async function migrateProject(projectId: string): Promise<{ enterpriseId: string }> {
   const snap = await firestore.collection('projects').doc(projectId).get();
   if (!snap.exists) throw new Error(`Project ${projectId} not found`);
-  const data = snap.data()!;
+  const data = docData(snap)!;
   const id = await mapId('projects', projectId);
   const enterpriseId = await mapId('enterprises', data.enterpriseId);
   const row = camelToRow({
@@ -258,7 +290,7 @@ async function migrateProject(projectId: string): Promise<{ enterpriseId: string
 async function migrateCalendars(projectId: string, newProjectId: string): Promise<void> {
   const snap = await firestore.collection('calendars').where('projectId', '==', projectId).get();
   const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('calendars', d.id);
     return camelToRow({
       id, projectId: newProjectId, enterpriseId: null,
@@ -272,8 +304,12 @@ async function migrateCalendars(projectId: string, newProjectId: string): Promis
 async function migrateProcurementStepDefinitions(projectId: string, newProjectId: string): Promise<Map<string, string>> {
   const snap = await firestore.collection('procurementStepDefinitions').where('projectId', '==', projectId).get();
   const idMap = new Map<string, string>();
-  const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+  const rows = (await Promise.all(snap.docs.map(async (d) => {
+    const data = docData(d);
+    if (!data.name) {
+      console.warn(`  [warn] procurementStepDefinitions/${d.id} has no name -- skipping rather than fabricating a step label`);
+      return null;
+    }
     const id = await mapId('procurementStepDefinitions', d.id);
     idMap.set(d.id, id);
     return camelToRow({
@@ -283,7 +319,7 @@ async function migrateProcurementStepDefinitions(projectId: string, newProjectId
       defaultDurationDays: data.defaultDurationDays,
       enterpriseStepId: null, // cross-project enterprise-standard linkage resolved in a later pass if needed
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('procurement_step_definitions', rows);
   return idMap;
 }
@@ -295,7 +331,7 @@ async function migrateCostCodes(projectId: string, newProjectId: string): Promis
   const idMap = new Map<string, string>(); // firestore doc id -> new uuid
   const codeMap = new Map<string, string>(); // human code -> new uuid (for etc_details/cost_phasing keyed by code)
   const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('costCodes', d.id);
     idMap.set(d.id, id);
     codeMap.set(data.code, id);
@@ -330,7 +366,7 @@ async function migrateSheets(projectId: string, newProjectId: string): Promise<M
   const snap = await firestore.collection('sheets').where('projectId', '==', projectId).get();
   const idMap = new Map<string, string>();
   const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('sheets', d.id);
     idMap.set(d.id, id);
     return camelToRow({
@@ -349,7 +385,7 @@ async function migrateForecastRows(sheetsIdMap: Map<string, string>): Promise<vo
   for (const [firestoreSheetId, newSheetId] of sheetsIdMap) {
     const rowsSnap = await firestore.collection('sheets').doc(firestoreSheetId).collection('rows').get();
     for (const d of rowsSnap.docs) {
-      const data = d.data();
+      const data = docData(d);
       allRows.push(camelToRow({
         id: await mapId('forecastRows', d.id), sheetId: newSheetId,
         costCode: data.costCode, description: data.description, vendor: data.vendor,
@@ -371,12 +407,17 @@ async function migrateForecastRows(sheetsIdMap: Map<string, string>): Promise<vo
 
 async function migrateEtcDetails(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>, costCodeCodeMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('etcDetails').where('projectId', '==', projectId).get();
-  const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+  const rows = (await Promise.all(snap.docs.map(async (d) => {
+    const data = docData(d);
+    const costCodeId = costCodeCodeMap.get(data.costCode);
+    if (!costCodeId) {
+      console.warn(`  [warn] etcDetails/${d.id} references cost code "${data.costCode}", which doesn't resolve -- skipping rather than inserting a dangling reference`);
+      return null;
+    }
     const id = await mapId('etcDetails', d.id);
     return camelToRow({
       id, projectId: newProjectId,
-      costCodeId: costCodeCodeMap.get(data.costCode) ?? null, // EtcDetail keys by code, not id -- resolved here
+      costCodeId, // EtcDetail keys by code, not id -- resolved above
       costCode: data.costCode, calendarId: null, category: data.category,
       item: data.item, description: data.description, orderNumber: data.orderNumber,
       udf1: data.udf1, udf2: data.udf2, udf3: data.udf3, udf4: data.udf4,
@@ -392,14 +433,14 @@ async function migrateEtcDetails(projectId: string, newProjectId: string, costCo
       isEnterpriseResource: data.isEnterpriseResource ?? false,
       resourceId: data.resourceId, totalEtcPrevious: data.totalEtcPrevious,
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('etc_details', rows);
 }
 
 async function migrateActualCosts(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>, costCodeCodeMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('actualCosts').where('projectId', '==', projectId).get();
   const rows = (await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const costCodeId = costCodeIdMap.get(data.costCodeId) ?? costCodeCodeMap.get(data.costCodeId);
     if (!costCodeId) return null; // orphaned reference -- see normalize-costcode-fk.ts's philosophy, skip rather than guess
     if (!data.period) {
@@ -418,7 +459,7 @@ async function migrateActualCosts(projectId: string, newProjectId: string, costC
 async function migrateBaselineBudgets(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>, costCodeCodeMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('baselineBudgets').where('projectId', '==', projectId).get();
   const rows = (await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const costCodeId = costCodeIdMap.get(data.costCodeId) ?? costCodeCodeMap.get(data.costCodeId);
     if (!costCodeId) return null;
     return camelToRow({
@@ -432,7 +473,7 @@ async function migrateBaselineBudgets(projectId: string, newProjectId: string, c
 async function migrateCostPhasing(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>, costCodeCodeMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('costPhasing').where('projectId', '==', projectId).get();
   const rows = (await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const costCodeId = costCodeIdMap.get(data.costCodeId) ?? costCodeCodeMap.get(data.costCodeId);
     if (!costCodeId) return null;
     return camelToRow({
@@ -447,7 +488,7 @@ async function migrateCostPhasing(projectId: string, newProjectId: string, costC
 async function migratePeriodSnapshots(projectId: string, newProjectId: string): Promise<void> {
   const snap = await firestore.collection('periodSnapshots').where('projectId', '==', projectId).get();
   const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     return camelToRow({
       id: await mapId('periodSnapshots', d.id), projectId: newProjectId,
       periodId: data.periodId, periodName: data.periodName,
@@ -461,7 +502,7 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
   const risksSnap = await firestore.collection('risks').where('projectId', '==', projectId).get();
   const riskIdMap = new Map<string, string>();
   const riskRows = (await Promise.all(risksSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     if (!data.description) {
       console.warn(`  [warn] risks/${d.id} has no description -- skipping rather than fabricating substantive content`);
       return null;
@@ -485,7 +526,7 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
   for (const [firestoreRiskId, newRiskId] of riskIdMap) {
     const recSnap = await firestore.collection('riskRecords').where('riskId', '==', firestoreRiskId).get();
     for (const d of recSnap.docs) {
-      const data = d.data();
+      const data = docData(d);
       const costCodeId = costCodeIdMap.get(data.costCodeId) ?? null;
       recordRows.push(toRow<Record<string, unknown>>({
         id: await mapId('riskRecords', d.id), riskId: newRiskId, projectId: newProjectId,
@@ -506,7 +547,7 @@ async function migrateChangesAndRecords(projectId: string, newProjectId: string,
   const changesSnap = await firestore.collection('changes').where('projectId', '==', projectId).get();
   const changeIdMap = new Map<string, string>();
   const changeRows = await Promise.all(changesSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('changes', d.id);
     changeIdMap.set(d.id, id);
     return camelToRow({
@@ -523,7 +564,7 @@ async function migrateChangesAndRecords(projectId: string, newProjectId: string,
   for (const [firestoreChangeId, newChangeId] of changeIdMap) {
     const recSnap = await firestore.collection('changeRecords').where('changeId', '==', firestoreChangeId).get();
     for (const d of recSnap.docs) {
-      const data = d.data();
+      const data = docData(d);
       const costCodeId = costCodeIdMap.get(data.costCodeId) ?? null;
       recordRows.push(camelToRow({
         id: await mapId('changeRecords', d.id), changeId: newChangeId, projectId: newProjectId,
@@ -541,7 +582,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
   const rulesSnap = await firestore.collection('rulesOfCredit').where('projectId', '==', projectId).get();
   const ruleIdMap = new Map<string, string>();
   const ruleRows = await Promise.all(rulesSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('rulesOfCredit', d.id);
     ruleIdMap.set(d.id, id);
     return camelToRow({
@@ -555,7 +596,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
 
   const stepRows: Record<string, unknown>[] = [];
   for (const [firestoreRuleId, newRuleId] of ruleIdMap) {
-    const ruleData = rulesSnap.docs.find((d) => d.id === firestoreRuleId)!.data();
+    const ruleData = docData(rulesSnap.docs.find((d) => d.id === firestoreRuleId)!);
     for (const step of (ruleData.steps ?? []) as Array<Record<string, unknown>>) {
       stepRows.push(camelToRow({
         id: await mapId('ruleOfCreditSteps', step.id as string), ruleOfCreditId: newRuleId,
@@ -568,7 +609,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
   const packagesSnap = await firestore.collection('progressPackages').where('projectId', '==', projectId).get();
   const packageIdMap = new Map<string, string>();
   const packageRows = await Promise.all(packagesSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('progressPackages', d.id);
     packageIdMap.set(d.id, id);
     return camelToRow({
@@ -587,7 +628,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
     const itemsSnap = await firestore.collection('progressItems')
       .where('projectId', '==', projectId).where('packageDocId', '==', firestorePackageDocId).get();
     for (const d of itemsSnap.docs) {
-      const data = d.data();
+      const data = docData(d);
       const costCodeId = costCodeIdMap.get(data.costCodeId);
       if (!costCodeId) continue; // orphaned reference, skip rather than guess
       itemRows.push(camelToRow({
@@ -610,7 +651,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
 
   const periodsSnap = await firestore.collection('progressReportingPeriods').where('projectId', '==', projectId).get();
   const periodRows = await Promise.all(periodsSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     return camelToRow({
       id: await mapId('progressReportingPeriods', d.id), projectId: newProjectId,
       periodName: data.periodName, startDate: data.startDate, endDate: data.endDate,
@@ -621,7 +662,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
 
   const attrsSnap = await firestore.collection('progressAttributes').where('projectId', '==', projectId).get();
   const attrRows = await Promise.all(attrsSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     return camelToRow({
       id: await mapId('progressAttributes', d.id), projectId: newProjectId,
       title: data.title, type: data.type, values: data.values ?? [],
@@ -632,8 +673,12 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
 
 async function migrateScheduleItems(projectId: string, newProjectId: string): Promise<void> {
   const snap = await firestore.collection('scheduleItems').where('projectId', '==', projectId).get();
-  const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+  const rows = (await Promise.all(snap.docs.map(async (d) => {
+    const data = docData(d);
+    if (!data.activityId) {
+      console.warn(`  [warn] scheduleItems/${d.id} has no activityId -- skipping rather than leaving the record unidentifiable`);
+      return null;
+    }
     return camelToRow({
       id: await mapId('scheduleItems', d.id), projectId: newProjectId,
       activityId: data.activityId, description: data.description,
@@ -643,14 +688,14 @@ async function migrateScheduleItems(projectId: string, newProjectId: string): Pr
       currentStartDate: data.currentStartDate, currentEndDate: data.currentEndDate,
       updatedAt: orNow(data.updatedAt),
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('schedule_items', rows);
 }
 
 async function migrateProcurementItems(projectId: string, newProjectId: string, calendarIdMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('procurementItems').where('projectId', '==', projectId).get();
   const rows = await Promise.all(snap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     return camelToRow({
       id: await mapId('procurementItems', d.id), projectId: newProjectId,
       packageId: data.packageId, description: data.description,
@@ -670,7 +715,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
   const subsSnap = await firestore.collection('subcontracts').where('projectId', '==', projectId).get();
   const subIdMap = new Map<string, string>();
   const subRows = await Promise.all(subsSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const id = await mapId('subcontracts', d.id);
     subIdMap.set(d.id, id);
     const vendorId = await mapId('vendors', data.vendorId);
@@ -694,7 +739,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
   const lineItemIdMap = new Map<string, string>(); // firestore subcontract lineItem id -> new uuid
   const lineItemRows: Record<string, unknown>[] = [];
   for (const [firestoreSubId, newSubId] of subIdMap) {
-    const subData = subsSnap.docs.find((d) => d.id === firestoreSubId)!.data();
+    const subData = docData(subsSnap.docs.find((d) => d.id === firestoreSubId)!);
     for (const li of (subData.lineItems ?? []) as Array<Record<string, unknown>>) {
       const liId = await mapId('subcontractLineItems', li.id as string);
       lineItemIdMap.set(li.id as string, liId);
@@ -717,7 +762,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
   const invoicesSnap = await firestore.collection('invoices').where('projectId', '==', projectId).get();
   const invoiceIdMap = new Map<string, string>();
   const invoiceRows = (await Promise.all(invoicesSnap.docs.map(async (d) => {
-    const data = d.data();
+    const data = docData(d);
     const subcontractId = subIdMap.get(data.subcontractId);
     if (!subcontractId) return null; // orphaned reference, skip rather than guess
     const id = await mapId('invoices', d.id);
@@ -736,7 +781,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
 
   const invoiceItemRows: Record<string, unknown>[] = [];
   for (const [firestoreInvoiceId, newInvoiceId] of invoiceIdMap) {
-    const invData = invoicesSnap.docs.find((d) => d.id === firestoreInvoiceId)!.data();
+    const invData = docData(invoicesSnap.docs.find((d) => d.id === firestoreInvoiceId)!);
     for (const item of (invData.items ?? []) as Array<Record<string, unknown>>) {
       const lineItemId = lineItemIdMap.get(item.subcontractLineItemId as string);
       if (!lineItemId) continue; // orphaned reference, skip rather than guess
@@ -761,11 +806,16 @@ async function migrateAuditLogs(projectId: string, newProjectId: string, newEnte
   const snap = await firestore.collection('auditLogs')
     .where('projectId', '==', projectId).get();
   const rows = snap.docs.map((d) => {
-    const data = d.data();
+    const data = docData(d);
+    // No `id` key at all -- letting the column's own `default
+    // gen_random_uuid()` apply. Setting id: undefined explicitly here
+    // previously serialized to a literal null over the wire, which
+    // overrides a DEFAULT the same way an explicit null does anywhere else
+    // (same root cause as the createdAt/updatedAt null issue this session).
     return camelToRow({
-      id: undefined, enterpriseId: newEnterpriseId, projectId: newProjectId,
+      enterpriseId: newEnterpriseId, projectId: newProjectId,
       actorUserId: null, actorEmail: data.userEmail, action: data.action,
-      details: data.details ?? {}, createdAt: data.timestamp,
+      details: data.details ?? {}, createdAt: orNow(data.timestamp),
     });
   });
   await loadRows('audit_logs', rows);
@@ -782,11 +832,22 @@ const failures: Array<{ step: string; error: string }> = [];
 // downstream steps that depend on this one's output degrade gracefully
 // (e.g. everything referencing cost codes just finds no matches and skips,
 // rather than crashing on an undefined map) instead of also aborting.
+// Supabase's PostgrestError (and similar API error shapes) aren't Error
+// instances -- String(err) on a plain object produces the useless
+// "[object Object]" instead of the actual message, hiding what really
+// failed. Checking for a .message property directly (the common shape for
+// non-Error API errors) before falling back to String().
+function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  return String(err);
+}
+
 async function safeStep<T>(label: string, fallback: T, fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     console.error(`  [FAILED] ${label}: ${message}`);
     failures.push({ step: label, error: message });
     return fallback;
@@ -797,9 +858,13 @@ async function migrateProjectFull(projectId: string): Promise<void> {
   console.log(`\n=== Project ${projectId} ===`);
   const projSnap = await firestore.collection('projects').doc(projectId).get();
   if (!projSnap.exists) { console.log('  not found, skipping'); return; }
-  const enterpriseFirestoreId = projSnap.data()!.enterpriseId;
+  const enterpriseFirestoreId = docData(projSnap)!.enterpriseId;
 
-  await safeStep('enterprise', undefined, () => migrateEnterprise(enterpriseFirestoreId));
+  const enterpriseExists = await safeStep('enterprise', false, () => migrateEnterprise(enterpriseFirestoreId));
+  if (!enterpriseExists) {
+    console.warn(`  [warn] project ${projectId} references enterprise ${enterpriseFirestoreId}, which doesn't exist in Firestore -- skipping the whole project rather than inserting it with a dangling enterprise_id`);
+    return;
+  }
   const { enterpriseId: newEnterpriseId } = await safeStep('project', { enterpriseId: '' }, () => migrateProject(projectId));
   const newProjectId = await mapId('projects', projectId);
 
@@ -853,7 +918,24 @@ async function main(): Promise<void> {
 
   if (ALL_PROJECTS) {
     const projectsSnap = await firestore.collection('projects').get();
-    for (const d of projectsSnap.docs) await migrateProjectFull(d.id);
+    for (const d of projectsSnap.docs) {
+      // A fatal error at the top of migrateProjectFull (e.g. Firestore
+      // quota exhaustion mid-run, confirmed by the first --all-projects
+      // attempt) used to abort every remaining project, not just the one
+      // that hit it -- the same "one bad step shouldn't block everything
+      // else" fix already applied inside migrateProjectFull's own steps,
+      // just one level up. A re-run is always safe regardless (idempotent
+      // ids + upserts), so the remaining projects aren't lost either way,
+      // but this means a single quota exhaustion doesn't waste the rest of
+      // today's allowance on projects that would have succeeded.
+      try {
+        await migrateProjectFull(d.id);
+      } catch (err) {
+        const message = errorMessage(err);
+        console.error(`  [FAILED] project ${d.id} did not complete: ${message}`);
+        failures.push({ step: `project ${d.id}`, error: message });
+      }
+    }
   } else if (singleProjectId) {
     await migrateProjectFull(singleProjectId);
   } else {
