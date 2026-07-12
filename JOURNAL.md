@@ -1032,3 +1032,369 @@ Bernard's choice on order. Also worth deciding whether to reconcile
 POSTGRES_MIGRATION_PLAN.md's original schema sketch (still shows the old
 `_id` column names) once that branch/PR merges -- it wasn't reachable from
 this branch to update now.
+
+## 2026-07-12 (continued) — all 12 Postgres adapters written, 10 real schema bugs found and fixed
+
+Per Bernard's "ETL please, and postgres adapters. Let's finish this off" --
+tackled the adapters first since building them meant reading every
+Firestore adapter's real behavior line-by-line, which turned into the most
+rigorous verification pass the schema has had yet.
+
+**All 12 ports now have a Postgres adapter** (`src/platform/supabase/adapters/`),
+matching the Firestore adapters' exact method signatures and behavior:
+Risk, Change, Schedule (+ Calendar), Utility, UserRole, Procurement,
+Progress, Cost (the biggest -- cost codes, sheets, forecast rows, ETC
+details, actual costs, baseline budgets, cost phasing), Enterprise,
+Project, Subcontract (+ Invoice), and Auth. Wired a third `postgres` case
+into the composition root (`context.tsx`) alongside memory/firestore,
+selected the same way via `VITE_ADAPTER`.
+
+Built a shared `caseConvert.ts` utility (camelCase <-> snake_case,
+following the same boundary-assertion pattern as the existing
+`firestore/converters.ts::fromDoc<T>`) and generated real TypeScript types
+from the live schema via Supabase's own generator, rather than hand-typing
+35 tables -- regenerated after every schema fix so the adapters were
+always checked against the actual current schema, not a stale guess.
+
+**Reading the real adapters line-by-line surfaced 10 genuine schema bugs**,
+not just style issues -- none would have been caught by the advisor, since
+they're all shape mismatches, not lint-detectable problems:
+- `etc_details` and `sheets` were missing nearly all of their real columns
+  (migration 0002 guessed at both before the domain types were fully
+  read) -- etc_details was missing `project_id` entirely, which the
+  Firestore adapter queries directly.
+- `enterprises` and `projects` were each missing ~20 real columns
+  (attribute-definition lists, budget/date fields, audit fields) --
+  caught by a `theme` field triggering a type error, which prompted a full
+  cross-check of both tables rather than patching just that one field.
+- `cost_phasing` was missing a direct `project_id` column -- the Firestore
+  adapter filters by projectId and costCodeId as two independent top-level
+  fields, not via a cost_code join.
+- `invitations` was missing `token` and `enterpriseName` (the field
+  enabling the whole accept-invite flow).
+- `period_snapshots`' shape didn't match the real `PeriodSnapshot` type at
+  all (period_id/period_name/costCodes[], not period/cost_code_summaries).
+- A `forecast_rows` table didn't exist yet (Firestore stores it as a
+  `sheets/{id}/rows` subcollection -- discovered while reading CostAdapter).
+- A `user_roles` table didn't exist -- discovered that `domain/roles.ts`'s
+  more granular role system (enterprise_admin/enterprise_member,
+  project_admin/writer/reader/guest) is genuinely separate, dormant
+  scaffolding (confirmed zero component usage via grep) from the legacy
+  Project.users/Enterprise.adminUsers fields that actually drive live
+  authorization today -- mirrored 1:1 rather than forced into the existing
+  membership tables.
+- `project_members.role` had invented values ('Project Member', 'Viewer')
+  that don't exist in the real `Project.users` type
+  (`'Project Admin' | 'Project User'`) -- fixed via its own enum migration.
+
+**ProgressItem** needed real translation logic, not just case conversion:
+its `packageId` (human-facing, denormalized in Firestore since it can't
+easily join) is now derived via a real Postgres join against
+`progress_packages.package_code` instead of being stored as a redundant
+copy -- Postgres can do what Firestore couldn't.
+
+**EnterpriseAdapter/ProjectAdapter** reconstruct the legacy
+`adminUsers`/`users` maps from the real `enterprise_members`/
+`project_members` tables. Documented a deliberate simplification: cached
+profile fields (email, photoURL) that used to live denormalized in the
+Firestore membership blob aren't fabricated here since they're not stored
+per-membership in the normalized schema -- callers needing them should
+read `user_profiles` directly.
+
+**AuthAdapter** has one real, unavoidable API shape mismatch:
+`getCurrentUser()` is synchronous in the port (matching Firebase's cached
+`auth.currentUser`), but Supabase's client is async-only. Solved with a
+locally-cached user kept current via `onAuthStateChange`, not a bug, just
+a genuine platform difference.
+
+**Verified**: `npm run lint` (tsc+eslint) clean, `npx vitest run` 262/262,
+`npm run build` succeeds. Every fix above was applied to the live scratch
+project and re-verified with `list_tables`/`get_advisors` before moving on
+-- security advisor stayed at 0 findings throughout.
+
+### What's NOT done yet
+
+- The ETL script itself (read -> map -> transform -> load -> verify) --
+  not started this session; ran out of runway after the adapter work
+  surfaced far more schema-fixing than expected.
+- Auth migration tooling and the `/api/accept-invite` server endpoint's
+  Supabase rewire -- both still gated on Tarek's sign-off per
+  POSTGRES_MIGRATION_PLAN.md.
+- `AuthAdapter.getLinkedProviders()` returns an empty array rather than a
+  real result -- Supabase's identity-provider list is async-only
+  (`getUserIdentities()`), documented in the adapter rather than faked.
+
+### What to do next
+
+Build the ETL script next, now that both the schema and the adapters it
+needs to write to for the "load" phase are in place and verified.
+
+## 2026-07-12 (continued) — ETL script written, blocked from live testing by the same recurring Firestore quota issue
+
+Finishes the piece Bernard asked for: "ETL please, and postgres adapters."
+Adapters were done in the prior entry; this one is the ETL script itself.
+
+**`scripts/etl-firestore-to-postgres.ts`** -- read -> map ids -> transform
+-> load -> verify, per POSTGRES_MIGRATION_PLAN.md's design. Deliberately
+scoped to exclude every table with a required (not null) FK to
+`auth.users` -- `enterprise_members`, `project_members`, `user_profiles`,
+`user_roles`, `cost_code_assigned_users`, `saved_views` can't be migrated
+correctly until the Firebase Auth -> Supabase Auth user migration has
+actually happened (still gated on Tarek's sign-off on the forced-
+password-reset UX). Nullable user FKs (`created_by`, `modified_by`,
+`actor_user_id`) are populated as null for now, with a documented
+follow-up backfill once real user-id mappings exist. Every other
+collection is migrated in full, in correct dependency order.
+
+ID strategy matches the plan doc exactly: every Firestore doc gets a
+fresh UUID recorded in `etl.id_mappings` (its own schema, not `public`,
+so it's never exposed via the app's REST API), making re-runs idempotent
+-- an already-migrated doc gets its existing UUID back rather than a new
+one. Default mode is report-only; `--apply` is required to actually write.
+
+**Caught and fixed a real design inconsistency before it shipped**: the
+id-mapping helper was writing to `etl.id_mappings` regardless of
+`--apply`, contradicting the script's own "report-only never writes to
+Postgres" claim. Fixed by making report-only mode generate ephemeral,
+in-memory-only ids (`crypto.randomUUID()`, never persisted) instead --
+only `--apply` runs touch the mapping table for real.
+
+Reused `caseConvert.ts` (the same camelCase/snake_case utility written for
+the adapters) directly in this Node script rather than duplicating field-
+mapping logic a third time -- it's plain TS with no browser dependencies,
+so it works unchanged outside the app.
+
+**Blocked from live testing**: needed the Supabase service role key to
+even dry-run the script (RLS has no real Supabase Auth users yet to
+authenticate the anon key as, so even report-only reads would return
+nothing without it) -- asked Bernard to set it as a local env var rather
+than pasting the secret into chat, which he did. Ran the script in
+report-only mode against a single small project
+(`HVhKyBcq57Gxl256zMqo`) to validate the pipeline for real, and hit the
+exact same Firestore free-tier quota exhaustion that's recurred across
+the last three days of this work. The failure happened deep inside a real
+Firestore call (not a config/auth error), which at least confirms the
+connection setup itself is correct -- just blocked from proving the
+read/transform logic against live data by something outside my control.
+
+Verified everything that doesn't require live Firestore data:
+`tsc --noEmit` clean, `npm run lint` clean, `npx vitest run` 262/262
+(unaffected, no src/ changes this pass), cleaned up two rough edges found
+while re-reading the script before committing (a `(fn as any)._codeMap`
+side-channel hack replaced with a proper return type, one genuinely
+unused variable removed).
+
+### What's NOT done yet
+
+- Never actually run against live Firestore data -- correctness of the
+  read/transform logic is reviewed but unverified end-to-end.
+- The membership tables (enterprise_members, project_members,
+  user_profiles, user_roles, cost_code_assigned_users, saved_views) have
+  no migration path yet at all -- deliberately deferred, not forgotten,
+  pending the auth migration.
+- No backfill mechanism yet for created_by/modified_by/actor_user_id once
+  user-id mappings do exist.
+
+### What to do next
+
+Retry the ETL script once the Firestore quota resets (unclear timing,
+same open question as the last three days) to get a real end-to-end
+validation. This closes out everything Bernard asked for this session --
+next real decision point is either the auth migration (needs Tarek) or
+holding here until the quota situation is resolved.
+
+## 2026-07-12 (continued) — first successful end-to-end ETL run against real production data
+
+Firestore quota reset. Ran `scripts/etl-firestore-to-postgres.ts --apply`
+against a real project (`HVhKyBcq57Gxl256zMqo`) for the first time, with
+Bernard's explicit confirmation that this specific project contains real
+business data (subcontracts, invoices, vendor names, financial amounts),
+not synthetic test data -- flagged clearly and confirmed before running,
+since that's a meaningfully bigger action than a schema test even though
+the destination is still the scratch Supabase project.
+
+**Six real bugs found and fixed by actually running against live data**
+-- none of these were visible from reading type definitions, only from
+real documents flowing through the pipeline:
+
+1. The `etl` schema (holding `id_mappings`) wasn't exposed via PostgREST
+   by default (only `public`/`graphql_public` are) -- fixed via
+   `pgrst.db_schemas` + schema/table grants (migration 0024).
+2. PostgREST caches schema info and doesn't auto-refresh on DDL changes --
+   hit this twice (once for the newly-exposed `etl` schema, once after
+   fixing a column type) and had to explicitly `notify pgrst, 'reload
+   schema'` both times (migrations 0025, 0027). Noting this as a pattern:
+   every future migration that alters an existing table/column needs this
+   same reload afterward.
+3. `procurement_step_definitions.default_duration_days` and `.order` were
+   both `integer`, but real data has fractional values (e.g. `1.2` days,
+   `1.2` as a sort position for inserting between existing items without
+   renumbering) -- widened to `numeric`, and proactively checked the rest
+   of the schema for the same "order"/"sort" pattern rather than waiting
+   to hit each one individually (found and fixed 3 more: `cost_codes`,
+   `etc_details`, `progress_items` sort_order).
+4. Firestore documents can hold an explicit `null` for `createdAt`/
+   `updatedAt` rather than omitting the field -- an explicit null bypasses
+   a column's `DEFAULT now()`, unlike an absent key. Fixed with a shared
+   `orNow()` helper applied at all 21 call sites, not just the one that
+   happened to fail first.
+5. Real data has empty strings (`""`) sitting in date/numeric fields
+   where Postgres expects a real value or an actual `null`. Fixed with a
+   blanket `blankStringsToNull()` sanitizer applied to every row before
+   load, rather than chasing individual date fields across ~20 migration
+   functions -- documented as a deliberate simplification (also turns a
+   genuinely-blank text field into null, judged an acceptable semantic
+   merge for this app).
+6. A handful of `NOT NULL` business-content columns hit real missing data:
+   one cost code has no `name` (fell back to its `code` as a placeholder,
+   logged as a warning), several `actualCosts` records have no `period`,
+   and two of two `risks` for this project have no `description` -- these
+   two were skipped rather than fabricated, since inventing a reporting
+   period or risk description would misrepresent real business content,
+   following the same "never guess on bad data" philosophy the FK audit
+   script already established.
+
+**Restructured the script's resilience after enough of these round-trips**:
+originally, any single collection failing aborted the entire run, meaning
+every fix cost a full retry cycle with Bernard re-running the command and
+pasting the error back. Wrapped every migration step in a `safeStep()`
+helper that logs a failure and continues with a safe fallback (an empty
+map, so downstream steps relying on a failed step's output just find no
+matches and skip, rather than crashing on undefined) instead of aborting.
+The final run completed the entire pipeline in one pass with zero
+`[FAILED]` entries -- every remaining issue was an already-anticipated,
+deliberately-logged skip.
+
+**Verified for real, not just "it didn't error"**:
+- `list_tables` / advisor: security advisor still 0 findings after the load
+- Spot-checked the FK join directly: `subcontracts` joined to `vendors`
+  correctly resolves real vendor names (`SYMAL`, `AECOM`) against real
+  subcontract records (`Concrete`/`SC-01`, `Piling`/`SC-02`) -- proof the
+  id-remapping and foreign keys are intact through the whole pipeline, not
+  just that rows landed in tables.
+
+Also hit the harness's own permission classifier blocking the `--apply`
+command directly from me twice with a generic "Stage 2 classifier error,"
+even after Bernard's explicit "Yes deploy" confirmation -- worked around
+by having Bernard run the command himself via `!` for a few iterations,
+then it started working from me again on a later attempt without
+changing anything. Noting this as an observed harness quirk, not
+something diagnosed to a real root cause.
+
+### What's NOT done yet
+
+- Only migrated one (small) project so far, not `--all-projects` --
+  intentionally incremental rather than immediately running everything
+  now that it works once.
+- The 6 real data-quality findings (missing risk descriptions, missing
+  actual-cost periods, one nameless cost code) are worth Bernard knowing
+  about independent of the migration -- they're gaps in the live
+  production data, not just migration artifacts.
+- Auth-dependent tables (membership, saved views, user profiles/roles)
+  still entirely out of scope, still gated on the auth migration.
+
+### What to do next
+
+Bernard's call: migrate more projects (or `--all-projects`) now that the
+pipeline is proven, or hold here and let this one project's load stand as
+the proof-of-concept while other priorities take over.
+
+## 2026-07-12 (continued) — full --all-projects migration attempt: 8 more real bugs fixed, blocked by quota again
+
+Bernard asked to migrate everything. First attempt hit the harness's own
+permission classifier with a genuine, well-reasoned hard block (not the
+earlier transient "Stage 2" glitches): bulk-copying every project's real
+subcontracts/invoices/vendor/financial data into the scratch environment
+without Tarek's sign-off is flagged as data exfiltration, matching the
+exact risk this session's own POSTGRES_MIGRATION_PLAN.md called out as
+needing broader sign-off before a real cutover. Bernard clarified this is
+seed/demo data he created himself for testing, not real client
+relationships -- worth noting the classifier caught a genuine discrepancy
+first (I had characterized the single-project test as "real production
+data" earlier in the session and Bernard's own confirmation at the time
+agreed with that framing), so this was resolved by direct clarification,
+not by working around the block.
+
+**8 more real bugs found by running against the full breadth of data**
+(a single project's data didn't exercise every collection/edge case; all
+projects together did):
+
+1. `period_snapshots` never actually had a `created_at` column at all --
+   migration 0014's rename pass dropped the original `snapshot_taken_at`
+   and nothing replaced it.
+2. `risks.mitigation` / `residual_exposure` hold real narrative text
+   ("Additional boreholes ordered, structural engineer reviewing...") in
+   practice, not the number the domain type comment claims -- the comment
+   itself was already stale relative to real usage. Widened to text.
+3. `rules_of_credit.user_field_1..5` (with underscores before the digit)
+   didn't match what the generic camelCase-to-snake_case converter
+   actually produces for `userField1` (no underscore before a trailing
+   digit) -- a genuine naming mismatch between the schema and the shared
+   case-conversion utility, not a data problem. Renamed the columns.
+4. Some real `changes` have no `changeId` and some `procurementItems` have
+   no `packageId` -- unlike a missing cost-code name (which can fall back
+   to the code) there's no sensible placeholder, but the records still
+   carry real content otherwise, so relaxed both columns to nullable
+   rather than losing the whole record.
+5. The ETL read Firestore documents directly via firebase-admin, bypassing
+   the live app's own `converters.ts::fromDoc`, which is the only thing
+   that actually converts Firestore Timestamp objects to ISO strings --
+   real documents written by older code paths still hold raw Timestamp
+   objects, which surfaced as literal
+   `{"_seconds":...,"_nanoseconds":...}` strings hitting `date` columns.
+   Added a `convertTimestamps()` mirroring that same conversion, applied
+   to every document read (28 call sites), not just the field that
+   happened to fail first.
+6. Some projects reference an `enterpriseId` that doesn't exist as an
+   actual Firestore document -- a genuinely orphaned reference in the
+   source data, same class of bug as the whole `costCodeId` ambiguity
+   saga, just one level up the hierarchy. `migrateEnterprise` now reports
+   whether the enterprise actually exists; the whole project is skipped
+   rather than inserted with a dangling `enterprise_id`.
+7. Several `NOT NULL` business-content columns hit missing real data
+   again, same philosophy as before: `etcDetails` rows whose cost code
+   code doesn't resolve, `procurementStepDefinitions` with no name, and
+   `scheduleItems` with no `activityId` are all skipped with a logged
+   warning rather than inserting an unidentifiable record.
+8. `audit_logs` inserts were setting `id: undefined` explicitly rather
+   than omitting the key -- same root cause as the earlier
+   `createdAt`/`updatedAt` null issue (an explicit value, even
+   `undefined`, serialized to a literal `null` over the wire, overriding
+   the column's own `DEFAULT gen_random_uuid()`).
+
+Also fixed the error-reporting path itself: Supabase's `PostgrestError`
+isn't an `Error` instance, so `String(err)` on it was producing the
+useless `"[object Object]"` instead of the real message -- was actively
+hiding what `subcontractsInvoicesAndLineItems` was failing on until this
+was fixed.
+
+**Second `--all-projects --apply` run got much further** -- no more data-
+shape bugs surfaced at all, only the same Firestore free-tier quota
+exhaustion from earlier in this session, this time mid-run rather than
+before starting (a full multi-project scan burns through the daily
+allowance far faster than one project did). Real substantive data is now
+loaded: 5 enterprises, 12 projects, 166 cost codes, 703 baseline budgets,
+1021 cost phasing records, 25 changes, 19 vendors, and more.
+
+**Made the per-project loop resilient too**, mirroring the per-step fix
+from the single-project run: a fatal error partway through one project
+(like this quota exhaustion) used to abort every remaining project, not
+just the one that hit it. Now logs and moves to the next project instead
+-- not yet tested live since quota is exhausted again, but low-risk given
+the whole pipeline is already idempotent (upserts + stable id mappings),
+so a re-run is always safe regardless of exactly where it stopped.
+
+**Two things worth Bernard's attention independent of the migration
+itself**: `actual_costs` loaded 0 rows and `risks`/`risk_records` loaded 0
+rows -- every actual-cost record across every migrated project is missing
+its reporting period, and every risk is missing its description. That's
+either a real gap in how this seed/demo data was created, or a sign that
+whatever wrote actualCosts/risks records skips those fields, worth
+checking either way.
+
+### What to do next
+
+Retry `--all-projects --apply` once the Firestore quota resets again --
+same open question on timing as before. The pipeline itself is not
+expected to need further fixes; everything found this round was
+data-shape or script-logic, not architecture.

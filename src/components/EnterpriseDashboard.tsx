@@ -89,7 +89,7 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
       await projectRepo.create({
         enterpriseId: enterprise.id, projectName: finalName, projectCode: newProject.code, projectBudget: 0,
         startDate: now.split('T')[0], endDate: now.split('T')[0], cutoffDate: now.split('T')[0],
-        users: { [userId]: 'Project Admin' }, dateCreated: now, firstCostReportingMonth: '', currentReportingMonth: '', lastReportingMonth: '',
+        users: { [userId]: 'Project Admin' }, firstCostReportingMonth: '', currentReportingMonth: '', lastReportingMonth: '',
       } as any);
       setIsModalOpen(false);
       setNewProject({ name: '', code: '' });
