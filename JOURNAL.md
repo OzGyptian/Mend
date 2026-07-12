@@ -976,3 +976,59 @@ script (read -> map -> transform -> load -> verify) or the Postgres
 adapters behind the existing 12 ports -- whichever Bernard wants to tackle
 first, since both are independent of each other and could go in either
 order.
+
+## 2026-07-12 (continued) — root-caused two issues Bernard asked about before continuing
+
+Bernard asked to properly diagnose rather than keep building: the type.ts
+read-compression friction from the schema session, and whether the
+invoice_id naming collision was a one-off or something to fix at the root.
+
+**types.ts compression, diagnosed for real via `headroom_stats` rather
+than guessed**: "Headroom" is a real, active token-compression proxy that's
+been running the entire session (8,783 of 9,635 API requests compressed,
+"token" mode, ~$910/39.6% saved this session). Not a bug. It compresses
+predictable/repetitive token sequences to save cost -- exactly why a long
+TypeScript interface (dozens of near-identical `fieldName: type;` lines)
+got hit hard while literal strings/numbers survived, and exactly why
+base64-encoding a chunk before reading reliably bypassed it every time
+(near-uniform high-entropy bytes give the compressor nothing repetitive to
+exploit). Practical takeaway for future sessions needing exact field-level
+precision from a similarly repetitive file: base64 first, don't gamble on
+a small-enough byte range.
+
+**Naming collision, audited across all 11 migration files rather than
+assumed fixed**: found the identical `<parent business-id> / <child FK>`
+name collision in 3 more dormant spots -- `risks.risk_id` /
+`risk_records.risk_id`, `changes.change_id` / `change_records.change_id`,
+`progress_packages.package_id` / `progress_items.package_id` +
+`rules_of_credit.package_id`. None had triggered a visible bug yet, only
+because no policy or query happened to reference them in a colliding way
+-- structurally identical to the invoice_id case, not a different problem.
+Worth noting: the invoice_id bug failed loudly (`uuid = text` type
+mismatch) purely because the two colliding columns happened to have
+different types -- if a future case had matching types, the same shadowing
+would return silently wrong data instead of erroring.
+
+Root cause of the whole class: naming every human-facing business code
+`<entity>_id` when a child table's FK to that same parent conventionally
+*also* gets named `<entity>_id` (which is itself completely normal,
+correct FK-naming practice). Fixed at the source instead of patching each
+site: renamed every business-id column to `<entity>_code`
+(`risk_id`→`risk_code`, `change_id`→`change_code`,
+`package_id`→`package_code`, `invoice_id`→`invoice_code` on the parent
+tables) via migration 0012. Also renamed `order_id`→`order_code`,
+`rule_id`→`rule_code`, `item_id`→`item_code`, which followed the same
+risky pattern but hadn't collided with anything yet -- closing the
+landmine before a future table steps on it, not just patching the two
+that had already gone off.
+
+Verified: security advisor 0 findings, all 35 tables intact and RLS
+enabled after the rename.
+
+### What to do next
+
+Same as before this diagnostic detour: ETL script or Postgres adapters,
+Bernard's choice on order. Also worth deciding whether to reconcile
+POSTGRES_MIGRATION_PLAN.md's original schema sketch (still shows the old
+`_id` column names) once that branch/PR merges -- it wasn't reachable from
+this branch to update now.
