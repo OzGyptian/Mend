@@ -225,13 +225,17 @@ async function migrateEnterprise(enterpriseId: string): Promise<boolean> {
   // Vendors are embedded on Enterprise.vendors[] in Firestore, but their own
   // table in Postgres (subcontracts/invoices FK to them directly).
   const vendors = (data.vendors ?? []) as Array<Record<string, unknown>>;
-  const vendorRows = await Promise.all(vendors.map(async (v) => {
+  const vendorRows = (await Promise.all(vendors.map(async (v) => {
+    if (!v.id) {
+      console.warn(`  [warn] enterprises/${enterpriseId} has a vendor entry with no id -- skipping rather than fabricating one`);
+      return null;
+    }
     const vendorId = await mapId('vendors', v.id as string);
     return camelToRow({
       id: vendorId, enterpriseId: id, name: v.name, code: v.code,
       contactEmail: v.contactEmail, contactName: v.contactName,
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('vendors', vendorRows);
   return true;
 }
@@ -489,13 +493,17 @@ async function migratePeriodSnapshots(projectId: string, newProjectId: string): 
   const snap = await firestore.collection('periodSnapshots').where('projectId', '==', projectId).get();
   const rows = await Promise.all(snap.docs.map(async (d) => {
     const data = docData(d);
+    if (!data.periodId) {
+      console.warn(`  [warn] periodSnapshots/${d.id} has no periodId -- skipping rather than guessing which period it belongs to`);
+      return null;
+    }
     return camelToRow({
       id: await mapId('periodSnapshots', d.id), projectId: newProjectId,
       periodId: data.periodId, periodName: data.periodName,
       costCodes: data.costCodes ?? [], createdAt: orNow(data.createdAt),
     });
   }));
-  await loadRows('period_snapshots', rows);
+  await loadRows('period_snapshots', rows.filter((r) => r !== null));
 }
 
 async function migrateRisksAndRecords(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>): Promise<void> {
@@ -505,6 +513,10 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
     const data = docData(d);
     if (!data.description) {
       console.warn(`  [warn] risks/${d.id} has no description -- skipping rather than fabricating substantive content`);
+      return null;
+    }
+    if (!data.riskId) {
+      console.warn(`  [warn] risks/${d.id} has no riskId (the human-facing risk code) -- skipping rather than fabricating one`);
       return null;
     }
     const id = await mapId('risks', d.id);
@@ -581,8 +593,16 @@ async function migrateChangesAndRecords(projectId: string, newProjectId: string,
 async function migrateProgressDomain(projectId: string, newProjectId: string, costCodeIdMap: Map<string, string>): Promise<void> {
   const rulesSnap = await firestore.collection('rulesOfCredit').where('projectId', '==', projectId).get();
   const ruleIdMap = new Map<string, string>();
-  const ruleRows = await Promise.all(rulesSnap.docs.map(async (d) => {
+  const ruleRows = (await Promise.all(rulesSnap.docs.map(async (d) => {
     const data = docData(d);
+    if (!data.ruleId) {
+      console.warn(`  [warn] rulesOfCredit/${d.id} has no ruleId (the human-facing rule code) -- skipping rather than fabricating one`);
+      return null;
+    }
+    if (!data.description) {
+      console.warn(`  [warn] rulesOfCredit/${d.id} has no description -- skipping rather than fabricating substantive content`);
+      return null;
+    }
     const id = await mapId('rulesOfCredit', d.id);
     ruleIdMap.set(d.id, id);
     return camelToRow({
@@ -591,7 +611,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
       userField1: data.userField1, userField2: data.userField2, userField3: data.userField3,
       userField4: data.userField4, userField5: data.userField5, createdAt: orNow(data.createdAt),
     });
-  }));
+  }))).filter((r) => r !== null);
   await loadRows('rules_of_credit', ruleRows);
 
   const stepRows: Record<string, unknown>[] = [];
@@ -701,8 +721,12 @@ async function migrateScheduleItems(projectId: string, newProjectId: string): Pr
 
 async function migrateProcurementItems(projectId: string, newProjectId: string, calendarIdMap: Map<string, string>): Promise<void> {
   const snap = await firestore.collection('procurementItems').where('projectId', '==', projectId).get();
-  const rows = await Promise.all(snap.docs.map(async (d) => {
+  const rows = (await Promise.all(snap.docs.map(async (d) => {
     const data = docData(d);
+    if (!data.description) {
+      console.warn(`  [warn] procurementItems/${d.id} has no description -- skipping rather than fabricating substantive content`);
+      return null;
+    }
     return camelToRow({
       id: await mapId('procurementItems', d.id), projectId: newProjectId,
       packageId: data.packageId, description: data.description,
@@ -712,7 +736,7 @@ async function migrateProcurementItems(projectId: string, newProjectId: string, 
       projectAttributes: data.projectAttributes ?? {},
       stepData: data.stepData ?? {}, createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('procurement_items', rows);
 }
 
@@ -721,8 +745,19 @@ async function migrateSubcontractsInvoicesAndLineItems(
 ): Promise<void> {
   const subsSnap = await firestore.collection('subcontracts').where('projectId', '==', projectId).get();
   const subIdMap = new Map<string, string>();
-  const subRows = await Promise.all(subsSnap.docs.map(async (d) => {
+  const subRows = (await Promise.all(subsSnap.docs.map(async (d) => {
     const data = docData(d);
+    // Validate before mapId()/subIdMap.set() -- both are relied on by line
+    // items and invoices below, so a skipped-but-already-mapped subcontract
+    // would leave them pointing at a row that was never actually inserted.
+    if (!data.vendorId) {
+      console.warn(`  [warn] subcontracts/${d.id} has no vendorId -- skipping rather than guessing which vendor it belongs to`);
+      return null;
+    }
+    if (!data.orderName) {
+      console.warn(`  [warn] subcontracts/${d.id} has no orderName -- skipping rather than fabricating one`);
+      return null;
+    }
     const id = await mapId('subcontracts', d.id);
     subIdMap.set(d.id, id);
     const vendorId = await mapId('vendors', data.vendorId);
@@ -740,7 +775,7 @@ async function migrateSubcontractsInvoicesAndLineItems(
       createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       // createdBy (auth.users FK) intentionally left null for now.
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('subcontracts', subRows);
 
   const lineItemIdMap = new Map<string, string>(); // firestore subcontract lineItem id -> new uuid
@@ -772,6 +807,12 @@ async function migrateSubcontractsInvoicesAndLineItems(
     const data = docData(d);
     const subcontractId = subIdMap.get(data.subcontractId);
     if (!subcontractId) return null; // orphaned reference, skip rather than guess
+    if (!data.vendorId) {
+      // Same mapId(collection, undefined) hazard as subcontracts above --
+      // validate before mapId()/invoiceIdMap.set() for the same reason.
+      console.warn(`  [warn] invoices/${d.id} has no vendorId -- skipping rather than guessing which vendor it belongs to`);
+      return null;
+    }
     const id = await mapId('invoices', d.id);
     invoiceIdMap.set(d.id, id);
     const vendorId = await mapId('vendors', data.vendorId);
