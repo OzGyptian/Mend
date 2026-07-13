@@ -42,38 +42,41 @@
  * client-side, same handling as FIREBASE_SERVICE_ACCOUNT_KEY).
  */
 import { initializeApp, cert } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 import { readFileSync } from 'fs';
 import { randomUUID } from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { camelToRow, toRow } from '../src/platform/supabase/caseConvert';
+import { convertTimestamps } from './lib/convert-timestamps';
+import { createLocalDumpFirestore, type LocalDumpFirestore } from './lib/local-dump-firestore';
 
-const serviceAccount = JSON.parse(readFileSync('./scripts/service-account.json', 'utf8'));
+// --from-dump [dir] reads from a local JSON dump (scripts/dump-firestore.ts)
+// instead of live Firestore -- every debug/re-run iteration against the
+// same dump costs zero read quota. Falls back to live Firestore (and only
+// then needs the service account credential) when the flag is absent.
+const fromDumpArgIndex = process.argv.indexOf('--from-dump');
+const dumpDir = fromDumpArgIndex !== -1 ? (process.argv[fromDumpArgIndex + 1] ?? 'firestore-dump') : null;
+
 const config = JSON.parse(readFileSync('./firebase-applet-config.json', 'utf8'));
-initializeApp({ credential: cert(serviceAccount), projectId: config.projectId });
-const firestore: Firestore = getFirestore(config.firestoreDatabaseId);
+const firestore: Firestore | LocalDumpFirestore = dumpDir
+  ? createLocalDumpFirestore(dumpDir)
+  : (() => {
+      const serviceAccount = JSON.parse(readFileSync('./scripts/service-account.json', 'utf8'));
+      initializeApp({ credential: cert(serviceAccount), projectId: config.projectId });
+      return getFirestore(config.firestoreDatabaseId);
+    })();
 
-// Mirrors src/platform/firestore/converters.ts::fromDoc's Timestamp handling.
-// The live app always reads through that converter, which turns every
-// Firestore Timestamp into an ISO string -- this ETL script reads via
-// firebase-admin directly, bypassing it entirely. Some real documents
-// still hold raw Timestamp objects (older write paths, before the field
-// was consistently written as an ISO string by the app), which surfaced
-// as literal "{"_seconds":...,"_nanoseconds":...}" objects hitting `date`
-// columns. Applied to every document read, not just the field that
-// happened to fail first.
-function convertTimestamps(value: unknown): unknown {
-  if (value instanceof Timestamp) return value.toDate().toISOString();
-  if (Array.isArray(value)) return value.map(convertTimestamps);
-  if (value !== null && typeof value === 'object') {
-    const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = convertTimestamps(v);
-    return out;
-  }
-  return value;
-}
-
-function docData(doc: FirebaseFirestore.DocumentSnapshot | FirebaseFirestore.QueryDocumentSnapshot): Record<string, any> {
+// convertTimestamps (shared with dump-firestore.ts) mirrors
+// src/platform/firestore/converters.ts::fromDoc's Timestamp handling -- see
+// scripts/lib/convert-timestamps.ts for why this is needed at all. A dump
+// already ran documents through it at dump time, so re-running it here on
+// dump-backed reads is a harmless no-op (no Timestamp instances survive
+// JSON serialization to begin with).
+//
+// Typed as a minimal structural shape rather than
+// FirebaseFirestore.DocumentSnapshot so the same function works for both
+// live Firestore reads and local-dump-firestore's fake snapshots.
+function docData(doc: { data(): Record<string, unknown> | undefined }): Record<string, any> {
   return convertTimestamps(doc.data() ?? {}) as Record<string, any>;
 }
 
