@@ -688,14 +688,18 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
   await loadRows('progress_items', itemRows);
 
   const periodsSnap = await firestore.collection('progressReportingPeriods').where('projectId', '==', projectId).get();
-  const periodRows = await Promise.all(periodsSnap.docs.map(async (d) => {
+  const periodRows = (await Promise.all(periodsSnap.docs.map(async (d) => {
     const data = docData(d);
+    if (!data.periodName) {
+      console.warn(`  [warn] progressReportingPeriods/${d.id} has no periodName -- skipping rather than fabricating one`);
+      return null;
+    }
     return camelToRow({
       id: await mapId('progressReportingPeriods', d.id), projectId: newProjectId,
       periodName: data.periodName, startDate: data.startDate, endDate: data.endDate,
       status: data.status ?? 'Open', createdAt: orNow(data.createdAt),
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('progress_reporting_periods', periodRows);
 
   const attrsSnap = await firestore.collection('progressAttributes').where('projectId', '==', projectId).get();
