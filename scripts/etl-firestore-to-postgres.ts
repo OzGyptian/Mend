@@ -628,8 +628,19 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
 
   const packagesSnap = await firestore.collection('progressPackages').where('projectId', '==', projectId).get();
   const packageIdMap = new Map<string, string>();
-  const packageRows = await Promise.all(packagesSnap.docs.map(async (d) => {
+  const packageRows = (await Promise.all(packagesSnap.docs.map(async (d) => {
     const data = docData(d);
+    // Validate before mapId()/packageIdMap.set() -- progress_items below
+    // resolves packageDocId through packageIdMap, so a skipped-but-already-
+    // mapped package would leave items pointing at a row never inserted.
+    if (!data.packageId) {
+      console.warn(`  [warn] progressPackages/${d.id} has no packageId (the human-facing package code) -- skipping rather than fabricating one`);
+      return null;
+    }
+    if (!data.description) {
+      console.warn(`  [warn] progressPackages/${d.id} has no description -- skipping rather than fabricating substantive content`);
+      return null;
+    }
     const id = await mapId('progressPackages', d.id);
     packageIdMap.set(d.id, id);
     return camelToRow({
@@ -640,7 +651,7 @@ async function migrateProgressDomain(projectId: string, newProjectId: string, co
       defaultPhasingMethod: data.defaultPhasingMethod, defaultPhasingCurve: data.defaultPhasingCurve,
       createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
     });
-  }));
+  }))).filter((r): r is Record<string, unknown> => r !== null);
   await loadRows('progress_packages', packageRows);
 
   // Single project-scoped query, filtered by packageDocId in memory below --
