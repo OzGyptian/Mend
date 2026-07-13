@@ -447,13 +447,23 @@ async function migrateActualCosts(projectId: string, newProjectId: string, costC
     const data = docData(d);
     const costCodeId = costCodeIdMap.get(data.costCodeId) ?? costCodeCodeMap.get(data.costCodeId);
     if (!costCodeId) return null; // orphaned reference -- see normalize-costcode-fk.ts's philosophy, skip rather than guess
-    if (!data.period) {
-      console.warn(`  [warn] actualCosts/${d.id} has no period -- skipping rather than guessing which reporting period it belongs to`);
+    // Real Firestore docs store these as reportingPeriodId/cost, not
+    // period/amount -- confirmed by inspecting live data (2026-07-13).
+    // The old field names never matched anything, so every actualCosts
+    // record either got skipped ("has no period") or, worse, got inserted
+    // with amount defaulting to 0 -- a fabricated zero for real financial
+    // data, not a skip.
+    if (!data.reportingPeriodId) {
+      console.warn(`  [warn] actualCosts/${d.id} has no reportingPeriodId -- skipping rather than guessing which reporting period it belongs to`);
+      return null;
+    }
+    if (data.cost === undefined || data.cost === null) {
+      console.warn(`  [warn] actualCosts/${d.id} has no cost -- skipping rather than fabricating a $0 amount`);
       return null;
     }
     return camelToRow({
       id: await mapId('actualCosts', d.id), projectId: newProjectId, costCodeId,
-      period: data.period, amount: data.amount ?? 0, description: data.description,
+      period: data.reportingPeriodId, amount: data.cost, description: data.description,
       createdAt: orNow(data.createdAt),
     });
   }))).filter((r): r is Record<string, unknown> => r !== null);
