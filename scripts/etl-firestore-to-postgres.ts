@@ -296,8 +296,8 @@ async function migrateProject(projectId: string): Promise<{ enterpriseId: string
     firstCostReportingMonth: data.firstCostReportingMonth,
     currentReportingMonth: data.currentReportingMonth,
     lastReportingMonth: data.lastReportingMonth,
-    createdAt: data.dateCreated,
-    updatedAt: data.dateLastModified,
+    createdAt: orNow(data.dateCreated),
+    updatedAt: orNow(data.dateLastModified),
     // created_by / modified_by (auth.users FKs) intentionally left null --
     // see the file header on user-dependent tables.
   });
