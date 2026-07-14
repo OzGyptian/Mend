@@ -123,9 +123,20 @@ async function mapId(collectionName: string, firestoreId: string): Promise<strin
     return ephemeral;
   }
 
+  // Upsert, not insert -- id_mappings' primary key is (collection_name,
+  // firestore_id), and mapId() can genuinely be called twice concurrently
+  // for the same pair (e.g. Promise.all(docs.map(...)) racing against a
+  // network retry on the same request). The plain SELECT-then-INSERT above
+  // is only a fast path for the common case; this is the actual guarantee
+  // -- ON CONFLICT DO UPDATE with a no-op field re-write still returns the
+  // existing row's new_id via RETURNING instead of throwing a duplicate-key
+  // error out from under a concurrent caller.
   const { data: inserted, error } = await supabase
     .schema('etl').from('id_mappings')
-    .insert({ collection_name: collectionName, firestore_id: firestoreId })
+    .upsert(
+      { collection_name: collectionName, firestore_id: firestoreId },
+      { onConflict: 'collection_name,firestore_id' },
+    )
     .select('new_id').single();
   if (error) throw error;
   idCache.set(cacheKey, inserted.new_id);
@@ -916,6 +927,17 @@ const failures: Array<{ step: string; error: string }> = [];
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message);
+  // Fallback for plain objects with no .message (e.g. some Postgrest/gRPC
+  // error shapes) -- String(err) on these produces the useless
+  // "[object Object]", which happened here once already and hid the real
+  // cause. JSON.stringify at least shows the actual shape.
+  if (err && typeof err === 'object') {
+    try {
+      return JSON.stringify(err);
+    } catch {
+      // fall through to String(err) below (e.g. circular structure)
+    }
+  }
   return String(err);
 }
 
