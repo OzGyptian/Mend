@@ -594,16 +594,23 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
         continue;
       }
       const costCodeId = costCodeIdMap.get(data.costCodeId) ?? null;
+      // min/mostLikely/max/probability -> risk_model + model_inputs jsonb,
+      // not fixed columns -- see supabase/migrations/0037_risk_model_flexibility.sql
+      // and src/domain/risk.ts. Every real riskRecords doc seen so far
+      // (both the old single-impactAmount shape and the newer
+      // betaPertMin/MostLikely/Max shape) reduces to the same
+      // beta_pert_3point model once normalized above; a future model would
+      // need its own branch here once one actually exists.
       recordRows.push(toRow<Record<string, unknown>>({
         id: await mapId('riskRecords', d.id), riskId: newRiskId, projectId: newProjectId,
         costCodeId, scope: data.scope,
         enterpriseAttributes: data.enterpriseAttributes ?? {},
         projectAttributes: data.projectAttributes ?? {},
-        probability: data.probability, minImpactAmount: min,
-        mostLikelyImpactAmount: mostLikely, maxImpactAmount: max,
-        // betaPertImpactAmount is GENERATED -- never write it.
+        probability: data.probability,
+        riskModel: 'beta_pert_3point',
+        modelInputs: { min, mostLikely, max },
         createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
-      }, {}, ['beta_pert_impact_amount']));
+      }));
     }
   }
   await loadRows('risk_records', recordRows);

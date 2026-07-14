@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Risk, RiskRecord } from './types';
 
 /** Beta-PERT weighted average: (min + 4×mostLikely + max) / 6 */
@@ -13,6 +14,49 @@ export function betaPertExposure(
   probability: number,
 ): number {
   return betaPertImpact(min, mostLikely, max) * probability;
+}
+
+// risk_records stores raw model-specific inputs as jsonb (model_inputs) plus
+// which model applies (risk_model), rather than fixed typed columns per
+// input -- adding a new risk model is a code change here (reviewed, tested,
+// type-checked), not a database migration. Mirrors cost_codes.eac_method's
+// existing strategy-switch pattern, extended to the *inputs* as well as the
+// formula. See supabase/migrations/0037_risk_model_flexibility.sql.
+export const RISK_MODELS = ['beta_pert_3point'] as const;
+export type RiskModel = (typeof RISK_MODELS)[number];
+
+export const BetaPert3PointInputsSchema = z.object({
+  min: z.number(),
+  mostLikely: z.number(),
+  max: z.number(),
+});
+export type BetaPert3PointInputs = z.infer<typeof BetaPert3PointInputsSchema>;
+
+/**
+ * Validates model_inputs against the shape the given risk model expects.
+ * Throws on an unrecognized model or a mismatched shape -- deliberately
+ * strict rather than defaulting missing fields to 0, since that's exactly
+ * the class of bug (silently zeroing real risk exposure) this whole
+ * refactor exists to prevent from recurring under a new model.
+ */
+export function validateModelInputs(riskModel: string, modelInputs: unknown): BetaPert3PointInputs {
+  switch (riskModel) {
+    case 'beta_pert_3point':
+      return BetaPert3PointInputsSchema.parse(modelInputs);
+    default:
+      throw new Error(`Unknown risk model "${riskModel}" -- add a case in validateModelInputs/computeExposureForModel (src/domain/risk.ts) before storing data under it.`);
+  }
+}
+
+/** Computes risk exposure for whichever model a risk_records row uses. */
+export function computeExposureForModel(riskModel: string, modelInputs: unknown, probability: number): number {
+  const inputs = validateModelInputs(riskModel, modelInputs);
+  switch (riskModel) {
+    case 'beta_pert_3point':
+      return betaPertExposure(inputs.min, inputs.mostLikely, inputs.max, probability);
+    default:
+      throw new Error(`Unknown risk model "${riskModel}"`);
+  }
 }
 
 export interface RiskImpactLeaf {

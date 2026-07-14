@@ -214,7 +214,7 @@ export interface RiskRecord {
   minImpactAmount: number; // $ Min Impact
   mostLikelyImpactAmount: number; // $ Most Likely Impact
   maxImpactAmount: number; // $ Max Impact
-  betaPertImpactAmount: number; // $ (Min + 4*ML + Max) / 6
+  betaPertImpactAmount: number; // $ (Min + 4*ML + Max) / 6 * Probability -- derived, computed at read time (see src/domain/risk.ts), never trust a stored value
   createdAt: string;
   updatedAt: string;
 }
