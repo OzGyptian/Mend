@@ -563,14 +563,44 @@ async function migrateRisksAndRecords(projectId: string, newProjectId: string, c
     const recSnap = await firestore.collection('riskRecords').where('riskId', '==', firestoreRiskId).get();
     for (const d of recSnap.docs) {
       const data = docData(d);
+      // Two riskRecords shapes exist in real data (confirmed against a live
+      // export 2026-07-14, see JOURNAL.md): the older/majority shape has
+      // probability + a single impactAmount, with no separate min/likely/max
+      // at all. The Postgres column is a true three-point beta-PERT input
+      // (min_impact_amount/most_likely_impact_amount/max_impact_amount),
+      // confirmed against Tarek's own formula. Rather than silently default
+      // the missing min/likely/max to 0 (which would understate every
+      // pre-existing risk record's exposure to zero), collapse the old
+      // shape's single impactAmount into a degenerate three-point estimate
+      // (min = likely = max = impactAmount) -- the formula
+      // (min + 4*likely + max)/6 * probability reduces to exactly
+      // impactAmount * probability in that case, i.e. precisely what the
+      // old shape's data already meant under the simpler model.
+      //
+      // A newer shape also exists (2 projects) with betaPertMin/
+      // betaPertMostLikely/betaPertMax but no probability field at all
+      // (only an unrelated `likelihood` field Tarek confirmed shouldn't
+      // exist) -- skipped below rather than guessing a probability, pending
+      // his answer on whether there's an intended default.
+      const min = data.minImpactAmount ?? data.betaPertMin ?? data.impactAmount;
+      const mostLikely = data.mostLikelyImpactAmount ?? data.betaPertMostLikely ?? data.impactAmount;
+      const max = data.maxImpactAmount ?? data.betaPertMax ?? data.impactAmount;
+      if (min === undefined || mostLikely === undefined || max === undefined) {
+        console.warn(`  [warn] riskRecords/${d.id} has no min/most-likely/max impact amount (and no impactAmount to fall back to) -- skipping rather than fabricating one`);
+        continue;
+      }
+      if (data.probability === undefined || data.probability === null) {
+        console.warn(`  [warn] riskRecords/${d.id} has no probability -- skipping rather than guessing one (pending confirmation on how the newer risk-record shape's likelihood maps to a probability, if at all)`);
+        continue;
+      }
       const costCodeId = costCodeIdMap.get(data.costCodeId) ?? null;
       recordRows.push(toRow<Record<string, unknown>>({
         id: await mapId('riskRecords', d.id), riskId: newRiskId, projectId: newProjectId,
         costCodeId, scope: data.scope,
         enterpriseAttributes: data.enterpriseAttributes ?? {},
         projectAttributes: data.projectAttributes ?? {},
-        probability: data.probability, minImpactAmount: data.minImpactAmount ?? 0,
-        mostLikelyImpactAmount: data.mostLikelyImpactAmount ?? 0, maxImpactAmount: data.maxImpactAmount ?? 0,
+        probability: data.probability, minImpactAmount: min,
+        mostLikelyImpactAmount: mostLikely, maxImpactAmount: max,
         // betaPertImpactAmount is GENERATED -- never write it.
         createdAt: orNow(data.createdAt), updatedAt: orNow(data.updatedAt),
       }, {}, ['beta_pert_impact_amount']));
