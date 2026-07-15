@@ -93,12 +93,25 @@ export class PostgresEnterpriseAdapter implements EnterpriseRepository {
 
   subscribeAll(callback: (enterprises: Enterprise[]) => void): () => void {
     const fetchAndEmit = async () => {
-      const { data } = await supabase.from('enterprises').select('*');
+      const { data, error } = await supabase.from('enterprises').select('*');
+      if (error) {
+        console.error('EnterpriseAdapter.subscribeAll: failed to fetch enterprises', error);
+        return;
+      }
       callback(await Promise.all((data ?? []).map((row) => attachMembers(fromRow<Enterprise>(row)))));
     };
     fetchAndEmit();
+    // Channel name must be unique per subscription, not per resource: App.tsx
+    // (for platform admins) and SystemAdmin.tsx both call subscribeAll()
+    // independently, and Supabase realtime channels are keyed globally on the
+    // client connection. Two concurrent subscribeAll() callers using the same
+    // fixed 'enterprises_all' name raced on .subscribe(), and the loser threw
+    // "cannot add postgres_changes callbacks ... after subscribe()" -- which
+    // crashed the whole page via the error boundary on System Admin
+    // specifically, since that's the one place a platform admin is guaranteed
+    // to have two concurrent subscribeAll() calls active at once.
     const channel = supabase
-      .channel('enterprises_all')
+      .channel(`enterprises_all:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enterprises' }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
