@@ -14,7 +14,7 @@ import EnterpriseAdmin from './components/EnterpriseAdmin';
 import ProjectAdmin from './components/ProjectAdmin';
 import UserProfile from './components/UserProfile';
 import LandingPage from './components/LandingPage';
-import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2, Eye, EyeOff } from 'lucide-react';
+import { ExternalLink, ShieldAlert, Building2, Plus, ArrowRight, LogOut, CalendarCheck2, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Toaster } from 'sonner';
 import { ConfirmDialogProvider } from './components/ConfirmDialogProvider';
 
@@ -26,6 +26,11 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [enterprises, setEnterprises] = useState<Enterprise[]>([]);
+  // enterprises starts as [] before the first async fetch resolves, so
+  // `enterprises.length === 0` can't tell "still loading" apart from
+  // "genuinely has none" -- routes that require an enterprise need the
+  // former to show a loading state, not redirect away.
+  const [enterprisesLoaded, setEnterprisesLoaded] = useState(false);
   const [currentEnterprise, setCurrentEnterprise] = useState<Enterprise | null>(null);
   const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(
     () => localStorage.getItem('selectedEnterpriseId')
@@ -43,16 +48,23 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [showLanding, setShowLanding] = useState(true);
   const [isInIframe, setIsInIframe] = useState(false);
+  const { isPlatformAdmin: isSystemOwner } = useAuth();
+  // Scoped per user id -- a global key meant a platform admin's last-viewed
+  // enterprise leaked into the *next* account signed into the same browser
+  // (e.g. testing with one account, then a real user signs in on the same
+  // machine), silently pointing them at an enterprise id their session
+  // can't actually resolve, with no error and no way out except knowing to
+  // go to System Admin and click "Switch To" themselves.
+  const systemOwnerStorageKey = user ? `systemOwnerEnterpriseId:${user.id}` : null;
   const [systemOwnerEnterpriseId, setSystemOwnerEnterpriseId] = useState<string | null>(() => {
-    try { return localStorage.getItem('systemOwnerEnterpriseId'); } catch (e) { return null; }
+    try { return user ? localStorage.getItem(`systemOwnerEnterpriseId:${user.id}`) : null; } catch (e) { return null; }
   });
 
-  const { isPlatformAdmin: isSystemOwner } = useAuth();
-
   useEffect(() => {
+    if (!systemOwnerStorageKey) return;
     try {
-      if (systemOwnerEnterpriseId) { localStorage.setItem('systemOwnerEnterpriseId', systemOwnerEnterpriseId); }
-      else { localStorage.removeItem('systemOwnerEnterpriseId'); }
+      if (systemOwnerEnterpriseId) { localStorage.setItem(systemOwnerStorageKey, systemOwnerEnterpriseId); }
+      else { localStorage.removeItem(systemOwnerStorageKey); }
     } catch (e) { console.warn('LocalStorage access failed', e); }
     setCurrentProject(null);
     setCurrentSheet(null);
@@ -65,7 +77,7 @@ export default function App() {
     setView('enterprise');
     if (isSystemOwner) {
       setSystemOwnerEnterpriseId(enterprise.id);
-      localStorage.setItem('systemOwnerEnterpriseId', enterprise.id);
+      if (systemOwnerStorageKey) localStorage.setItem(systemOwnerStorageKey, enterprise.id);
     } else {
       setSelectedEnterpriseId(enterprise.id);
       localStorage.setItem('selectedEnterpriseId', enterprise.id);
@@ -105,18 +117,32 @@ export default function App() {
     if (!user || isSystemOwner) return;
     return enterpriseRepo.subscribeByUserId(user.id, (ents) => {
       setEnterprises(ents);
+      setEnterprisesLoaded(true);
       setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
     });
-  }, [user?.id]);
+    // isSystemOwner resolves asynchronously *after* user (it's a separate
+    // roles fetch in useAuth) -- without it in the deps, this effect's
+    // first run sees a stale isSystemOwner=false, subscribes on the wrong
+    // (member-only) path, and never re-subscribes once the real value
+    // comes in, since user?.id hasn't changed. Same fix mirrored below.
+  }, [user?.id, isSystemOwner]);
 
   useEffect(() => {
     if (!user || !isSystemOwner) return;
     return enterpriseRepo.subscribeAll(async (ents) => {
       setEnterprises(ents);
+      setEnterprisesLoaded(true);
       setSystemOwnerEnterpriseId(prev => {
-        if (prev) return prev;
+        // A cached id from a previous session that no longer resolves --
+        // the enterprise was deleted, or (before the per-user storage key
+        // fix above) leaked in from a different account on the same
+        // browser -- used to get trusted forever with no fallback, leaving
+        // the whole app stuck on an empty dashboard with every "requires
+        // an enterprise" route silently bouncing back to it. Validate
+        // against what this session can actually see before trusting it.
+        if (prev && ents.some((e) => e.id === prev)) return prev;
         const first = ents[0]?.id ?? null;
-        if (first) localStorage.setItem('systemOwnerEnterpriseId', first);
+        if (first && systemOwnerStorageKey) localStorage.setItem(systemOwnerStorageKey, first);
         return first;
       });
       if (ents.length === 0) {
@@ -127,7 +153,7 @@ export default function App() {
         }
       }
     });
-  }, [user?.id]);
+  }, [user?.id, isSystemOwner]);
 
   // Subscribe to the currently-selected enterprise and load its projects
   const activeEnterpriseId = isSystemOwner ? systemOwnerEnterpriseId : selectedEnterpriseId;
@@ -138,6 +164,14 @@ export default function App() {
       if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
     });
   }, [user?.id, activeEnterpriseId]);
+  // True while an enterprise selection is genuinely still in flight --
+  // either the enterprise list itself hasn't loaded once yet, or it has
+  // and picked a target id whose record (subscribeById above) hasn't come
+  // back yet. Routes gated on currentEnterprise need this distinction:
+  // treating "not resolved yet" the same as "confirmed none available"
+  // caused a silent redirect to "/" on every fresh load or fast click,
+  // before the async chain had a chance to finish.
+  const enterpriseSelectionPending = !enterprisesLoaded || (!!activeEnterpriseId && !currentEnterprise);
 
   useEffect(() => {
     if (!user || !currentProject?.id) return;
@@ -201,6 +235,7 @@ export default function App() {
         loading={loading} 
         currentEnterprise={currentEnterprise}
         setCurrentEnterprise={setCurrentEnterprise}
+        enterpriseSelectionPending={enterpriseSelectionPending}
         isSystemOwner={isSystemOwner}
         systemOwnerEnterpriseId={systemOwnerEnterpriseId}
         setSystemOwnerEnterpriseId={setSystemOwnerEnterpriseId}
@@ -237,6 +272,7 @@ interface AuthenticatedAppProps {
   loading: boolean;
   currentEnterprise: Enterprise | null;
   setCurrentEnterprise: (e: Enterprise | null) => void;
+  enterpriseSelectionPending: boolean;
   isSystemOwner: boolean;
   systemOwnerEnterpriseId: string | null;
   setSystemOwnerEnterpriseId: (id: string | null) => void;
@@ -263,8 +299,16 @@ interface AuthenticatedAppProps {
   onEnterpriseChange: (enterprise: Enterprise) => void;
 }
 
+function RouteLoadingFallback() {
+  return (
+    <div className="flex items-center justify-center h-full min-h-[400px]">
+      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+    </div>
+  );
+}
+
 function AuthenticatedApp({
-  user, loading, currentEnterprise, setCurrentEnterprise, isSystemOwner,
+  user, loading, currentEnterprise, setCurrentEnterprise, enterpriseSelectionPending, isSystemOwner,
   systemOwnerEnterpriseId, setSystemOwnerEnterpriseId, theme, setTheme,
   isSidebarCollapsed, setIsSidebarCollapsed, authError, setAuthError,
   email, setEmail, password, setPassword, isRegistering, setIsRegistering,
@@ -619,9 +663,11 @@ function AuthenticatedApp({
               />
             } />
             <Route path="/enterprise-admin" element={
+              enterpriseSelectionPending ? <RouteLoadingFallback /> :
               currentEnterprise ? <EnterpriseAdmin enterprise={currentEnterprise} setIsSidebarCollapsed={setIsSidebarCollapsed} /> : <Navigate to="/" />
             } />
             <Route path="/profile" element={
+              enterpriseSelectionPending ? <RouteLoadingFallback /> :
               currentEnterprise ? <UserProfile userId={user.id} enterprise={currentEnterprise} /> : <Navigate to="/" />
             } />
             <Route path="*" element={<Navigate to="/" />} />

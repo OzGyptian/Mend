@@ -10,6 +10,14 @@
 
 ---
 
+## Data sensitivity — scratch Supabase project
+
+The Postgres/Supabase project used for the migration (`hryshufihwwcdurlqysy`, "mend-migration-scratch") contains **only synthetic and seed/demo data** — construction projects, cost codes, budgets, risks, etc. created for testing this migration, confirmed directly by Bernard (2026-07-11/12). There is no production deployment and no real customer data anywhere in this system as of this writing. Row-level content in that database (project names, budget figures, cost codes, etc.) can be queried, inspected, and modified directly without the extra caution appropriate for production data.
+
+**This does not extend to real personal information that happens to pass through the system**, e.g. Tarek's or Bernard's real email addresses used to sign into the app, or anyone else's real credentials. Standard care around accounts, credentials, and sending things on someone's behalf still applies — see the global safety rules. If a real production deployment is ever stood up, this note no longer applies to it.
+
+---
+
 ## Refactor Goal — Ports & Adapters Seam
 
 Extract a clean platform seam so domain/product code **never imports Firebase directly**. Firebase is then a swappable adapter behind typed interfaces. Target storage: PostgreSQL (Supabase).
