@@ -6,7 +6,15 @@
 
 **Stack:** React 19 · Vite 6 · TypeScript 5.8 · Firebase 11 (Firestore + Auth) · Express (email only) · AG Grid 35 (Enterprise) · Univerjs · Tailwind CSS 4 · shadcn/ui · Gemini AI (@google/genai)
 
-**Repo:** `github.com/tag0388/Mend` — Tarek (tag0388) owns the domain/product code. Bernard drives the refactor.
+**Repo:** `github.com/tag0388/Mend` — Tarek and Bernard both actively build on this repo (see Collaboration section below). The Firestore→Postgres platform-seam refactor Bernard drove solo is complete; this is no longer a single-owner refactor.
+
+---
+
+## Data sensitivity — scratch Supabase project
+
+The Postgres/Supabase project used for the migration (`hryshufihwwcdurlqysy`, "mend-migration-scratch") contains **only synthetic and seed/demo data** — construction projects, cost codes, budgets, risks, etc. created for testing this migration, confirmed directly by Bernard (2026-07-11/12). There is no production deployment and no real customer data anywhere in this system as of this writing. Row-level content in that database (project names, budget figures, cost codes, etc.) can be queried, inspected, and modified directly without the extra caution appropriate for production data.
+
+**This does not extend to real personal information that happens to pass through the system**, e.g. Tarek's or Bernard's real email addresses used to sign into the app, or anyone else's real credentials. Standard care around accounts, credentials, and sending things on someone's behalf still applies — see the global safety rules. If a real production deployment is ever stood up, this note no longer applies to it.
 
 ---
 
@@ -293,32 +301,37 @@ Every feature/fix/refactor commit must include a version bump.
 
 ## Branch Strategy
 
+The platform-seam refactor (Firestore → Postgres/Supabase) is complete and merged. As of 2026-07-16, Mend is in active parallel development, not a single gated refactor — both Bernard and Tarek work directly on `main` via short-lived feature branches.
+
 | Branch | Deploys to | Push rule |
 |--------|-----------|-----------|
-| `refactor/platform-seam` | — (local only until merge gate) | Bernard only |
-| `main` | (Tarek's baseline) | PR merge only |
+| `main` | Vercel production (stable, non-preview URL) | PR merge, either Bernard or Tarek |
+| feature branches | Vercel preview (per-branch, ephemeral URL) | whoever's working on it |
 
-Single long-lived branch. **No merge to `main` until the full acid test passes and Tarek reviews.**
+**No standing review-before-merge gate during this development phase.** The bar for merging to `main` is the test suite passing (`npm run lint`, `npm run test`, `npm run test:postgres`, `npx playwright test`), not a specific person's sign-off — requiring one person to review before the other can merge doesn't hold up once both are actively shipping in parallel, and became actively counterproductive the one time it would have blocked a fix the other person needed just to be able to sign in at all.
+
+**This changes once there's a real production deployment with real users.** At that point, reinstate a review-before-merge gate (or equivalent — CI-enforced checks, a staging environment, whatever fits by then) before anything reaches production. The current permissiveness is specific to this being pre-production, synthetic-data development — see the data-sensitivity note above, which draws the same production/development line.
 
 ---
 
 ## PR Workflow
 
-The refactor ships as one PR: `refactor/platform-seam` → `main`. Tarek reviews.
+Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge.
 
 Feature PR checklist before opening:
 - [ ] `npm run lint` passes (type-check)
 - [ ] `npm run test` passes (unit suite)
+- [ ] `npm run test:postgres` passes (integration suite against the scratch Supabase project)
+- [ ] `npx playwright test` passes (e2e acid test, `VITE_ADAPTER=memory`)
 - [ ] `npm run build` passes
-- [ ] Acid test: app runs fully on `VITE_ADAPTER=memory`
 - [ ] No `firebase/*` imports outside `src/platform/`
 - [ ] JOURNAL.md updated
-- [ ] Tarek has reviewed port interfaces (Chunk 3 gate)
 
 ---
 
 ## Collaboration
 
-- **Tarek** reviews port interface contracts (Chunk 3 gate) and final PR
-- **Bernard** drives all refactor code
-- Tarek's next step after merge: graduate to Claude Code, no more AI Studio
+- **Bernard** and **Tarek** both actively build features, in parallel, on separate short-lived branches
+- Coordination happens via GitHub Issues (the project backlog) and regular catch-ups, not a single gatekeeper reviewing every change — see the backlog reference in memory for the issue list
+- Bernard uses Claude Code; Tarek uses Gemini. Both should work from this file (`CLAUDE.md`) for project conventions — if Tarek's tooling wants its own file (e.g. `GEMINI.md`), it should point back here rather than fork into a second, potentially divergent copy
+- Rough ownership lanes (which of the two takes which features) are agreed between them directly, not dictated by this file

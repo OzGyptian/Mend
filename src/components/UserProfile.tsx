@@ -48,20 +48,26 @@ export default function UserProfile({ userId, enterprise }: UserProfileProps) {
 
   useEffect(() => {
     if (!enterprise || !userId) return;
-    const user = enterprise.users?.[userId] as any;
+    // enterprise.users?.[userId] only has an entry for actual
+    // enterprise_members rows -- a platform admin viewing an enterprise
+    // they're not a member of (RLS grants them read access regardless)
+    // has none, which used to skip this whole effect entirely and leave
+    // userData permanently null, blanking the entire page (there's a
+    // `if (!userData) return null` guard below). Falls back to an empty
+    // object so the page still renders with whatever real Auth-level data
+    // (email, display name) is actually available.
+    const user = (enterprise.users?.[userId] as any) ?? {};
     const currentUser = authRepo.getCurrentUser();
-    if (user) {
-      setUserData({
-        ...user,
-        displayName: user.displayName || currentUser?.displayName || '',
-        email: user.email || currentUser?.email || '',
-        preferences: user.preferences || {
-          notifications: true,
-          darkMode: true,
-          language: 'en'
-        }
-      });
-    }
+    setUserData({
+      ...user,
+      displayName: user.displayName || currentUser?.displayName || '',
+      email: user.email || currentUser?.email || '',
+      preferences: user.preferences || {
+        notifications: true,
+        darkMode: true,
+        language: 'en'
+      }
+    });
   }, [enterprise, userId]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -2,6 +2,64 @@
 
 ---
 
+## Session — 2026-07-16 — Live UI review fixes + Firebase Auth migration (v1.0.135–136)
+
+### What we set out to do
+
+UI review of the Vercel preview deployment found "My Profile" bouncing to a stale projects
+list. Fixed everything the review turned up, then migrated the two real Firebase Auth
+accounts (Tarek's) to Supabase Auth.
+
+### What was found and fixed
+
+- **Root cause of the profile-page bug**: `App.tsx`'s enterprise-resolution effects depended
+  only on `[user?.id]`, not `isSystemOwner`. `isSystemOwner` resolves asynchronously *after*
+  `user` (separate roles fetch), so the effect's first run saw a stale `isSystemOwner=false`,
+  subscribed on the wrong (member-only) path, and never re-subscribed once the real value
+  landed — platform admins got permanently stuck with no enterprise resolved on almost every
+  session. Added `isSystemOwner` to both effects' dependency arrays.
+- `/profile` and `/enterprise-admin` redirected to `/` the instant `currentEnterprise` was
+  falsy, with no distinction between "still loading" and "confirmed none available." Added
+  `enterpriseSelectionPending` + a loading fallback.
+- `systemOwnerEnterpriseId` was cached under one global `localStorage` key shared across
+  *all* accounts on the same browser — a stale value from one account silently won over a
+  fresh, valid one for the next. Scoped the key per user id; validated the cached id against
+  the actually-accessible enterprise list before trusting it.
+- `UserProfile.tsx` skipped its data-loading effect entirely when the signed-in user had no
+  `enterprise_members` row for the current enterprise (true for any platform admin viewing
+  via RLS bypass, not real membership) — left `userData` permanently null and the page blank.
+  Falls back to an empty object so real Auth-level fields (email, display name) still render.
+- `SystemAdmin`'s "Database Status" card hardcoded "Firebase Firestore" regardless of the
+  active adapter. Now reflects `VITE_ADAPTER`.
+- Verified all four fixes live against Postgres locally, using a temporarily-elevated
+  smoke-test account (reverted after) rather than real credentials.
+
+### Firebase Auth → Supabase Auth migration
+
+`scripts/migrate-firebase-auth-users.ts` — of 5 Firebase Auth accounts found, only Tarek's
+two (`tarek.guindy@gmail.com`, `tarek_guindy@hotmail.com`) were migrated: invited via
+Supabase's own invite-email flow (never sets a password directly), granted `platform_admin`
+on both `user_profiles` and `user_roles`. `bernard.w.leung@gmail.com` already had a native
+Supabase account. `user@123.com` and `buddha.leung@gmail.com` were confirmed-skipped —
+unverified, never signed in again after creation, no real data attached.
+
+Also noted: Tarek's only enterprise membership in the source Firestore data points to
+"Tarek & Bernard Co," which never made it into the live Postgres `enterprises` table (has an
+`id_mappings` row but no live row). Not backfilled — moot, since `platform_admin` already
+grants full access via RLS bypass regardless of `enterprise_members` rows. Worth revisiting
+if that enterprise's data specifically is needed later.
+
+### Also this session
+
+Documented in `CLAUDE.md` that the scratch Supabase project (`hryshufihwwcdurlqysy`)
+contains only synthetic/demo data, not production data — row-level content can be queried
+and modified directly without production-grade caution. Does not extend to real personal
+information (e.g. real email addresses) or to account/credential actions, which remain
+governed by the standing global safety rules regardless of how synthetic the surrounding
+data is.
+
+---
+
 ## Session 5 — 2026-07-09 — Phase 11.0 complete + 11.1 security + 11.2 EAC domain
 
 ### What we set out to do

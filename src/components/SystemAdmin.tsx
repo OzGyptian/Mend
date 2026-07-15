@@ -13,6 +13,17 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// Was a hardcoded "Firebase Firestore (Multi-Region)" string regardless of
+// which adapter is actually active -- misleading once Postgres became a
+// real option. Mirrors the same VITE_ADAPTER check the composition root
+// uses (src/platform/firestore/context.tsx) rather than duplicating adapter
+// selection logic.
+const ACTIVE_ADAPTER = (import.meta as any).env?.VITE_ADAPTER;
+const DATABASE_LABEL =
+  ACTIVE_ADAPTER === 'postgres' ? 'Postgres (Supabase)'
+  : ACTIVE_ADAPTER === 'memory' ? 'In-Memory (local/test)'
+  : 'Firebase Firestore';
+
 interface SystemAdminProps {
   onSwitchEnterprise?: (id: string) => void;
   currentEnterpriseId?: string;
@@ -611,7 +622,7 @@ export default function SystemAdmin({ onSwitchEnterprise, currentEnterpriseId }:
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
               <p className="text-lg font-bold dark:text-white">Connected</p>
             </div>
-            <p className="text-[10px] text-gray-900 mt-2">Firebase Firestore (Multi-Region)</p>
+            <p className="text-[10px] text-gray-900 mt-2">{DATABASE_LABEL}</p>
           </div>
         </div>
       </div>
