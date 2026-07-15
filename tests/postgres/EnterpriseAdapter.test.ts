@@ -116,4 +116,27 @@ describe('PostgresEnterpriseAdapter', () => {
     const fetched = await adapter.get(created.id);
     expect(fetched).toBeNull();
   });
+
+  it('supports two concurrent subscribeAll() callers without throwing', async () => {
+    // Regression test: App.tsx (for platform admins) and SystemAdmin.tsx both
+    // call subscribeAll() independently and concurrently whenever a platform
+    // admin is on the System Admin page. subscribeAll() used to open a
+    // Supabase realtime channel under a single fixed name ('enterprises_all'),
+    // and two concurrent .subscribe() calls on the same channel name threw
+    // "cannot add postgres_changes callbacks ... after subscribe()" --
+    // uncaught, which crashed the whole page via the error boundary. This
+    // wasn't caught by the e2e suite because that runs on the memory adapter,
+    // which doesn't exercise real Supabase realtime channels at all.
+    await signInAs(supabase, platformAdmin);
+
+    let unsubscribeA: (() => void) | undefined;
+    let unsubscribeB: (() => void) | undefined;
+    expect(() => {
+      unsubscribeA = adapter.subscribeAll(() => {});
+      unsubscribeB = adapter.subscribeAll(() => {});
+    }).not.toThrow();
+
+    unsubscribeA?.();
+    unsubscribeB?.();
+  });
 });
