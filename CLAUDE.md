@@ -16,6 +16,12 @@ The Postgres/Supabase project used for the migration (`hryshufihwwcdurlqysy`, "m
 
 **This does not extend to real personal information that happens to pass through the system**, e.g. Tarek's or Bernard's real email addresses used to sign into the app, or anyone else's real credentials. Standard care around accounts, credentials, and sending things on someone's behalf still applies — see the global safety rules. If a real production deployment is ever stood up, this note no longer applies to it.
 
+### `smoke-test@mend-test.invalid` holds permanent `platform_admin`
+
+This is a dedicated, non-real test account (`.invalid` domain, can't receive real email) used for smoke testing (`tests/e2e/live/`) and ad-hoc live diagnosis. As of 2026-07-16 it permanently holds `platform_admin` on both `user_profiles` and `user_roles`, by Bernard's explicit decision, specifically because this is still pre-production/pre-customer development.
+
+**This must be revisited before a real production deployment with real customers exists.** At that point, either scope the smoke-test account down to only the specific access its tests actually need, or have CI grant/revoke the elevated role around each test run instead of holding it permanently. Don't carry this forward unexamined once the "no production yet" premise stops being true — see the note above, which draws the same line.
+
 ---
 
 ## Refactor Goal — Ports & Adapters Seam
