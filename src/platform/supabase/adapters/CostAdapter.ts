@@ -33,7 +33,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`cost_codes:${projectId}`)
+      .channel(`cost_codes:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cost_codes', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -50,7 +50,7 @@ export class PostgresCostAdapter implements CostRepository {
     // with an `in` list -- re-fetch on any cost_codes change and let the query
     // above re-apply the `in` filter server-side.
     const channel = supabase
-      .channel(`cost_codes_multi:${projectIds.join(',')}`)
+      .channel(`cost_codes_multi:${projectIds.join(',')}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cost_codes' }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -102,7 +102,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`sheets:${projectId}`)
+      .channel(`sheets:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sheets', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -140,7 +140,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`forecast_rows:${sheetId}`)
+      .channel(`forecast_rows:${sheetId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'forecast_rows', filter: `sheet_id=eq.${sheetId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -197,7 +197,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`etc_details:${projectId}`)
+      .channel(`etc_details:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'etc_details', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -254,7 +254,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`actual_costs:${projectId}`)
+      .channel(`actual_costs:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'actual_costs', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -311,7 +311,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`baseline_budgets:${projectId}`)
+      .channel(`baseline_budgets:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'baseline_budgets', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -358,7 +358,7 @@ export class PostgresCostAdapter implements CostRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`cost_phasing:${projectId}:${costCodeId}`)
+      .channel(`cost_phasing:${projectId}:${costCodeId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cost_phasing', filter: `cost_code_id=eq.${costCodeId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

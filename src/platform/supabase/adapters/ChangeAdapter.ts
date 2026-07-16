@@ -22,7 +22,7 @@ export class PostgresChangeAdapter implements ChangeRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`changes:${projectId}`)
+      .channel(`changes:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'changes', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -72,7 +72,7 @@ export class PostgresChangeAdapter implements ChangeRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`change_records:${projectId}`)
+      .channel(`change_records:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'change_records', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

@@ -42,7 +42,7 @@ export class PostgresEnterpriseAdapter implements EnterpriseRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`enterprise:${enterpriseId}`)
+      .channel(`enterprise:${enterpriseId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enterprises', filter: `id=eq.${enterpriseId}` }, fetchAndEmit)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_members', filter: `enterprise_id=eq.${enterpriseId}` }, fetchAndEmit)
       .subscribe();
@@ -69,7 +69,7 @@ export class PostgresEnterpriseAdapter implements EnterpriseRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`enterprises_admin:${adminUserEmail}`)
+      .channel(`enterprises_admin:${adminUserEmail}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_members' }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -85,7 +85,7 @@ export class PostgresEnterpriseAdapter implements EnterpriseRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`enterprises_user:${userId}`)
+      .channel(`enterprises_user:${userId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_members', filter: `user_id=eq.${userId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

@@ -54,7 +54,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     const fetchAndEmit = async () => { callback(await this.get(projectId)); };
     fetchAndEmit();
     const channel = supabase
-      .channel(`project:${projectId}`)
+      .channel(`project:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `id=eq.${projectId}` }, fetchAndEmit)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'project_members', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
@@ -67,7 +67,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`projects_enterprise:${enterpriseId}:${userEmail}`)
+      .channel(`projects_enterprise:${enterpriseId}:${userEmail}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'project_members' }, fetchAndEmit)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'projects', filter: `enterprise_id=eq.${enterpriseId}` }, fetchAndEmit)
       .subscribe();
@@ -131,7 +131,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`sheet_project:${sheetId}`)
+      .channel(`sheet_project:${sheetId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sheets', filter: `id=eq.${sheetId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

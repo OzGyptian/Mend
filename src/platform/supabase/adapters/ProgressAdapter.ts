@@ -45,7 +45,7 @@ export class PostgresProgressAdapter implements ProgressRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`progress_packages:${projectId}`)
+      .channel(`progress_packages:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'progress_packages', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -91,7 +91,7 @@ export class PostgresProgressAdapter implements ProgressRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`progress_items:${projectId}`)
+      .channel(`progress_items:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'progress_items', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -139,7 +139,7 @@ export class PostgresProgressAdapter implements ProgressRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`rules_of_credit:${projectId}`)
+      .channel(`rules_of_credit:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rules_of_credit', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -185,7 +185,7 @@ export class PostgresProgressAdapter implements ProgressRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`progress_reporting_periods:${projectId}`)
+      .channel(`progress_reporting_periods:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'progress_reporting_periods', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

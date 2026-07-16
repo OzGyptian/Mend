@@ -18,7 +18,7 @@ export class PostgresScheduleAdapter implements ScheduleRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`schedule_items:${projectId}`)
+      .channel(`schedule_items:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_items', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -68,7 +68,7 @@ export class PostgresScheduleAdapter implements ScheduleRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`calendars_project:${projectId}`)
+      .channel(`calendars_project:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendars', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -81,7 +81,7 @@ export class PostgresScheduleAdapter implements ScheduleRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`calendars_enterprise:${enterpriseId}`)
+      .channel(`calendars_enterprise:${enterpriseId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendars', filter: `enterprise_id=eq.${enterpriseId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
