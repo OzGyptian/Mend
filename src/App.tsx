@@ -60,6 +60,23 @@ export default function App() {
     try { return user ? localStorage.getItem(`systemOwnerEnterpriseId:${user.id}`) : null; } catch (e) { return null; }
   });
 
+  // The lazy useState initializer above only ever runs once, on the very
+  // first render -- and user is always null at that exact point (it's a
+  // separate piece of state that only resolves once subscribeToAuth's
+  // callback fires, asynchronously, below). So that initializer always
+  // read `user ? ... : null` as null, never actually reading the real
+  // localStorage value at all -- meaning a switched-to enterprise was
+  // *never* restored on reload, regardless of any other fix to how the
+  // fallback-to-ents[0] logic behaves once systemOwnerEnterpriseId is
+  // null. Read it again here, once user.id is actually known.
+  useEffect(() => {
+    if (!systemOwnerStorageKey) return;
+    try {
+      const stored = localStorage.getItem(systemOwnerStorageKey);
+      if (stored) setSystemOwnerEnterpriseId((prev) => prev ?? stored);
+    } catch (e) { console.warn('LocalStorage access failed', e); }
+  }, [systemOwnerStorageKey]);
+
   useEffect(() => {
     if (!systemOwnerStorageKey) return;
     try {
@@ -144,6 +161,17 @@ export default function App() {
         // an enterprise" route silently bouncing back to it. Validate
         // against what this session can actually see before trusting it.
         if (prev && ents.some((e) => e.id === prev)) return prev;
+        // A genuinely empty response can't confirm prev is invalid -- it's
+        // far more likely a transient/incomplete fetch than proof the
+        // selected enterprise disappeared. Switching to an enterprise via
+        // System Admin, then refreshing, hit exactly this: the correct id
+        // (read from localStorage on mount) got silently cleared to null by
+        // this callback's *first*, empty invocation, and a later, correct
+        // invocation then had no way to know null used to mean something --
+        // it just fell back to ents[0], reverting the switch on every
+        // reload. Only actually reset to ents[0] once we have real data to
+        // check prev against.
+        if (ents.length === 0) return prev;
         const first = ents[0]?.id ?? null;
         if (first && systemOwnerStorageKey) localStorage.setItem(systemOwnerStorageKey, first);
         return first;
@@ -549,7 +577,7 @@ function AuthenticatedApp({
     );
   }
 
-  if (!currentEnterprise && !loading && !isSystemOwner) {
+  if (!currentEnterprise && !loading && !isSystemOwner && !enterpriseSelectionPending) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[#F5F5F4] p-6">
         <div className="max-w-md w-full bg-white p-12 rounded-3xl shadow-sm text-center">
@@ -668,7 +696,7 @@ function AuthenticatedApp({
                 onSwitchEnterprise={(id) => {
                   setSystemOwnerEnterpriseId(id);
                   navigate('/');
-                }} 
+                }}
               />
             } />
             <Route path="/enterprise-admin" element={

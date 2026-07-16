@@ -67,11 +67,21 @@ export default function EnterpriseDashboard({ enterprise, userId, isSystemOwner 
   useEffect(() => {
     if (!enterprise) return;
 
+    // Switching enterprises otherwise left the *previous* enterprise's
+    // projects visible until the new subscription's first response
+    // arrived -- a real network round trip, long enough to be a visible
+    // flash of the wrong enterprise's data rather than an instant swap.
+    // Keyed on enterprise.id, not the enterprise object itself: App.tsx's
+    // subscribeById callback constructs a fresh Enterprise object on every
+    // realtime event, including ones unrelated to which enterprise is
+    // selected, and depending on the object would re-clear (and re-flash)
+    // projects on every one of those instead of only on an actual switch.
+    setProjects([]);
     return projectRepo.subscribeByEnterprise(enterprise.id, '', (allProjects) => {
       const filtered = isEnterpriseAdmin ? allProjects : allProjects.filter(p => p.users && p.users[userId]);
       setProjects(filtered);
     });
-  }, [enterprise, isEnterpriseAdmin, userId]);
+  }, [enterprise?.id, isEnterpriseAdmin, userId]);
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
