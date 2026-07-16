@@ -44,13 +44,14 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { 
-  Select, 
-  SelectContent, 
-  SelectItem, 
-  SelectTrigger, 
-  SelectValue 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
 } from '@/components/ui/select';
+import { useTheme } from 'next-themes';
 
 
 interface BulkChangeRecordsProps {
@@ -59,6 +60,8 @@ interface BulkChangeRecordsProps {
 }
 
 export default function BulkChangeRecords({ project, enterprise }: BulkChangeRecordsProps) {
+  const { theme: currentTheme } = useTheme();
+  const theme = currentTheme === 'dark' ? 'dark' : 'light';
   const changeRepo = useChangeRepo();
   const costRepo = useCostRepo();
   const [changes, setChanges] = useState<Change[]>([]);
@@ -545,7 +548,7 @@ export default function BulkChangeRecords({ project, enterprise }: BulkChangeRec
         </div>
 
         <div className="flex-1 min-h-0 bg-white dark:bg-[#141414] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden">
-          <div className="ag-theme-quartz-dark h-full w-full">
+          <div className={cn('ag-theme-quartz h-full w-full', theme === 'dark' ? 'ag-theme-quartz-dark' : '')}>
             <AgGridReact
               theme="legacy"
               ref={bulkRecordsGridRef}

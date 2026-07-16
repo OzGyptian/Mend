@@ -54,6 +54,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from '@/components/ui/select';
+import { useTheme } from 'next-themes';
 
 interface BulkRiskRecordsProps {
   project: Project;
@@ -61,6 +62,8 @@ interface BulkRiskRecordsProps {
 }
 
 export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecordsProps) {
+  const { theme: currentTheme } = useTheme();
+  const theme = currentTheme === 'dark' ? 'dark' : 'light';
   const riskRepo = useRiskRepo();
   const costRepo = useCostRepo();
   const [risks, setRisks] = useState<Risk[]>([]);
@@ -468,7 +471,7 @@ export default function BulkRiskRecords({ project, enterprise }: BulkRiskRecords
       </div>
 
       <div className="flex-1 bg-white dark:bg-[#141414] border-t border-gray-200 dark:border-white/10 overflow-hidden">
-        <div className="ag-theme-quartz-dark h-full w-full">
+        <div className={cn('ag-theme-quartz h-full w-full', theme === 'dark' ? 'ag-theme-quartz-dark' : '')}>
           <AgGridReact
             theme="legacy"
             ref={bulkRecordsGridRef} rowData={allRiskRecords} columnDefs={bulkRecordColumnDefs}
