@@ -19,7 +19,7 @@ export class PostgresUtilityAdapter implements UtilityRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`saved_views:${userId}:${tableId}`)
+      .channel(`saved_views:${userId}:${tableId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'saved_views', filter: `user_id=eq.${userId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -88,7 +88,7 @@ export class PostgresUtilityAdapter implements UtilityRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`sheet:${id}`)
+      .channel(`sheet:${id}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sheets', filter: `id=eq.${id}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

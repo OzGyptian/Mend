@@ -22,7 +22,7 @@ export class PostgresSubcontractAdapter implements SubcontractRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`subcontracts:${projectId}`)
+      .channel(`subcontracts:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'subcontracts', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -79,7 +79,7 @@ export class PostgresSubcontractAdapter implements SubcontractRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`subcontract_line_items:${subcontractId}`)
+      .channel(`subcontract_line_items:${subcontractId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'subcontract_line_items', filter: `subcontract_id=eq.${subcontractId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -106,7 +106,7 @@ export class PostgresSubcontractAdapter implements SubcontractRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`invoices:${projectId}`)
+      .channel(`invoices:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'invoices', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

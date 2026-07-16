@@ -22,12 +22,22 @@ export class PostgresUserRoleAdapter implements UserRoleRepository {
 
   subscribeUserRoles(uid: string, callback: (roles: UserRoles) => void): () => void {
     const fetchAndEmit = async () => {
-      const { data } = await supabase.from('user_roles').select('*').eq('user_id', uid).maybeSingle();
+      const { data, error } = await supabase.from('user_roles').select('*').eq('user_id', uid).maybeSingle();
+      if (error) {
+        console.error('UserRoleAdapter.subscribeUserRoles: failed to fetch roles', error);
+        return;
+      }
       callback(toUserRoles(data));
     };
     fetchAndEmit();
+    // useAuth() (which calls this) is used by 8+ components -- App.tsx,
+    // Sidebar, and several sub-panes -- all mounted concurrently on any
+    // authenticated page, each independently subscribing for the *same*
+    // uid. A channel name scoped only by uid still collides the moment two
+    // of those mount at once, which is every page load, not an edge case.
+    // Same root cause and fix as EnterpriseAdapter.subscribeAll().
     const channel = supabase
-      .channel(`user_roles:${uid}`)
+      .channel(`user_roles:${uid}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_roles', filter: `user_id=eq.${uid}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
