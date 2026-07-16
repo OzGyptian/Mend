@@ -53,6 +53,20 @@ export async function createFixtureProject(
   return data.id;
 }
 
+export async function createFixtureCostCode(
+  projectId: string,
+  code: string,
+  name: string,
+): Promise<string> {
+  const { data, error } = await adminClient
+    .from('cost_codes')
+    .insert({ project_id: projectId, code, name })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`createFixtureCostCode(${code}) failed: ${error?.message}`);
+  return data.id;
+}
+
 export async function makePlatformAdmin(userId: string, email: string): Promise<void> {
   const { error } = await adminClient
     .from('user_profiles')
