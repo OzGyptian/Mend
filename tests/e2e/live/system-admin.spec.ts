@@ -17,9 +17,14 @@ test.describe('System Admin', () => {
     await expect(page.getByText('System Administration')).toBeVisible({ timeout: 10000 });
     // Total: N summary in the page header -- fails closed if the list ever
     // renders empty (silently swallowed fetch error, RLS regression, etc.)
-    // rather than passing on a false-empty state.
-    const totalText = await page.getByText(/Total:\s*\d+/).textContent();
-    const total = Number(totalText?.match(/\d+/)?.[0] ?? 0);
-    expect(total).toBeGreaterThan(0);
+    // rather than passing on a false-empty state. Uses expect.poll instead
+    // of a one-shot read: the header shows "Total: 0" on first paint before
+    // the async fetch resolves, so reading it once (even after "System
+    // Administration" is visible) can catch that transient initial value
+    // rather than the real, settled count.
+    await expect.poll(async () => {
+      const totalText = await page.getByText(/Total:\s*\d+/).textContent();
+      return Number(totalText?.match(/\d+/)?.[0] ?? 0);
+    }, { timeout: 10000 }).toBeGreaterThan(0);
   });
 });

@@ -48,7 +48,7 @@ export default function App() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [showLanding, setShowLanding] = useState(true);
   const [isInIframe, setIsInIframe] = useState(false);
-  const { isPlatformAdmin: isSystemOwner } = useAuth();
+  const { isPlatformAdmin: isSystemOwner, loading: authLoading } = useAuth();
   // Scoped per user id -- a global key meant a platform admin's last-viewed
   // enterprise leaked into the *next* account signed into the same browser
   // (e.g. testing with one account, then a real user signs in on the same
@@ -114,21 +114,24 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!user || isSystemOwner) return;
+    // authLoading is true until useAuth()'s roles fetch resolves, during
+    // which isSystemOwner holds its default (false) value -- not yet known,
+    // not confirmed false. Without this gate, this effect fired on that
+    // default, subscribed a platform admin to the member-only path (correctly
+    // empty, since a platform admin usually isn't a real enterprise_members
+    // row), and set enterprisesLoaded=true from that wrong, empty result --
+    // which downstream code had no way to distinguish from a genuinely empty
+    // list, since both look identical: enterprisesLoaded=true, length 0.
+    if (!user || authLoading || isSystemOwner) return;
     return enterpriseRepo.subscribeByUserId(user.id, (ents) => {
       setEnterprises(ents);
       setEnterprisesLoaded(true);
       setSelectedEnterpriseId(prev => prev ?? ents[0]?.id ?? null);
     });
-    // isSystemOwner resolves asynchronously *after* user (it's a separate
-    // roles fetch in useAuth) -- without it in the deps, this effect's
-    // first run sees a stale isSystemOwner=false, subscribes on the wrong
-    // (member-only) path, and never re-subscribes once the real value
-    // comes in, since user?.id hasn't changed. Same fix mirrored below.
-  }, [user?.id, isSystemOwner]);
+  }, [user?.id, authLoading, isSystemOwner]);
 
   useEffect(() => {
-    if (!user || !isSystemOwner) return;
+    if (!user || authLoading || !isSystemOwner) return;
     return enterpriseRepo.subscribeAll(async (ents) => {
       setEnterprises(ents);
       setEnterprisesLoaded(true);
@@ -153,7 +156,7 @@ export default function App() {
         }
       }
     });
-  }, [user?.id, isSystemOwner]);
+  }, [user?.id, authLoading, isSystemOwner]);
 
   // Subscribe to the currently-selected enterprise and load its projects
   const activeEnterpriseId = isSystemOwner ? systemOwnerEnterpriseId : selectedEnterpriseId;
@@ -164,14 +167,20 @@ export default function App() {
       if (ent) projectRepo.listByEnterprise(ent.id).then(setProjects);
     });
   }, [user?.id, activeEnterpriseId]);
-  // True while an enterprise selection is genuinely still in flight --
-  // either the enterprise list itself hasn't loaded once yet, or it has
-  // and picked a target id whose record (subscribeById above) hasn't come
-  // back yet. Routes gated on currentEnterprise need this distinction:
-  // treating "not resolved yet" the same as "confirmed none available"
-  // caused a silent redirect to "/" on every fresh load or fast click,
-  // before the async chain had a chance to finish.
-  const enterpriseSelectionPending = !enterprisesLoaded || (!!activeEnterpriseId && !currentEnterprise);
+  // True while an enterprise selection is genuinely still in flight.
+  // enterprisesLoaded and the setSystemOwnerEnterpriseId/setSelectedEnterpriseId
+  // call that picks activeEnterpriseId come from the *same* subscribeAll/
+  // subscribeByUserId callback, but React doesn't guarantee both state
+  // updates are visible in the same render -- there's a real render where
+  // enterprisesLoaded is already true but activeEnterpriseId hasn't caught
+  // up yet, even though enterprises.length > 0 proves one is coming. Without
+  // accounting for that, this looked "resolved" (enterprisesLoaded=true,
+  // activeEnterpriseId=null treated as "confirmed none") for exactly one
+  // render, which was enough to redirect away before the real value landed.
+  const enterpriseSelectionPending =
+    !enterprisesLoaded ||
+    (enterprises.length > 0 && !activeEnterpriseId) ||
+    (!!activeEnterpriseId && !currentEnterprise);
 
   useEffect(() => {
     if (!user || !currentProject?.id) return;
