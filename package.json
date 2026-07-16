@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.137",
+  "version": "1.0.138",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -17,6 +17,7 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report",
+    "test:e2e:live": "PLAYWRIGHT_INCLUDE_LIVE=1 dotenv -e .env.local -- playwright test tests/e2e/live",
     "test:rules": "firebase emulators:exec --only firestore --project mend-rules-test \"vitest run --config vitest.rules.config.ts\"",
     "test:postgres": "dotenv -e .env.local -- vitest run --config vitest.postgres.config.ts",
     "dev:memory": "VITE_ADAPTER=memory vite --port 5178 --strictPort",

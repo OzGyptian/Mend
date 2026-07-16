@@ -1,0 +1,75 @@
+name: Post-deploy smoke test
+
+# Runs the live e2e suite (tests/e2e/live/) against the actual deployed
+# production URL after every push to main, waiting for Vercel's deployment
+# to finish first. Catches bugs the memory-adapter e2e suite structurally
+# can't see -- real Supabase Auth, real RLS, real Supabase Realtime -- the
+# kind of thing that otherwise only gets found by a person clicking around
+# after the fact. Also runnable manually against any URL (e.g. a PR preview)
+# via workflow_dispatch.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "URL to test (defaults to production)"
+        required: false
+        default: "https://mend-app-tan.vercel.app"
+
+jobs:
+  wait-for-deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      target_url: ${{ steps.set-url.outputs.target_url }}
+    steps:
+      - name: Wait for Vercel deployment status via GitHub API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for i in $(seq 1 20); do
+            state=$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/status" --jq '.statuses[] | select(.context == "Vercel") | .state' | head -1)
+            echo "attempt $i: state=$state"
+            if [ "$state" = "success" ]; then exit 0; fi
+            if [ "$state" = "failure" ] || [ "$state" = "error" ]; then
+              echo "::error::Vercel deployment reported $state -- skipping smoke test."
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "::error::Timed out waiting for Vercel deployment status."
+          exit 1
+      - id: set-url
+        run: echo "target_url=https://mend-app-tan.vercel.app" >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    needs: [wait-for-deploy]
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.wait-for-deploy.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run live smoke test
+        env:
+          PLAYWRIGHT_INCLUDE_LIVE: "1"
+          LIVE_BASE_URL: ${{ github.event_name == 'workflow_dispatch' && inputs.target_url || needs.wait-for-deploy.outputs.target_url }}
+          TEST_EMAIL: ${{ secrets.TEST_EMAIL }}
+          TEST_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+        run: npx playwright test tests/e2e/live
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-test-report
+          path: playwright-report/
+          retention-days: 14
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::Live smoke test failed against $LIVE_BASE_URL -- production may be broken. Check the playwright-report artifact."
