@@ -18,7 +18,7 @@ export class PostgresProcurementAdapter implements ProcurementRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`procurement_items:${projectId}`)
+      .channel(`procurement_items:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'procurement_items', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -73,7 +73,7 @@ export class PostgresProcurementAdapter implements ProcurementRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`step_defs_project:${projectId}`)
+      .channel(`step_defs_project:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'procurement_step_definitions', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -86,7 +86,7 @@ export class PostgresProcurementAdapter implements ProcurementRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`step_defs_enterprise:${enterpriseId}`)
+      .channel(`step_defs_enterprise:${enterpriseId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'procurement_step_definitions', filter: `enterprise_id=eq.${enterpriseId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };

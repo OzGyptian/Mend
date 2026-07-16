@@ -23,7 +23,7 @@ export class PostgresRiskAdapter implements RiskRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`risks:${projectId}`)
+      .channel(`risks:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'risks', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -79,7 +79,7 @@ export class PostgresRiskAdapter implements RiskRepository {
     };
     fetchAndEmit();
     const channel = supabase
-      .channel(`risk_records:${projectId}`)
+      .channel(`risk_records:${projectId}:${crypto.randomUUID()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'risk_records', filter: `project_id=eq.${projectId}` }, fetchAndEmit)
       .subscribe();
     return () => { supabase.removeChannel(channel); };
