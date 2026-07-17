@@ -58,10 +58,7 @@ export function useAuth(): AuthState {
     };
   }, [auth, userRole]);
 
-  const SYSTEM_OWNER_EMAILS = ['tarek.guindy@gmail.com', 'tarek_guindy@hotmail.com'];
-  const isPlatformAdmin =
-    roles?.platformRole === 'platform_admin' ||
-    SYSTEM_OWNER_EMAILS.includes(user?.email?.toLowerCase() ?? '');
+  const isPlatformAdmin = roles?.platformRole === 'platform_admin';
 
   const enterpriseRole = (enterpriseId: string): EnterpriseRole | null => {
     if (isPlatformAdmin) return 'enterprise_admin';
