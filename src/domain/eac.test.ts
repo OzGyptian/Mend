@@ -3,6 +3,7 @@ import {
   computeApprovedBudget,
   computeCostVariance,
   computeEacEtc,
+  computeForecastRowEac,
   computeMovement,
   computePeriodEndFields,
 } from './eac';
@@ -107,5 +108,31 @@ describe('computePeriodEndFields', () => {
     expect(result.eac).toBe(500_000);
     expect(result.etc).toBe(350_000);
     expect(result.costVariance).toBe(0);
+  });
+});
+
+describe('computeForecastRowEac', () => {
+  it('commitment method: EAC = qty × rate, ETC = EAC − actuals', () => {
+    const { eac, etc } = computeForecastRowEac('commitment', 10, 150, 800, 0);
+    expect(eac).toBe(1500);
+    expect(etc).toBe(700);
+  });
+
+  it('non-commitment method: EAC = actuals + costToGo', () => {
+    const { eac, etc } = computeForecastRowEac('ETC', 0, 0, 300, 200);
+    expect(eac).toBe(500);
+    expect(etc).toBe(200);
+  });
+
+  it('ETC is floored at 0 when actuals exceed EAC', () => {
+    const { eac, etc } = computeForecastRowEac('commitment', 5, 100, 800, 0);
+    expect(eac).toBe(500);
+    expect(etc).toBe(0);
+  });
+
+  it('all-zero inputs return zero', () => {
+    const { eac, etc } = computeForecastRowEac('commitment', 0, 0, 0, 0);
+    expect(eac).toBe(0);
+    expect(etc).toBe(0);
   });
 });

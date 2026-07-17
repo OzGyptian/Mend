@@ -39,6 +39,23 @@ export function computeMovement(current: number, previous: number): number {
 }
 
 /**
+ * EAC and ETC for a single forecast-grid row.
+ * commitment method: EAC = qty × rate (locked commitment value).
+ * All other methods: EAC = actuals to date + cost to go.
+ * ETC is always EAC − actuals, floored at 0.
+ */
+export function computeForecastRowEac(
+  forecastMethod: string,
+  qty: number,
+  rate: number,
+  actualCostToDate: number,
+  costToGo: number,
+): { eac: number; etc: number } {
+  const eac = forecastMethod === 'commitment' ? qty * rate : actualCostToDate + costToGo;
+  return { eac, etc: Math.max(0, eac - actualCostToDate) };
+}
+
+/**
  * Derive all period-end EAC fields from leaves in one call.
  * Used by the onCellValueChanged handler in CostCodes.
  */

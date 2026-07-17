@@ -12,6 +12,7 @@ import TimeSchedule from './TimeSchedule';
 import Invoicing from './Invoicing';
 import ErrorBoundary from './ErrorBoundary';
 import { cn } from '../lib/utils';
+import { computeForecastRowEac } from '../domain/eac';
 import { 
   Plus, 
   FileText, 
@@ -63,10 +64,7 @@ export default function ProjectDashboard({ project, enterprise, currentModule, s
         let totalEac = 0;
         let totalEtc = 0;
         rows.forEach(r => {
-          const eac = sheet.forecastMethod === 'commitment'
-            ? (r.qty || 0) * (r.rate || 0)
-            : (r.actualCostToDate || 0) + (r.costToGo || 0);
-          const etc = Math.max(0, eac - (r.actualCostToDate || 0));
+          const { eac, etc } = computeForecastRowEac(sheet.forecastMethod, r.qty || 0, r.rate || 0, r.actualCostToDate || 0, r.costToGo || 0);
           totalEac += eac;
           totalEtc += etc;
         });

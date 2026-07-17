@@ -7,6 +7,7 @@ import AgGridSheet, { AgGridSheetRef } from './AgGridSheet';
 import { useCostRepo, useUtilityRepo, useAuthRepo } from '../platform/firestore/hooks';
 import * as XLSX from 'xlsx';
 import { useConfirm } from './ConfirmDialogProvider';
+import { computeForecastRowEac } from '../domain/eac';
 
 interface ForecastGridProps {
   sheet: Sheet;
@@ -316,15 +317,14 @@ export default function ForecastGrid({ sheet, project, enterprise, theme }: Fore
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">Total EAC</span>
             <span className="text-sm font-mono font-bold dark:text-white">${rows.reduce((acc, r) => {
-              const eac = sheet.forecastMethod === 'commitment' ? (r.qty || 0) * (r.rate || 0) : (r.actualCostToDate || 0) + (r.costToGo || 0);
+              const { eac } = computeForecastRowEac(sheet.forecastMethod, r.qty || 0, r.rate || 0, r.actualCostToDate || 0, r.costToGo || 0);
               return acc + eac;
             }, 0).toLocaleString()}</span>
           </div>
           <div className="flex flex-col">
             <span className="text-[10px] uppercase tracking-widest text-gray-400 font-bold">Total ETC</span>
             <span className="text-sm font-mono font-bold text-blue-600 dark:text-blue-400">${rows.reduce((acc, r) => {
-              const eac = sheet.forecastMethod === 'commitment' ? (r.qty || 0) * (r.rate || 0) : (r.actualCostToDate || 0) + (r.costToGo || 0);
-              const etc = Math.max(0, eac - (r.actualCostToDate || 0));
+              const { eac, etc } = computeForecastRowEac(sheet.forecastMethod, r.qty || 0, r.rate || 0, r.actualCostToDate || 0, r.costToGo || 0);
               return acc + etc;
             }, 0).toLocaleString()}</span>
           </div>
