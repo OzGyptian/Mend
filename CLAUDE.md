@@ -296,12 +296,17 @@ After sign-off, write agreed design into PLAN.md `## In Progress` section and co
 Write → type-check → version bump → commit. One logical layer at a time.
 
 ```bash
-npm version patch --no-git-tag-version   # bumps 1.0.0 → 1.0.1
+npm version prerelease --preid=beta --no-git-tag-version   # 0.2.0-beta.0 → 0.2.0-beta.1
 git add package.json package-lock.json
 git commit -m "refactor: ..."
 ```
 
 Every feature/fix/refactor commit must include a version bump.
+
+**Versioning convention:**
+- `0.1.x` — Tarek's original Firestore build (historical)
+- `0.2.x-beta.N` — Current Postgres/Supabase build (pre-production)
+- `1.0.0` — First live production deployment (drops the beta tag)
 
 ---
 
