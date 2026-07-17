@@ -859,8 +859,8 @@ These are the structural weaknesses identified during the system audit (see `doc
 
 | Gap | Tables Affected | Change |
 |-----|----------------|--------|
-| **F1: Cross-tenant FK references** | `risk_records`, `change_records`, `progress_items`, `subcontract_line_items` | Add composite FK (`project_id`, `cost_code_id`) to enforce that a cost code must belong to the same project as the referencing record |
-| **D10: Null-means-inherit** | `cost_codes`, potentially others | Document or enforce whether NULL in certain columns means "inherit from project default" |
+| **F1: Cross-tenant FK references** | `risk_records`, `change_records`, `progress_items`, `subcontract_line_items` | Add composite FK (`project_id`, `cost_code_id`) to enforce that a cost code must belong to the same project as the referencing record. **Blocked on cost code ownership decision (enterprise vs project scope)** |
+| **D10: Null-means-inherit** | `projects` (14 settings columns) | ✅ **Done** — migrations 0039/0040: 7 enum columns nullable (null=inherit from enterprise), 7 attribute columns nullable (null=no project-specific attrs, additive model). `resolveProjectSettings()` in `src/domain/settings.ts` applies COALESCE for enum fields only. `ProjectAdapter` fetches enterprise settings and applies resolution on every read. |
 
 ### Wave 3 — Hygiene
 
@@ -873,4 +873,4 @@ These are the structural weaknesses identified during the system audit (see `doc
 
 ---
 
-*Last updated: 2026-07-17. Wave 1 remediation complete (A1, D1, D3/F3/A2). See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*
+*Last updated: 2026-07-17. Wave 1 complete (A1, D1, D3/F3/A2). D10 complete (project settings inheritance). D9 complete (baseline_budget trigger). D2 complete (user_roles.memberships dropped). A3 complete (computeForecastRowEac extracted). F1 blocked on cost code ownership decision. See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*
