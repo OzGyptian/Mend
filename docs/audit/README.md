@@ -23,9 +23,14 @@ client-side check is UX, not security.
 | 2 — Data model structural audit | [phase-2-data-model.md](phase-2-data-model.md) | ✅ complete — D1 (free-text enum drift) HIGH; hierarchy assessed |
 | 3 — Boundary/adapter audit | [phase-3-adapters.md](phase-3-adapters.md) | ✅ complete — P3-0 CRITICAL LIVE (risk create broken in prod, FIXED via #10 merge); boundary code otherwise clean |
 | 4 — Application logic audit | [phase-4-app-logic.md](phase-4-app-logic.md) | ✅ complete — A1 (ESLint enforces almost nothing) HIGH, systemic root of auth-timing bug cluster |
-| 5 — Report & remediation roadmap | [phase-5-report.md](phase-5-report.md) | not started |
+| 5 — Report & remediation roadmap | [phase-5-report.md](phase-5-report.md) | ✅ complete — full findings register + 3-wave roadmap |
 
-Checkpoint with Bernard after Phase 1 before continuing.
+**AUDIT COMPLETE.** See [phase-5-report.md](phase-5-report.md) for the executive summary,
+ranked findings register, and remediation roadmap.
+
+GitHub issues filed: #23 (F1), #24 (A1 ESLint), #25 (D1 enum drift), #26 (process/shared DB).
+Folds in existing #12, #13, #15, #18. One CRITICAL live issue (P3-0) was fixed during the
+audit (PR #10).
 
 ## Severity scale
 
