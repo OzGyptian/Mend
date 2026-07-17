@@ -9,35 +9,32 @@ test.describe('Project Navigation', () => {
     await expect(sidebarLinks.first()).toBeVisible({ timeout: 10000 });
   });
 
-  test('can navigate to a project from the sidebar', async ({ authPage: page }) => {
-    // Find the first clickable project-like link in the sidebar
-    const projectLink = page.locator('nav a').first();
-    const exists = await projectLink.count();
-    if (exists === 0) {
-      test.skip(); // No projects configured yet
+  test('can navigate to a project from the dashboard grid', async ({ authPage: page }) => {
+    await expect(page.getByText('Active Projects')).toBeVisible({ timeout: 10000 });
+    // Projects are AG Grid rows, not links: the pinned "Project ID" cell is a
+    // clickable span that navigates via window.location.href -> /project/:id.
+    // Exclude the pinned TOTAL summary row.
+    const projectCell = page.getByTestId('project-code-link').filter({ hasNotText: 'TOTAL' }).first();
+    if (await projectCell.count() === 0) {
+      test.skip(); // enterprise has no projects
       return;
     }
-    const href = await projectLink.getAttribute('href');
-    if (href) {
-      await page.goto(href);
-      await page.waitForLoadState('domcontentloaded');
-      await expect(page.locator('nav').first()).toBeVisible({ timeout: 10000 });
-    }
+    await projectCell.click();
+    await expect(page).toHaveURL(/\/project\/[0-9a-f-]{36}/, { timeout: 10000 });
+    await expect(page.locator('nav').first()).toBeVisible({ timeout: 10000 });
   });
 
   test('project route renders without crashing', async ({ authPage: page }) => {
-    // If there are any project IDs visible we can navigate to them
-    const links = await page.locator('a[href*="/project/"]').all();
-    if (links.length === 0) {
-      test.skip(); // No projects to test against
+    await expect(page.getByText('Active Projects')).toBeVisible({ timeout: 10000 });
+    const projectCell = page.getByTestId('project-code-link').filter({ hasNotText: 'TOTAL' }).first();
+    if (await projectCell.count() === 0) {
+      test.skip(); // enterprise has no projects
       return;
     }
-    const href = await links[0].getAttribute('href');
-    if (href) {
-      await page.goto(href);
-      await page.waitForLoadState('domcontentloaded');
-      // App should not crash — nav still present
-      await expect(page.locator('nav').first()).toBeVisible({ timeout: 10000 });
-    }
+    await projectCell.click();
+    await expect(page).toHaveURL(/\/project\//, { timeout: 10000 });
+    // App should not have hit an error boundary
+    await expect(page.getByText(/something went wrong|application error/i)).toHaveCount(0);
+    await expect(page.locator('nav').first()).toBeVisible({ timeout: 10000 });
   });
 });

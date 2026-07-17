@@ -55,6 +55,7 @@ export function buildProjectColumnDefs(deps: ProjectColumnDeps): any[] {
       cellRenderer: (params: any) => {
         return (
           <span
+            data-testid="project-code-link"
             className="text-blue-600 dark:text-blue-400 hover:underline cursor-pointer font-mono uppercase text-xs font-bold"
             onClick={(e) => {
               e.preventDefault();
