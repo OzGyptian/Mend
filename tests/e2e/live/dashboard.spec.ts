@@ -20,15 +20,18 @@ test.describe('Enterprise Dashboard', () => {
     // very first action, hitting the same in-flight-selection window the
     // app's own loading state (RouteLoadingFallback) exists to cover.
     await expect(page.getByText('Active Projects')).toBeVisible({ timeout: 10000 });
-    // Not networkidle: this app holds persistent Supabase Realtime
-    // websocket connections, so network activity never actually goes idle.
-    // A short fixed wait is the pragmatic tool here for a known, narrow,
-    // sub-second race in the app's own enterprise-selection resolution
-    // (see App.tsx's enterpriseSelectionPending) -- real users always clear
-    // it just by virtue of needing to see the page before they can click it.
-    await page.waitForTimeout(1000);
-    await page.getByRole('button', { name: /my profile/i }).click();
-    await expect(page.getByText('User Profile')).toBeVisible({ timeout: 10000 });
+    // The /profile route redirects to "/" while currentEnterprise is still
+    // resolving (see App.tsx's enterpriseSelectionPending). A fixed wait is
+    // not robust: under parallel load the selection race can outlast it, the
+    // click lands during the redirect window, and the panel never opens.
+    // Instead retry the click-and-assert until the enterprise has hydrated --
+    // a real user necessarily clicks after the page has settled anyway.
+    // Not networkidle: this app holds persistent Supabase Realtime websockets,
+    // so network activity never actually goes idle.
+    await expect(async () => {
+      await page.getByRole('button', { name: /my profile/i }).click();
+      await expect(page.getByText('User Profile')).toBeVisible({ timeout: 2000 });
+    }).toPass({ timeout: 15000 });
   });
 
   test('unknown routes stay in the app (SPA fallback)', async ({ authPage: page }) => {
