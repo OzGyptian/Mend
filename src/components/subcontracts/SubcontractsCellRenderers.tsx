@@ -5,9 +5,10 @@ import { ICellRendererParams } from 'ag-grid-community';
 import { cn } from '@/lib/utils';
 
 export const ActionsCellRenderer = (params: any) => {
-  if (params.node.rowPinned) return null;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
+
+  if (params.node.rowPinned) return null;
 
   const {
     setSelectedSubcontractId,
@@ -125,10 +126,11 @@ export const ActionsCellRenderer = (params: any) => {
 };
 
 export const InvoiceActionsCellRenderer = (params: ICellRendererParams) => {
-  if (params.node.rowPinned) return null;
-  const { setSelectedInvoiceId, setEditingInvoiceId, setIsAddingInvoice, setInvoiceFormData, setInvoiceDeleteConfirm } = params.context;
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const { setSelectedInvoiceId, setEditingInvoiceId, setIsAddingInvoice, setInvoiceFormData, setInvoiceDeleteConfirm } = params.context;
+
+  if (params.node.rowPinned) return null;
 
   const getMenuPosition = () => {
     if (!menuRef.current) return { top: 0, right: 0 };

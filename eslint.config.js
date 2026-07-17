@@ -1,18 +1,38 @@
 import tseslint from '@typescript-eslint/eslint-plugin';
 import tsParser from '@typescript-eslint/parser';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 const FIREBASE_BOUNDARY_MESSAGE =
   'Firebase must only be imported inside src/platform/. Use a repo hook (useCostRepo, useAuthRepo, etc.) instead.';
 
 export default [
-  // All TS/TSX files get the TypeScript parser
+  // All TS/TSX files: TypeScript parser + plugins
   {
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: { parser: tsParser },
-    plugins: { '@typescript-eslint': tseslint },
+    plugins: {
+      '@typescript-eslint': tseslint,
+      'react-hooks': reactHooks,
+    },
+    rules: {
+      // React hooks correctness — catches auth-timing bugs at lint time
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
+
+      // TypeScript quality ratchet — warn not error to avoid blocking existing code
+      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+    },
   },
 
-  // Enforce firebase boundary on everything OUTSIDE src/platform/
+  // Firebase boundary: block direct firebase imports outside src/platform/
   {
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/platform/**'],
@@ -20,7 +40,6 @@ export default [
       'no-restricted-imports': [
         'error',
         {
-          // Exact package names
           paths: [
             { name: 'firebase', message: FIREBASE_BOUNDARY_MESSAGE },
             { name: 'firebase/app', message: FIREBASE_BOUNDARY_MESSAGE },
@@ -29,7 +48,6 @@ export default [
             { name: 'firebase/storage', message: FIREBASE_BOUNDARY_MESSAGE },
             { name: 'firebase/functions', message: FIREBASE_BOUNDARY_MESSAGE },
           ],
-          // Catch any other firebase/* subpath not listed above
           patterns: [
             {
               group: ['firebase/*'],

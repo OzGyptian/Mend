@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "1.0.141",
+  "version": "1.0.145",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -94,6 +94,7 @@
     "autoprefixer": "^10.4.21",
     "dotenv-cli": "^11.0.0",
     "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "firebase-tools": "^15.23.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",

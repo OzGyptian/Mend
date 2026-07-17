@@ -305,6 +305,24 @@ Every feature/fix/refactor commit must include a version bump.
 
 ---
 
+## Migration Process
+
+**Never apply migrations out-of-band (direct SQL in Supabase Studio or psql).** All schema changes must go through migration files in `supabase/migrations/` and be applied via:
+
+```bash
+npx supabase db push   # applies pending migrations to the configured project
+```
+
+This is the lesson from incident P3-0 (2026-07-xx): a migration was applied directly in Supabase Studio while the deployed code expected the old schema, causing a production breakage in risk-record creation.
+
+**Rules:**
+1. Every schema change has a migration file in `supabase/migrations/` before it is applied.
+2. Migration files are applied via `npx supabase db push`, not through the Studio SQL editor.
+3. Code that depends on a migration change must be committed in the same PR, so they move together.
+4. When a real production deployment exists: production migrations must run through CI before the code deploy, not after.
+
+---
+
 ## Branch Strategy
 
 The platform-seam refactor (Firestore → Postgres/Supabase) is complete and merged. As of 2026-07-16, Mend is in active parallel development, not a single gated refactor — both Bernard and Tarek work directly on `main` via short-lived feature branches.

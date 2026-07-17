@@ -1,0 +1,50 @@
+# Full System Audit — Mend
+
+Started 2026-07-17. Bernard requested a ground-up audit of the database structure and
+coding logic, motivated by a week of bugs that all traced back to the same root:
+the data model was translated from Firestore rather than designed for relational
+multi-tenancy.
+
+**Target architecture being audited against:** a multi-tenanted system (Salesforce-style)
+where enterprises are securely isolated from each other, with a future hierarchy of
+enterprise → departments → sub-departments → projects. Today the model is flat
+(enterprise → projects); the hierarchy is directional, not yet built.
+
+**Key architectural fact that shapes the whole audit:** there is no backend API — the
+browser talks directly to Postgres. RLS is the *only* real tenant boundary. Every
+client-side check is UX, not security.
+
+## Phase structure
+
+| Phase | File | Status |
+|-------|------|--------|
+| 0 — Ground truth inventory | [phase-0-inventory.md](phase-0-inventory.md) | ✅ complete |
+| 1 — Tenant isolation audit | [phase-1-tenancy.md](phase-1-tenancy.md) | ✅ complete — 1 CRITICAL (F1), boundary otherwise holds |
+| 2 — Data model structural audit | [phase-2-data-model.md](phase-2-data-model.md) | ✅ complete — D1 (free-text enum drift) HIGH; hierarchy assessed |
+| 3 — Boundary/adapter audit | [phase-3-adapters.md](phase-3-adapters.md) | ✅ complete — P3-0 CRITICAL LIVE (risk create broken in prod, FIXED via #10 merge); boundary code otherwise clean |
+| 4 — Application logic audit | [phase-4-app-logic.md](phase-4-app-logic.md) | ✅ complete — A1 (ESLint enforces almost nothing) HIGH, systemic root of auth-timing bug cluster |
+| 5 — Report & remediation roadmap | [phase-5-report.md](phase-5-report.md) | ✅ complete — full findings register + 3-wave roadmap |
+
+**AUDIT COMPLETE.** See [phase-5-report.md](phase-5-report.md) for the executive summary,
+ranked findings register, and remediation roadmap.
+
+GitHub issues filed: #23 (F1), #24 (A1 ESLint), #25 (D1 enum drift), #26 (process/shared DB).
+Folds in existing #12, #13, #15, #18. One CRITICAL live issue (P3-0) was fixed during the
+audit (PR #10).
+
+## Severity scale
+
+- **CRITICAL** — tenant isolation breach: one enterprise can read/write another's data
+- **HIGH** — silent data corruption or loss possible
+- **MEDIUM** — drift trap: two sources of truth that will diverge (e.g. platform_role in two tables)
+- **LOW** — hygiene: naming, missing indexes, style
+
+## Standing context
+
+- Scratch Supabase project `hryshufihwwcdurlqysy` — synthetic data only, no production
+- `smoke-test@mend-test.invalid` holds permanent platform_admin (dev-phase decision);
+  adversarial tests must use NON-admin users so admin bypass doesn't mask isolation holes
+- Existing GitHub issues #12 (DB audit), #13 (SYSTEM_OWNER_EMAILS), #15 (ETL financial
+  fields) fold into this audit rather than being duplicated
+- Test suites: `npm run test` (unit), `npm run test:postgres` (integration, live DB),
+  `npx playwright test` (e2e memory), `npm run test:e2e:live` (e2e vs deployed URL)
