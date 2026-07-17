@@ -299,7 +299,10 @@ export default function Sidebar({
           <div className="px-3 pt-2">
             <div className="flex items-center justify-between text-[10px] font-mono text-gray-900 dark:text-white/20 uppercase tracking-widest">
               <span>Version</span>
-              <span>{version}</span>
+              <span className="flex items-center gap-1">
+                {version}
+                <span className="px-1 py-px rounded text-[8px] font-bold uppercase tracking-widest bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">Beta</span>
+              </span>
             </div>
           </div>
         )}
