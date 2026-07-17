@@ -866,11 +866,13 @@ These are the structural weaknesses identified during the system audit (see `doc
 
 | Gap | Tables Affected | Change |
 |-----|----------------|--------|
-| **D2: Dead representations** | `user_roles.memberships` | Drop after migrating write paths away from `user_roles`. Note: `sheets.users` (SheetSettings) and `subcontracts.vendor_users` (RLS vendor-access policy) are NOT dead — the audit was wrong about those two. |
-| **D9: Stored derived value** | `cost_codes.baseline_budget` | Either enforce via trigger (DB-option 2) or compute on read (option 1) |
-| **Audit log hardening** | `audit_logs` | Move actor resolution server-side so it cannot be spoofed |
-| **D4: procurement_items.package_id** | `procurement_items` | Evaluate whether this should be a FK to a `procurement_packages` table |
+| **D2: Dead representations** | `user_roles.memberships` | ✅ **Done** — migration 0041 drops column; Supabase UserRoleAdapter now writes to `enterprise_members`/`project_members` directly. |
+| **D9: Stored derived value** | `cost_codes.baseline_budget` | ✅ **Done** — migration 0042 adds AFTER INSERT/UPDATE/DELETE trigger on `baseline_budgets`; back-fill applied. |
+| **A3: EAC formula duplication** | `ForecastGrid.tsx`, `ProjectDashboard.tsx` | ✅ **Done** — `computeForecastRowEac()` extracted to `src/domain/eac.ts`; both components call canonical function. |
+| **Calendars XOR CHECK** | `calendars` | ✅ **Done** — migration 0043 adds CHECK constraint enforcing exactly one of enterprise_id/project_id is set. |
+| **Audit log hardening** | `audit_logs` | ✅ **Done** — migration 0045 adds BEFORE INSERT trigger that overwrites actor_user_id/actor_email from auth.uid(); service-role inserts pass through. |
+| **D4: procurement_items.package_id** | `procurement_items` | ✅ **Done** — migration 0044 drops the dead text column (no code read it; progress_items.package_id is a separate concept with a real FK). |
 
 ---
 
-*Last updated: 2026-07-17. Wave 1 complete (A1, D1, D3/F3/A2). D10 complete (project settings inheritance). D9 complete (baseline_budget trigger). D2 complete (user_roles.memberships dropped). A3 complete (computeForecastRowEac extracted). F1 blocked on cost code ownership decision. See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*
+*Last updated: 2026-07-17. Wave 1–3 complete except F1 (blocked on cost code ownership decision). All hygiene items done: D2, D4, D9, D10, A3, calendars XOR CHECK, audit log hardening. See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*

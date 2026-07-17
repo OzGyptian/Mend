@@ -1024,7 +1024,6 @@ export type Database = {
           description: string
           enterprise_attributes: Json
           id: string
-          package_id: string | null
           project_attributes: Json
           project_id: string
           step_data: Json
@@ -1037,7 +1036,6 @@ export type Database = {
           description: string
           enterprise_attributes?: Json
           id?: string
-          package_id?: string | null
           project_attributes?: Json
           project_id: string
           step_data?: Json
@@ -1050,7 +1048,6 @@ export type Database = {
           description?: string
           enterprise_attributes?: Json
           id?: string
-          package_id?: string | null
           project_attributes?: Json
           project_id?: string
           step_data?: Json
