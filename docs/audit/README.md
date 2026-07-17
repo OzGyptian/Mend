@@ -21,8 +21,8 @@ client-side check is UX, not security.
 | 0 — Ground truth inventory | [phase-0-inventory.md](phase-0-inventory.md) | ✅ complete |
 | 1 — Tenant isolation audit | [phase-1-tenancy.md](phase-1-tenancy.md) | ✅ complete — 1 CRITICAL (F1), boundary otherwise holds |
 | 2 — Data model structural audit | [phase-2-data-model.md](phase-2-data-model.md) | ✅ complete — D1 (free-text enum drift) HIGH; hierarchy assessed |
-| 3 — Boundary/adapter audit | [phase-3-adapters.md](phase-3-adapters.md) | ✅ complete — P3-0 CRITICAL LIVE (risk create broken in prod); boundary code otherwise clean |
-| 4 — Application logic audit | [phase-4-app-logic.md](phase-4-app-logic.md) | not started |
+| 3 — Boundary/adapter audit | [phase-3-adapters.md](phase-3-adapters.md) | ✅ complete — P3-0 CRITICAL LIVE (risk create broken in prod, FIXED via #10 merge); boundary code otherwise clean |
+| 4 — Application logic audit | [phase-4-app-logic.md](phase-4-app-logic.md) | ✅ complete — A1 (ESLint enforces almost nothing) HIGH, systemic root of auth-timing bug cluster |
 | 5 — Report & remediation roadmap | [phase-5-report.md](phase-5-report.md) | not started |
 
 Checkpoint with Bernard after Phase 1 before continuing.
