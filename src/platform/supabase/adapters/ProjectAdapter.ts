@@ -1,7 +1,8 @@
 import { supabase } from '../client';
 import { toRow, fromRow } from '../caseConvert';
 import type { Database } from '../database.types';
-import type { Project, Sheet } from '../../../domain/types';
+import type { Enterprise, Project, Sheet } from '../../../domain/types';
+import { resolveProjectSettings } from '../../../domain/settings';
 import type { ProjectRepository } from '../../ports/project.port';
 import type { Unsubscribe } from '../../ports/index';
 
@@ -23,11 +24,30 @@ async function resolveUserId(email: string): Promise<string | null> {
   return data?.user_id ?? null;
 }
 
+const ENTERPRISE_SETTINGS_SELECT =
+  'categories,control_accounts,order_numbers,cost_elements,' +
+  'cost_code_attributes,subcontract_attributes,change_attributes,risk_attributes,' +
+  'procurement_attributes,progress_attributes,change_types,risk_types,' +
+  'line_item_attributes,resource_rates';
+
+async function fetchEnterpriseSettings(enterpriseId: string): Promise<Enterprise | null> {
+  const { data } = await supabase
+    .from('enterprises')
+    .select(ENTERPRISE_SETTINGS_SELECT)
+    .eq('id', enterpriseId)
+    .maybeSingle();
+  return data ? fromRow<Enterprise>(data as unknown as Record<string, unknown>) : null;
+}
+
+
 export class PostgresProjectAdapter implements ProjectRepository {
   async get(projectId: string): Promise<Project | null> {
     const { data, error } = await supabase.from('projects').select('*').eq('id', projectId).maybeSingle();
     if (error) throw error;
-    return data ? attachMembers(fromRow<Project>(data)) : null;
+    if (!data) return null;
+    const enterprise = await fetchEnterpriseSettings(data.enterprise_id);
+    const project = fromRow<Project>(data);
+    return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
   }
 
   async list(enterpriseId: string, userEmail: string): Promise<Project[]> {
@@ -45,9 +65,15 @@ export class PostgresProjectAdapter implements ProjectRepository {
     const { data: memberships } = await supabase.from('project_members').select('project_id').eq('user_id', userId);
     const projectIds = (memberships ?? []).map((m) => m.project_id);
     if (projectIds.length === 0) return [];
-    const { data, error } = await supabase.from('projects').select('*').eq('enterprise_id', enterpriseId).in('id', projectIds);
+    const [{ data, error }, enterprise] = await Promise.all([
+      supabase.from('projects').select('*').eq('enterprise_id', enterpriseId).in('id', projectIds),
+      fetchEnterpriseSettings(enterpriseId),
+    ]);
     if (error) throw error;
-    return Promise.all((data ?? []).map((row) => attachMembers(fromRow<Project>(row))));
+    return Promise.all((data ?? []).map((row) => {
+      const project = fromRow<Project>(row);
+      return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
+    }));
   }
 
   subscribe(projectId: string, callback: (project: Project | null) => void): Unsubscribe {
@@ -75,9 +101,15 @@ export class PostgresProjectAdapter implements ProjectRepository {
   }
 
   async listByEnterprise(enterpriseId: string): Promise<Project[]> {
-    const { data, error } = await supabase.from('projects').select('*').eq('enterprise_id', enterpriseId);
+    const [{ data, error }, enterprise] = await Promise.all([
+      supabase.from('projects').select('*').eq('enterprise_id', enterpriseId),
+      fetchEnterpriseSettings(enterpriseId),
+    ]);
     if (error) throw error;
-    return Promise.all((data ?? []).map((row) => attachMembers(fromRow<Project>(row))));
+    return Promise.all((data ?? []).map((row) => {
+      const project = fromRow<Project>(row);
+      return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
+    }));
   }
 
   async create(data: Omit<Project, 'id' | 'dateCreated' | 'dateLastModified'>): Promise<Project> {

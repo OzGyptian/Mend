@@ -152,4 +152,49 @@ describe('PostgresProjectAdapter', () => {
     const fetched = await adapter.get(created.id);
     expect(fetched).toBeNull();
   });
+
+  describe('D10: settings inheritance (null = inherit from enterprise)', () => {
+    it('a project with null settings inherits from enterprise', async () => {
+      // Set enterprise categories
+      await adminClient.from('enterprises').update({
+        categories: ['Civil', 'Structural', 'Mechanical'],
+        change_types: ['Variation', 'Budget Transfer'],
+      }).eq('id', enterpriseId);
+
+      await signInAs(supabase, enterpriseAdmin);
+      const created = await adapter.create({
+        enterpriseId,
+        projectName: 'Inheritance Test Project',
+        projectCode: 'ITP-001',
+        users: { [enterpriseAdmin.id]: 'Project Admin' },
+      } as never);
+
+      const fetched = await adapter.get(created.id);
+      // Project was created with no settings — should inherit from enterprise
+      expect(fetched?.categories).toEqual(['Civil', 'Structural', 'Mechanical']);
+      expect(fetched?.changeTypes).toEqual(['Variation', 'Budget Transfer']);
+    });
+
+    it('a project with its own settings overrides enterprise', async () => {
+      await adminClient.from('enterprises').update({
+        categories: ['Enterprise Cat'],
+      }).eq('id', enterpriseId);
+
+      await signInAs(supabase, enterpriseAdmin);
+      const created = await adapter.create({
+        enterpriseId,
+        projectName: 'Override Test Project',
+        projectCode: 'OTP-001',
+        users: { [enterpriseAdmin.id]: 'Project Admin' },
+      } as never);
+
+      // Directly set project-level override
+      await adminClient.from('projects').update({
+        categories: ['Project Cat'],
+      }).eq('id', created.id);
+
+      const fetched = await adapter.get(created.id);
+      expect(fetched?.categories).toEqual(['Project Cat']);
+    });
+  });
 });
