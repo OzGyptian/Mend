@@ -39,9 +39,10 @@ const baseProject: Project = {
 };
 
 describe('resolveProjectSettings', () => {
-  it('inherits all settings from enterprise when project has none', () => {
+  it('inherits enum settings from enterprise when project has none', () => {
     const result = resolveProjectSettings(baseProject, baseEnterprise);
 
+    // Enum fields: COALESCE — project inherits when null
     expect(result.categories).toEqual(['Cat A', 'Cat B']);
     expect(result.changeTypes).toEqual(['Variation', 'Budget Transfer']);
     expect(result.riskTypes).toEqual(['Design', 'Commercial']);
@@ -49,8 +50,11 @@ describe('resolveProjectSettings', () => {
     expect(result.orderNumbers).toEqual(['ON-1']);
     expect(result.costElements).toEqual([{ id: 'L', description: 'Labour', sortCode: 'L' }]);
     expect(result.resourceRates).toEqual([{ id: 'r1', name: 'Engineer', unit: 'hr', rate: 100 }]);
-    expect(result.costCodeAttributes).toEqual([{ id: '01', title: 'Phase', values: [] }]);
-    expect(result.lineItemAttributes).toEqual([{ id: '01', title: 'Cost Type', values: [] }]);
+
+    // Attribute fields: NOT coalesced — passed through as-is (components read enterprise and
+    // project separately and combine them as additive column groups)
+    expect(result.costCodeAttributes).toBeUndefined();
+    expect(result.lineItemAttributes).toBeUndefined();
   });
 
   it('keeps project override when project has set a value', () => {
@@ -65,10 +69,12 @@ describe('resolveProjectSettings', () => {
 
     expect(result.categories).toEqual(['Project Cat']);
     expect(result.changeTypes).toEqual(['Project Change']);
+    // Attribute fields pass through as-is (project's own value preserved)
     expect(result.costCodeAttributes).toEqual([{ id: '01', title: 'Project Phase', values: [] }]);
-    // Non-overridden settings still inherit
+    // Non-overridden enum settings still inherit
     expect(result.riskTypes).toEqual(['Design', 'Commercial']);
-    expect(result.lineItemAttributes).toEqual([{ id: '01', title: 'Cost Type', values: [] }]);
+    // Non-set attribute fields still undefined (not coalesced from enterprise)
+    expect(result.lineItemAttributes).toBeUndefined();
   });
 
   it('keeps explicit empty array override ([] ≠ null)', () => {
