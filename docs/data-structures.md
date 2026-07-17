@@ -155,7 +155,7 @@ Legacy residue from the Firestore migration. **This table is dead.**
 | `platform_role` | text? | Unconstrained — was `'platform_admin'` |
 | `memberships` | jsonb | Was a Firestore-style membership blob |
 
-The frontend's `useAuth()` hook reads `user_roles.platform_role` to compute `isPlatformAdmin` — this is a second, inconsistent source of truth. Wave 1.3 will delete this table and point the frontend to `user_profiles.platform_role` via an RPC or view.
+The `user_roles` table was a Firestore-era residue. Wave 1.3 (complete) unified the platform-admin signal: `useAuth()` now reads `user_profiles.platform_role` via `UserRoleAdapter`, and the two hardcoded-email fallbacks in `hooks.ts` and `CostManagement.tsx` / `ProcurementManagementSubPane.tsx` were removed. The `user_roles` table still exists and is still written by the legacy write path (`setEnterpriseRole`, etc.), but is no longer read for the platform-admin signal. Full table removal is Wave 3.
 
 #### `invitations`
 Pending email invitations to join an enterprise.
@@ -250,7 +250,7 @@ A named forecast scenario or version for a project. Projects can have multiple s
 | `forecast_method` | text | How the sheet computes forecast — gap D1 |
 | `version` | text | |
 | `locked_status` | bool | Locked sheets are read-only |
-| `users` | uuid[] | Legacy Firestore residue — dead (gap D2) |
+| `users` | uuid[] | UIDs of users assigned to this sheet — live (written by SheetSettings) |
 | `created_by` | uuid? (auth.users) | |
 
 #### `forecast_rows`
@@ -393,7 +393,7 @@ A contract awarded to a vendor to perform a scope of work.
 | `default_distribution`, `default_phasing_source` | text? | |
 | `default_start_date`, `default_end_date` | date? | |
 | `forecast_changes` | numeric? | Forecast-only change allowance |
-| `vendor_users` | text[] | Legacy residue — dead (gap D2) |
+| `vendor_users` | text[] | Vendor email list — live; used in RLS to grant vendor access to their subcontracts/invoices |
 | `enterprise_subcontract_attributes`, `project_attributes` | jsonb | |
 
 #### `subcontract_line_items`
@@ -810,9 +810,9 @@ There are two separate signals for platform admin status:
 | Signal | Where stored | Used by |
 |--------|-------------|---------|
 | `user_profiles.platform_role = 'admin'` | Postgres enum | RLS helper `is_platform_admin()` — DB-enforced |
-| `user_roles.platform_role = 'platform_admin'` | Unconstrained text | `useAuth()` → `isPlatformAdmin` — frontend only |
+| ~~`user_roles.platform_role = 'platform_admin'`~~ | ~~Unconstrained text~~ | ~~`useAuth()` → `isPlatformAdmin` — frontend only~~ |
 
-These can diverge. A user could be a DB-level platform admin but not flagged as one in the frontend (or vice versa). Wave 1.3 will eliminate `user_roles` and unify on `user_profiles`.
+**Wave 1.3 complete.** `useAuth()` now reads `user_profiles.platform_role` only; `user_roles` is no longer queried for the platform-admin signal. Hardcoded email fallbacks removed.
 
 ---
 
@@ -848,10 +848,12 @@ These are the structural weaknesses identified during the system audit (see `doc
 
 ### Wave 1 — Safe, Non-Breaking
 
-| Gap | Tables Affected | Change |
+| Gap | Tables Affected | Status |
 |-----|----------------|--------|
-| **D1: Free-text enums** | `cost_phasing.distribution_method`, `cost_codes.eac_method`, `subcontracts.payment_type`, `subcontract_line_items.type`, `invoice_items.type`, `projects.status`, `risks.status`, `changes.status` | Add Postgres CHECK constraints (or promote to enum types); normalise existing drift (e.g., `'even'` → `'Even'`) |
-| **D3/F3: Dual admin signal** | `user_roles`, `user_profiles` | Delete `user_roles.platform_role`; make frontend read from `user_profiles` via RPC or view; delete 3 hardcoded-email fallbacks in app code |
+| **D1: Free-text enums** | `cost_phasing.distribution_method`, `cost_codes.eac_method`, `subcontracts.payment_type`, `subcontract_line_items.type`, `invoice_items.type`, `projects.status`, `risks.status`, `changes.status` | ✅ **Done** — migration 0038: case drift normalised, CHECK constraints added. Progress/ETC phasing CHECKs already existed from migrations 0008 and 0017. |
+| **D3/F3: Dual admin signal** | `user_roles`, `user_profiles` | ✅ **Done** — `UserRoleAdapter` reads `user_profiles.platform_role`; hardcoded email fallbacks removed from `hooks.ts`, `CostManagement.tsx`, `ProcurementManagementSubPane.tsx`. `user_roles` still written (Wave 3 cleanup). |
+| **A1: Real ESLint** | App-wide | ✅ **Done** — `eslint-plugin-react-hooks` enabled; Rules of Hooks violations in `SubcontractsCellRenderers.tsx` fixed. |
+| **Process: Migration safety** | All migrations | 🔲 See rule below |
 
 ### Wave 2 — Requires Hierarchy Decision
 
@@ -864,11 +866,11 @@ These are the structural weaknesses identified during the system audit (see `doc
 
 | Gap | Tables Affected | Change |
 |-----|----------------|--------|
-| **D2: Dead representations** | `user_roles.memberships`, `sheets.users`, `subcontracts.vendor_users` | Drop columns after confirming no code reads them |
+| **D2: Dead representations** | `user_roles.memberships` | Drop after migrating write paths away from `user_roles`. Note: `sheets.users` (SheetSettings) and `subcontracts.vendor_users` (RLS vendor-access policy) are NOT dead — the audit was wrong about those two. |
 | **D9: Stored derived value** | `cost_codes.baseline_budget` | Either enforce via trigger (DB-option 2) or compute on read (option 1) |
 | **Audit log hardening** | `audit_logs` | Move actor resolution server-side so it cannot be spoofed |
 | **D4: procurement_items.package_id** | `procurement_items` | Evaluate whether this should be a FK to a `procurement_packages` table |
 
 ---
 
-*Last updated: 2026-07-17. See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*
+*Last updated: 2026-07-17. Wave 1 remediation complete (A1, D1, D3/F3/A2). See `docs/audit/phase-5-report.md` for the full findings register and remediation roadmap.*
