@@ -66,6 +66,55 @@ describe('PostgresRiskAdapter', () => {
     expect(afterDelete.map((r) => r.id)).not.toContain(created.id);
   });
 
+  it('risk records: exposure is computed at read time from model_inputs, not trusted from a stored value', async () => {
+    await signInAs(supabase, projectMember);
+    const risk = await adapter.createRisk({
+      projectId,
+      riskId: 'RISK-003',
+      description: 'Weather delay to critical path activities',
+      type: 'Schedule',
+      status: 'Open',
+      strategy: 'Accept',
+      initiator: 'Project Manager',
+      reference: 'Weather forecast review',
+      mitigation: 0,
+      residualExposure: 0,
+    } as never);
+
+    const record = await adapter.createRiskRecord({
+      riskId: risk.id,
+      projectId,
+      costCodeId: null,
+      scope: 'Structural works',
+      enterpriseAttributes: {},
+      projectAttributes: {},
+      probability: 0.6,
+      minImpactAmount: 100000,
+      mostLikelyImpactAmount: 200000,
+      maxImpactAmount: 500000,
+    } as never);
+
+    // (100000 + 4*200000 + 500000) / 6 * 0.6
+    expect(record.betaPertImpactAmount).toBeCloseTo(140000, 2);
+
+    const list = await adapter.listRiskRecords(projectId, risk.id);
+    const fetched = list.find((r) => r.id === record.id);
+    expect(fetched?.minImpactAmount).toBe(100000);
+    expect(fetched?.mostLikelyImpactAmount).toBe(200000);
+    expect(fetched?.maxImpactAmount).toBe(500000);
+    expect(fetched?.betaPertImpactAmount).toBeCloseTo(140000, 2);
+
+    await adapter.updateRiskRecord(record.id, { probability: 1 });
+    const afterUpdate = await adapter.listRiskRecords(projectId, risk.id);
+    // Same min/likely/max, probability now 1 -- exposure should scale
+    // accordingly, proving it's recomputed and not stale.
+    expect(afterUpdate.find((r) => r.id === record.id)?.betaPertImpactAmount).toBeCloseTo(233333.33, 1);
+
+    await adapter.deleteRiskRecord(record.id);
+    const afterDelete = await adapter.listRiskRecords(projectId, risk.id);
+    expect(afterDelete.map((r) => r.id)).not.toContain(record.id);
+  });
+
   it('RLS: an outsider with no project membership sees no risks for the project', async () => {
     await signInAs(supabase, projectMember);
     await adapter.createRisk({

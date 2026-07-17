@@ -1,6 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { betaPertImpact, betaPertExposure, computeRiskRollup, aggregateRiskRollups } from './risk';
+import { betaPertImpact, betaPertExposure, computeRiskRollup, aggregateRiskRollups, computeExposureForModel, validateModelInputs } from './risk';
 import type { Risk, RiskRecord } from './types';
+
+describe('computeExposureForModel', () => {
+  it('computes beta_pert_3point exposure from model_inputs + probability', () => {
+    const result = computeExposureForModel('beta_pert_3point', { min: 10, mostLikely: 50, max: 90 }, 0.4);
+    expect(result).toBeCloseTo(betaPertExposure(10, 50, 90, 0.4));
+  });
+
+  it('throws for an unrecognized risk model rather than silently defaulting to 0', () => {
+    expect(() => computeExposureForModel('monte_carlo_p90', { p90: 1000 }, 0.5)).toThrow(/Unknown risk model/);
+  });
+
+  it('throws when model_inputs do not match the model\'s expected shape', () => {
+    expect(() => computeExposureForModel('beta_pert_3point', { likelihood: 4 }, 0.5)).toThrow();
+  });
+});
+
+describe('validateModelInputs', () => {
+  it('parses valid beta_pert_3point inputs', () => {
+    expect(validateModelInputs('beta_pert_3point', { min: 1, mostLikely: 2, max: 3 })).toEqual({ min: 1, mostLikely: 2, max: 3 });
+  });
+});
 
 describe('betaPertImpact', () => {
   it('computes (min + 4×mostLikely + max) / 6', () => {

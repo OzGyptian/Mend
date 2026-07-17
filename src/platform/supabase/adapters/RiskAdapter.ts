@@ -4,6 +4,7 @@ import type { Database } from '../database.types';
 import type { Risk, RiskRecord } from '../../../domain/types';
 import type { RiskRepository } from '../../ports/risk.port';
 import type { Unsubscribe } from '../../ports/index';
+import { computeExposureForModel } from '../../../domain/risk';
 
 type RiskInsert = Database['public']['Tables']['risks']['Insert'];
 type RiskUpdate = Database['public']['Tables']['risks']['Update'];
@@ -14,6 +15,48 @@ type RiskRecordUpdate = Database['public']['Tables']['risk_records']['Update'];
 // risk_id -- see migration 0012's naming-collision fix. risk_records.riskId
 // (the FK to the parent risk's doc id) keeps its normal name.
 const RISK_RENAMES = { risk_id: 'risk_code' };
+
+// risk_records stores min/mostLikely/max as risk_model-specific jsonb
+// (model_inputs), not fixed columns -- see
+// supabase/migrations/0037_risk_model_flexibility.sql and
+// src/domain/risk.ts. RiskRecord's own shape stays flat (only one model
+// exists today; generalize this if/when a second one does), so the adapter
+// packs/unpacks between the two on every read/write instead of relying on
+// the generic toRow/fromRow field-for-field mapping.
+type RiskRecordRow = Database['public']['Tables']['risk_records']['Row'];
+
+function toRiskRecordRow<T>(data: Partial<RiskRecord>): T {
+  const { minImpactAmount, mostLikelyImpactAmount, maxImpactAmount, betaPertImpactAmount: _betaPertImpactAmount, ...rest } = data;
+  const row = toRow<Record<string, unknown>>(rest) as Record<string, unknown>;
+  if (minImpactAmount !== undefined || mostLikelyImpactAmount !== undefined || maxImpactAmount !== undefined) {
+    row.risk_model = 'beta_pert_3point';
+    row.model_inputs = { min: minImpactAmount, mostLikely: mostLikelyImpactAmount, max: maxImpactAmount };
+  }
+  return row as T;
+}
+
+function fromRiskRecordRow(row: RiskRecordRow): RiskRecord {
+  const { model_inputs, risk_model, ...rest } = row;
+  const base = fromRow<Omit<RiskRecord, 'minImpactAmount' | 'mostLikelyImpactAmount' | 'maxImpactAmount' | 'betaPertImpactAmount'>>(rest as RiskRecordRow);
+  const inputs = (model_inputs ?? {}) as { min?: number; mostLikely?: number; max?: number };
+  let betaPertImpactAmount = 0;
+  try {
+    betaPertImpactAmount = computeExposureForModel(risk_model, model_inputs, row.probability);
+  } catch (err) {
+    // A malformed row (e.g. an unrecognized risk_model, or model_inputs
+    // that don't validate) shouldn't take down an entire list/subscription
+    // -- log it and surface a 0 rather than crash every other risk record
+    // in the same response.
+    console.error(`risk_records/${row.id}: could not compute exposure`, err);
+  }
+  return {
+    ...base,
+    minImpactAmount: inputs.min ?? 0,
+    mostLikelyImpactAmount: inputs.mostLikely ?? 0,
+    maxImpactAmount: inputs.max ?? 0,
+    betaPertImpactAmount,
+  } as RiskRecord;
+}
 
 export class PostgresRiskAdapter implements RiskRepository {
   subscribeRisks(projectId: string, callback: (risks: Risk[]) => void): Unsubscribe {
@@ -75,7 +118,7 @@ export class PostgresRiskAdapter implements RiskRepository {
   subscribeRiskRecords(projectId: string, callback: (records: RiskRecord[]) => void): Unsubscribe {
     const fetchAndEmit = async () => {
       const { data } = await supabase.from('risk_records').select('*').eq('project_id', projectId);
-      callback((data ?? []).map((row) => fromRow<RiskRecord>(row)));
+      callback((data ?? []).map(fromRiskRecordRow));
     };
     fetchAndEmit();
     const channel = supabase
@@ -90,25 +133,24 @@ export class PostgresRiskAdapter implements RiskRepository {
     if (riskId) q = q.eq('risk_id', riskId);
     const { data, error } = await q;
     if (error) throw error;
-    return (data ?? []).map((row) => fromRow<RiskRecord>(row));
+    return (data ?? []).map(fromRiskRecordRow);
   }
 
   async createRiskRecord(data: Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<RiskRecord> {
-    // betaPertImpactAmount is a GENERATED column -- Postgres computes it, never write it.
-    const row = toRow<RiskRecordInsert>(data, {}, ['beta_pert_impact_amount']);
+    const row = toRiskRecordRow<RiskRecordInsert>(data);
     const { data: inserted, error } = await supabase.from('risk_records').insert(row).select().single();
     if (error) throw error;
-    return fromRow<RiskRecord>(inserted);
+    return fromRiskRecordRow(inserted);
   }
 
   async createManyRiskRecords(records: Array<Omit<RiskRecord, 'id' | 'createdAt' | 'updatedAt'>>): Promise<void> {
-    const rows = records.map((r) => toRow<RiskRecordInsert>(r, {}, ['beta_pert_impact_amount']));
+    const rows = records.map((r) => toRiskRecordRow<RiskRecordInsert>(r));
     const { error } = await supabase.from('risk_records').insert(rows);
     if (error) throw error;
   }
 
   async updateRiskRecord(id: string, data: Partial<RiskRecord>): Promise<void> {
-    const row = toRow<RiskRecordUpdate>(data, {}, ['beta_pert_impact_amount']);
+    const row = toRiskRecordRow<RiskRecordUpdate>(data);
     const { error } = await supabase.from('risk_records').update(row).eq('id', id);
     if (error) throw error;
   }
@@ -116,7 +158,7 @@ export class PostgresRiskAdapter implements RiskRepository {
   async updateManyRiskRecords(updates: Array<{ id: string; data: Partial<RiskRecord> }>): Promise<void> {
     const results = await Promise.all(
       updates.map(({ id, data }) =>
-        supabase.from('risk_records').update(toRow<RiskRecordUpdate>(data, {}, ['beta_pert_impact_amount'])).eq('id', id)
+        supabase.from('risk_records').update(toRiskRecordRow<RiskRecordUpdate>(data)).eq('id', id)
       )
     );
     const failed = results.find((r) => r.error);

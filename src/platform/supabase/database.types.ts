@@ -1551,50 +1551,44 @@ export type Database = {
       }
       risk_records: {
         Row: {
-          beta_pert_impact_amount: number | null
           cost_code_id: string | null
           created_at: string
           enterprise_attributes: Json
           id: string
-          max_impact_amount: number
-          min_impact_amount: number
-          most_likely_impact_amount: number
+          model_inputs: Json
           probability: number
           project_attributes: Json
           project_id: string
           risk_id: string
+          risk_model: string
           scope: string | null
           updated_at: string
         }
         Insert: {
-          beta_pert_impact_amount?: number | null
           cost_code_id?: string | null
           created_at?: string
           enterprise_attributes?: Json
           id?: string
-          max_impact_amount: number
-          min_impact_amount: number
-          most_likely_impact_amount: number
+          model_inputs?: Json
           probability: number
           project_attributes?: Json
           project_id: string
           risk_id: string
+          risk_model?: string
           scope?: string | null
           updated_at?: string
         }
         Update: {
-          beta_pert_impact_amount?: number | null
           cost_code_id?: string | null
           created_at?: string
           enterprise_attributes?: Json
           id?: string
-          max_impact_amount?: number
-          min_impact_amount?: number
-          most_likely_impact_amount?: number
+          model_inputs?: Json
           probability?: number
           project_attributes?: Json
           project_id?: string
           risk_id?: string
+          risk_model?: string
           scope?: string | null
           updated_at?: string
         }
