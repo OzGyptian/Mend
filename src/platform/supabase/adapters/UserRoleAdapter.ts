@@ -1,7 +1,6 @@
 import { supabase } from '../client';
-import type { Json } from '../database.types';
 import type { UserRoleRepository } from '../../ports/userRole.port';
-import type { UserRoles, EnterpriseRole, ProjectRole, EnterpriseMembership } from '../../../domain/roles';
+import type { UserRoles, EnterpriseRole, ProjectRole } from '../../../domain/roles';
 
 
 export class PostgresUserRoleAdapter implements UserRoleRepository {
@@ -42,40 +41,32 @@ export class PostgresUserRoleAdapter implements UserRoleRepository {
     return () => { supabase.removeChannel(channel); };
   }
 
+  // Membership management writes directly to the junction tables in Postgres.
+  // The legacy user_roles.memberships jsonb blob is gone (migration 0041).
+
   async setEnterpriseRole(uid: string, enterpriseId: string, role: EnterpriseRole): Promise<void> {
-    const current = await this.getUserRoles(uid);
-    const existing = current.memberships.find((m) => m.enterpriseId === enterpriseId);
-    const updated: EnterpriseMembership[] = existing
-      ? current.memberships.map((m) => (m.enterpriseId === enterpriseId ? { ...m, role } : m))
-      : [...current.memberships, { enterpriseId, role, projectRoles: {} }];
+    const dbRole = role === 'enterprise_admin' ? 'admin' : 'member';
     const { error } = await supabase
-      .from('user_roles')
-      .upsert({ user_id: uid, platform_role: current.platformRole, memberships: updated as unknown as Json });
+      .from('enterprise_members')
+      .upsert({ user_id: uid, enterprise_id: enterpriseId, role: dbRole });
     if (error) throw error;
   }
 
   async setProjectRole(uid: string, enterpriseId: string, projectId: string, role: ProjectRole): Promise<void> {
-    const current = await this.getUserRoles(uid);
-    const membership = current.memberships.find((m) => m.enterpriseId === enterpriseId);
-    const updated: EnterpriseMembership[] = membership
-      ? current.memberships.map((m) =>
-          m.enterpriseId === enterpriseId ? { ...m, projectRoles: { ...m.projectRoles, [projectId]: role } } : m
-        )
-      : [...current.memberships, { enterpriseId, role: 'enterprise_member', projectRoles: { [projectId]: role } }];
+    // Ensure enterprise membership exists first
+    await this.setEnterpriseRole(uid, enterpriseId, 'enterprise_member');
     const { error } = await supabase
-      .from('user_roles')
-      .upsert({ user_id: uid, platform_role: current.platformRole, memberships: updated as unknown as Json });
+      .from('project_members')
+      .upsert({ user_id: uid, project_id: projectId, role: role as 'Project Admin' | 'Project User' });
     if (error) throw error;
   }
 
-  async removeProjectRole(uid: string, enterpriseId: string, projectId: string): Promise<void> {
-    const current = await this.getUserRoles(uid);
-    const updated: EnterpriseMembership[] = current.memberships.map((m) => {
-      if (m.enterpriseId !== enterpriseId) return m;
-      const { [projectId]: _removed, ...rest } = m.projectRoles;
-      return { ...m, projectRoles: rest };
-    });
-    const { error } = await supabase.from('user_roles').update({ memberships: updated as unknown as Json }).eq('user_id', uid);
+  async removeProjectRole(uid: string, _enterpriseId: string, projectId: string): Promise<void> {
+    const { error } = await supabase
+      .from('project_members')
+      .delete()
+      .eq('user_id', uid)
+      .eq('project_id', projectId);
     if (error) throw error;
   }
 }

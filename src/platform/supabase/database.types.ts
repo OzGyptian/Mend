@@ -2142,17 +2142,14 @@ export type Database = {
       }
       user_roles: {
         Row: {
-          memberships: Json
           platform_role: string | null
           user_id: string
         }
         Insert: {
-          memberships?: Json
           platform_role?: string | null
           user_id: string
         }
         Update: {
-          memberships?: Json
           platform_role?: string | null
           user_id?: string
         }

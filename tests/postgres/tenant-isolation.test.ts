@@ -227,7 +227,7 @@ describe('Privilege escalation — self-granted platform admin (Phase 0 finding 
     // layer. What must remain true is that it grants NO actual RLS power.
     await supabase
       .from('user_roles')
-      .insert({ user_id: memberA.id, platform_role: 'platform_admin', memberships: {} });
+      .insert({ user_id: memberA.id, platform_role: 'platform_admin' });
 
     // The real security assertion: memberA still cannot see enterprise B.
     const { data } = await supabase.from('enterprises').select('id').eq('id', enterpriseB);

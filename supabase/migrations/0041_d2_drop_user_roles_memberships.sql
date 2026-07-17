@@ -1,0 +1,13 @@
+-- D2: Drop user_roles.memberships — dead column
+--
+-- The memberships column was the Firestore-era way to track enterprise/project
+-- role assignments as a jsonb blob on user_roles. In Postgres this moved to
+-- the dedicated enterprise_members and project_members junction tables.
+--
+-- The Supabase UserRoleAdapter's getUserRoles() always returned memberships: []
+-- (ignored the DB column on reads). The write paths were never called from
+-- product code. No read-path depends on this column.
+--
+-- Retained: user_roles.platform_role (still written by legacy Firestore path;
+-- Wave 3 drops the full table once all writes migrate to user_profiles).
+alter table user_roles drop column memberships;
