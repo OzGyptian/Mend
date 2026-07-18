@@ -38,16 +38,13 @@ jobs:
             const issue_number = context.issue.number;
 
             // ---------------------------------------------------------------
-            // CONFIGURE the two developers' GitHub usernames here.
+            // The two developers' GitHub usernames.
             // The PR author is filtered out automatically; the other is @-mentioned.
-            // TODO(bernard): replace both placeholders with the real handles.
-            const DEVS = ['BERNARD_GITHUB_USERNAME', 'TAREK_GITHUB_USERNAME'];
+            const DEVS = ['WhitewaterBernz', 'tag0388'];
             // ---------------------------------------------------------------
 
             const author = context.payload.pull_request.user.login.toLowerCase();
-            const toNotify = DEVS
-              .filter(u => !u.startsWith('BERNARD_GITHUB') && !u.startsWith('TAREK_GITHUB'))
-              .filter(u => u.toLowerCase() !== author);
+            const toNotify = DEVS.filter(u => u.toLowerCase() !== author);
 
             // Ensure the label exists, then apply it.
             try {
