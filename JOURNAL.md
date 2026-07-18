@@ -2,6 +2,58 @@
 
 ---
 
+## Session — 2026-07-18 — Fix Cost/Change/Risk crash on malformed reportingPeriods (v0.2.6)
+
+### What we set out to do
+
+A thorough navigation audit (Claude in Chrome) of every project tab surfaced that the Cost
+Management tab crashed with "Something went wrong". Goal: find and fix every broken tab, then
+verify each goes to the right place with correct data before shipping.
+
+### Root cause
+
+5 of 9 scratch projects have a `reporting_periods` JSON object that is missing its `periods`
+key entirely (confirmed via DB: `{"total":9,"rp_null":0,"rp_no_periods":5}`). The domain type
+declares `periods` as a required array, and multiple render paths index
+`reportingPeriods.periods` directly, so a missing array threw. Two distinct crashes, one root
+cause:
+- `/cost` — `Cannot read properties of undefined (reading 'find')` from a dead
+  `currentPeriod` initializer in `CostManagement.tsx` (line 94).
+- `/change` and `/risk` — `Cannot read properties of undefined (reading 'map')` in the
+  chartData `useMemo`s that iterate `reportingPeriods.periods`.
+
+### Fix — normalize at the adapter read boundary
+
+`src/platform/supabase/adapters/ProjectAdapter.ts` — added `projectFromRow()`: when
+`reportingPeriods` is present but `periods` is not an array, default it to `[]`. Applied at
+all four read sites (`get`, `list`/`subscribe`, `listByEnterprise`, `create`). Chose boundary
+normalization over per-component guards (aligns with "validate at boundaries"; verified no
+`null` reportingPeriods exist, so the boundary fix fully covers every unguarded render site).
+Also hardened the latent unsafe `.find`/`.indexOf` in `ActualCost.tsx` with optional chaining,
+and removed the dead `currentPeriod` var in `CostManagement.tsx`. Added a regression test in
+`tests/postgres/ProjectAdapter.test.ts` (11/11 pass).
+
+### Verified live on production
+
+Merged to `main` → Vercel promoted it (`mend-app-tan.vercel.app` now serves
+`index-6eUF_Bsm.js`, was `index-B8lAyJ1I.js`). Drove both code paths on the authenticated tab:
+- **Synthetic Test Project** (malformed periods + data): Cost/Change/Risk all render, grid
+  rows = DB exactly (3 cost codes / 1 change / 1 risk). This project crashed on the old bundle.
+- **RAAF Darwing** (intact periods, largest dataset): Cost renders (113 codes, AG Grid
+  virtualized to 46 in-DOM rows); Change = 18 rows = DB exactly. Confirms no regression on the
+  untouched path.
+- Console: every `find`/`map` crash in the buffer predates the deploy and references the old
+  bundle; the new bundle threw zero crashes across all loads (only a pre-existing benign AG
+  Grid theming warning). No `firebase/*` imports touched; the fix only ever *adds* an empty
+  `periods: []` where the key was absent, never altering existing data.
+
+### Checks
+
+`npm run lint` (0 errors), `npm run build` (pass), `npm run test:postgres` ProjectAdapter
+(11/11 incl. new regression test).
+
+---
+
 ## Session — 2026-07-16 — Live UI review fixes + Firebase Auth migration (v1.0.135–136)
 
 ### What we set out to do
