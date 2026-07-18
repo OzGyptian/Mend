@@ -341,11 +341,19 @@ The platform-seam refactor (Firestore → Postgres/Supabase) is complete and mer
 
 **This changes once there's a real production deployment with real users.** At that point, reinstate a review-before-merge gate (or equivalent — CI-enforced checks, a staging environment, whatever fits by then) before anything reaches production. The current permissiveness is specific to this being pre-production, synthetic-data development — see the data-sensitivity note above, which draws the same production/development line.
 
+### Cadence & mechanics
+
+- **Branch naming:** `feat/<owner>-<short-desc>` (e.g. `feat/tarek-risk-export`) so ownership is visible at a glance.
+- **Merge little and often.** A feature branch lives **hours to a couple of days, never a week.** We integrate on `main` continuously — *not* in a big batch before a call. Long-lived branches are what make merges (and shared-DB schema drift) painful.
+- **Rebase at the start of every session:** `git switch main && git pull --rebase origin main`, then branch. Branch protection requires branches be up to date before merge, which enforces this.
+- **Squash-merge only.** Each PR collapses to exactly one commit on `main` — one clean feature commit, linear history. Commit incrementally on your branch (per the version-bump rule below); those squash away on merge.
+- **Merge gate:** PR + all CI checks green. No mandatory human approval during this pre-production phase (see above).
+
 ---
 
 ## PR Workflow
 
-Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge.
+Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge. Opening a PR loads `.github/pull_request_template.md` (the checklist below, plus the DB-change question).
 
 Feature PR checklist before opening:
 - [ ] `npm run lint` passes (type-check)
@@ -355,6 +363,7 @@ Feature PR checklist before opening:
 - [ ] `npm run build` passes
 - [ ] No `firebase/*` imports outside `src/platform/`
 - [ ] JOURNAL.md updated
+- [ ] Schema change? → migration in `supabase/migrations/` **and** the other dev flagged (the `db-change-notify` workflow auto-labels + @-mentions on PRs touching migrations)
 
 ---
 
@@ -362,5 +371,6 @@ Feature PR checklist before opening:
 
 - **Bernard** and **Tarek** both actively build features, in parallel, on separate short-lived branches
 - Coordination happens via GitHub Issues (the project backlog) and regular catch-ups, not a single gatekeeper reviewing every change — see the backlog reference in memory for the issue list
-- Bernard uses Claude Code; Tarek uses Gemini. Both should work from this file (`CLAUDE.md`) for project conventions — if Tarek's tooling wants its own file (e.g. `GEMINI.md`), it should point back here rather than fork into a second, potentially divergent copy
-- Rough ownership lanes (which of the two takes which features) are agreed between them directly, not dictated by this file
+- **Both develop with Claude Code.** The repo is self-contained for AI-assisted work: shared conventions live in this file (`CLAUDE.md`) and in the committed `.claude/` config (see `.claude/README.md`). Project-level `.claude/rules/` and `.claude/agents/` override each person's personal global config, so both of us — and both Claude instances — code to an identical rulebook. If any tooling wants its own entrypoint file, it should point back here rather than fork a divergent copy.
+- **New-developer setup lives in `ONBOARDING.md`** (access grants, local bootstrap, the daily loop).
+- **Ownership lanes** (which of the two takes which areas) are agreed directly and recorded in `ONBOARDING.md §6`; they keep two people off the same files. Shared hot files (`src/App.tsx`, `src/types.ts`) get a heads-up in the PR.
