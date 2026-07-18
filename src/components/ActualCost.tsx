@@ -140,8 +140,8 @@ const ActualCost: React.FC<ActualCostProps> = ({ project, enterprise }) => {
       const codeActuals = records.filter(r => r.costCodeId === costCodeId);
       const totalToDate = codeActuals.reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
       const currentPeriodId = project.reportingPeriods?.currentPeriodId;
-      const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === currentPeriodId);
-      const currentPeriodNum = currentPeriod ? project.reportingPeriods?.periods.indexOf(currentPeriod) + 1 : -1;
+      const currentPeriod = project.reportingPeriods?.periods?.find(p => p.id === currentPeriodId);
+      const currentPeriodNum = currentPeriod ? (project.reportingPeriods?.periods?.indexOf(currentPeriod) ?? -1) + 1 : -1;
       const totalThisPeriod = codeActuals.filter(a => a.reportingPeriodId === currentPeriodId || (currentPeriodNum !== -1 && String(a.reportingPeriodId) === String(currentPeriodNum))).reduce((sum, r) => sum + (Number(r.cost) || 0), 0);
       await costRepo.updateCostCode(costCodeId, { actualCostToDate: totalToDate, actualCostThisPeriod: totalThisPeriod } as any);
     } catch (error) {

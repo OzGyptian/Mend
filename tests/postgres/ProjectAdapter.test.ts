@@ -153,6 +153,29 @@ describe('PostgresProjectAdapter', () => {
     expect(fetched).toBeNull();
   });
 
+  it('normalizes a reportingPeriods object that is missing its periods array (legacy/partial data)', async () => {
+    await signInAs(supabase, enterpriseAdmin);
+    const created = await adapter.create({
+      enterpriseId,
+      projectName: 'Malformed Periods Project',
+      projectCode: 'MPP-001',
+      users: { [enterpriseAdmin.id]: 'Project Admin' },
+    } as never);
+
+    // Simulate legacy data: reporting_periods present but with no periods key
+    // (5 of 9 scratch projects were in this state). Cost/Change/Risk render
+    // paths index reportingPeriods.periods directly, so the adapter must
+    // default periods to [] rather than let it read back as undefined.
+    await adminClient.from('projects').update({
+      reporting_periods: { baseDate: '2026-01-01', duration: 'month', numberOfPeriods: 12 },
+    }).eq('id', created.id);
+
+    const fetched = await adapter.get(created.id);
+    expect(fetched?.reportingPeriods).toBeDefined();
+    expect(Array.isArray(fetched?.reportingPeriods?.periods)).toBe(true);
+    expect(fetched?.reportingPeriods?.periods).toEqual([]);
+  });
+
   describe('D10: settings inheritance (null = inherit from enterprise)', () => {
     it('a project with null settings inherits from enterprise', async () => {
       // Set enterprise categories

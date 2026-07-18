@@ -9,6 +9,21 @@ import type { Unsubscribe } from '../../ports/index';
 type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
 type ProjectUpdate = Database['public']['Tables']['projects']['Update'];
 
+// Some (legacy/partial) project rows carry a reportingPeriods object with no
+// periods key -- 5 of 9 scratch projects were in this state. The domain type
+// declares periods as a required array, and every consumer indexes
+// reportingPeriods.periods directly, so a missing array crashed the Cost,
+// Change, and Risk module renders. Normalize at this read boundary: when
+// reportingPeriods is present but periods is not an array, default it to [].
+function projectFromRow(row: Record<string, unknown>): Project {
+  const project = fromRow<Project>(row);
+  const rp = project.reportingPeriods;
+  if (rp && !Array.isArray(rp.periods)) {
+    return { ...project, reportingPeriods: { ...rp, periods: [] } };
+  }
+  return project;
+}
+
 // Project.users (Record<uid, 'Project Admin' | 'Project User'>) is now real
 // rows in project_members -- reconstructed here the same way
 // EnterpriseAdapter reconstructs Enterprise.adminUsers/users.
@@ -46,7 +61,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     if (error) throw error;
     if (!data) return null;
     const enterprise = await fetchEnterpriseSettings(data.enterprise_id);
-    const project = fromRow<Project>(data);
+    const project = projectFromRow(data);
     return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
   }
 
@@ -71,7 +86,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     ]);
     if (error) throw error;
     return Promise.all((data ?? []).map((row) => {
-      const project = fromRow<Project>(row);
+      const project = projectFromRow(row);
       return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
     }));
   }
@@ -107,7 +122,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     ]);
     if (error) throw error;
     return Promise.all((data ?? []).map((row) => {
-      const project = fromRow<Project>(row);
+      const project = projectFromRow(row);
       return attachMembers(enterprise ? resolveProjectSettings(project, enterprise) : project);
     }));
   }
@@ -134,7 +149,7 @@ export class PostgresProjectAdapter implements ProjectRepository {
     }
     const { data: inserted, error: fetchError } = await supabase.from('projects').select().eq('id', id).single();
     if (fetchError) throw fetchError;
-    return attachMembers(fromRow<Project>(inserted));
+    return attachMembers(projectFromRow(inserted));
   }
 
   async update(projectId: string, data: Partial<Project>): Promise<void> {
