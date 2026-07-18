@@ -91,7 +91,6 @@ const CostManagement: React.FC<CostManagementProps> = ({
 
   const isSettingsTab = ['baselineBudget', 'etcDetails', 'costElements', 'costCodeAttributes', 'reportingPeriod', 'resourceRates'].includes(activeTab);
 
-  const currentPeriod = project.reportingPeriods?.periods.find(p => p.id === project.reportingPeriods?.currentPeriodId);
 
   return (
     <div className="flex h-full bg-gray-50 dark:bg-[#0a0a0a] transition-colors duration-300 overflow-hidden">
