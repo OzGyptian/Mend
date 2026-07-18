@@ -52,6 +52,14 @@ Merged to `main` → Vercel promoted it (`mend-app-tan.vercel.app` now serves
 `npm run lint` (0 errors), `npm run build` (pass), `npm run test:postgres` ProjectAdapter
 (11/11 incl. new regression test).
 
+### Versioning — canonical line is 0.2.x
+
+Reconciled a drift: some earlier journal prose used a **v1.0.x** scheme, but the canonical
+version line (per CLAUDE.md, `package.json`, and the in-app "BETA" badge) is **0.2.x** for this
+pre-production Postgres build. We are deliberately staying on 0.2.x; `1.0.0` is reserved for the
+first real production deployment. Ignore the older v1.0.x references in prior entries — they were
+not the real version. Current: **0.2.7**.
+
 ---
 
 ## Session — 2026-07-16 — Live UI review fixes + Firebase Auth migration (v1.0.135–136)
