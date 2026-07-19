@@ -136,7 +136,27 @@ databases (Supabase Branching or local Postgres). Not needed yet.
 
 ---
 
-## 8. Where the rules and the backlog live
+## 8. Crossing a boundary — what happens
+
+These boundaries are guardrails against *accidents*, not tripwires — and most are enforced
+mechanically (§6), not by memory. This is the response when one is crossed anyway: **recover,
+don't blame.**
+
+| If… | What happens / what to do |
+|-----|---------------------------|
+| A **soft lane** is crossed without a heads-up | No drama. CODEOWNERS auto-requested the owner's review; note it in the PR and carry on. |
+| A PR tries to **change the database schema** and isn't Bernard's | CI fails the `lint, unit tests, build` check → it can't merge. Bernard makes the migration instead (Model B, §7). |
+| A schema change somehow reached the shared DB **out-of-band** | Incident P3-0 playbook: revert the code, then re-apply the change as a proper migration file via `npx supabase db push`. |
+| A **bad change shipped to prod** (the self-merge risk) | Roll back first, fix later: Vercel → Deployments → the last good one → **Promote to Production**. Then fix forward on a branch. |
+| A **force-push to `main`** or a **destructive op** is attempted | Blocked by branch protection / lack of access. Via Claude, the "stop and ask" rule + Claude's permission prompts are the backstop. |
+
+**Rule of thumb:** hard lines (database, infra, config) are *prevented*; soft lanes are *flagged*;
+production is *reversible* (roll back, then fix). Nobody has to be perfect — the guardrails make
+mistakes cheap.
+
+---
+
+## 9. Where the rules and the backlog live
 
 - **`CLAUDE.md`** — project conventions, architecture, the non-negotiable rules.
 - **`.claude/`** — shared Claude Code config; `.claude/README.md` explains it.
