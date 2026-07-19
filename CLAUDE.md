@@ -349,6 +349,17 @@ The platform-seam refactor (Firestore → Postgres/Supabase) is complete and mer
 - **Squash-merge only.** Each PR collapses to exactly one commit on `main` — one clean feature commit, linear history. Commit incrementally on your branch (per the version-bump rule below); those squash away on merge.
 - **Merge gate:** PR + all CI checks green. No mandatory human approval during this pre-production phase (see above).
 
+### Production boundary — how 1.0.0 ships (design ahead of time)
+
+Today there is exactly **one** long-lived branch: `main`, which Vercel auto-deploys to the production URL. There is **no separate `production` branch**, and we are not going to add one. When 1.0.0 arrives, the production boundary is a **tag**, not a second branch:
+
+- **Release = an annotated, immutable git tag** (`v1.0.0`, `v1.0.1`, …) on a commit of `main`. Production deploys are pinned to a tag, never to "whatever `main` is right now."
+- **Why a tag, not a `production` branch:** a tag is immutable and cannot drift. A second long-lived branch promoted from `main` (via squash- or merge-commit) develops a permanently divergent history even when the *trees* are identical — the "phantom-ahead" trap where production reads as forever behind `main`. A tag sidesteps that class of bug entirely: there is no promotion merge, so there is nothing to drift.
+- **If a promotion merge is ever unavoidable** (e.g. a real `release` branch is introduced later), it must be **fast-forward-only** — never squash or merge-commit across the production boundary — precisely to avoid the drift above. Squash-only (below) is correct for `feature → main`; it is *wrong* for any `main → release` promotion. Keep the two rules distinct.
+- **Rollback = re-deploy the previous tag.** No revert-and-repush dance on `main`.
+
+This is a forward design note, not a live process yet — nothing here changes the current single-branch, squash-into-`main` flow.
+
 ---
 
 ## PR Workflow
@@ -356,14 +367,16 @@ The platform-seam refactor (Firestore → Postgres/Supabase) is complete and mer
 Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge. Opening a PR loads `.github/pull_request_template.md` (the checklist below, plus the DB-change question).
 
 Feature PR checklist before opening:
-- [ ] `npm run lint` passes (type-check)
-- [ ] `npm run test` passes (unit suite)
-- [ ] `npm run test:postgres` passes (integration suite against the scratch Supabase project)
-- [ ] `npx playwright test` passes (e2e acid test, `VITE_ADAPTER=memory`)
-- [ ] `npm run build` passes
+- [ ] `npm run lint` passes (type-check) — *also enforced in CI*
+- [ ] `npm run test` passes (unit suite) — *also enforced in CI*
+- [ ] `npm run test:postgres` passes (integration suite against the scratch Supabase project) — **local pre-PR check only, not a CI gate** (see note below)
+- [ ] `npx playwright test` passes (e2e acid test, `VITE_ADAPTER=memory`) — *also enforced in CI*
+- [ ] `npm run build` passes — *also enforced in CI*
 - [ ] No `firebase/*` imports outside `src/platform/`
 - [ ] JOURNAL.md updated
 - [ ] Schema change? → migration in `supabase/migrations/` **and** the other dev flagged (the `db-change-notify` workflow auto-labels + @-mentions on PRs touching migrations)
+
+> **Why `test:postgres` is not a CI gate.** It runs `dotenv -e .env.local -- vitest …` against the scratch Supabase project, and `.env.local` (the Supabase scratch credentials) is gitignored — so CI has no way to run it without provisioning those secrets. It is deliberately a **local pre-PR check**, run by whoever opens the PR. The three checks that *are* branch-protection-required in CI are `lint, unit tests, build`, `firestore rules (emulator)`, and `e2e (memory adapter)`. **At 1.0.0**, wire `test:postgres` into CI against a dedicated ephemeral test schema (its own project or a per-run Supabase branch) with credentials injected as CI secrets, and promote it to a required check.
 
 ---
 
