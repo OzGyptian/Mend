@@ -1,0 +1,27 @@
+# CODEOWNERS — codifies the ownership lanes from ONBOARDING.md §6.
+#
+# Effect: a PR touching any path below auto-requests @WhitewaterBernz's review and
+# flags it. This is ADVISORY (branch protection does not require code-owner review),
+# so it NOTIFIES without blocking — which is exactly right for the *soft* lanes.
+# The *hard* line (database schema) is enforced separately by a failing CI check
+# (see .github/workflows/ci.yml) and the db-change-notify workflow.
+#
+# Most of the tree has no owner here on purpose: Tarek's feature work (risk, progress,
+# changes, subcontracts) needs no review request.
+
+# Platform, infra, and repo config — Bernard's domain
+/supabase/                  @WhitewaterBernz
+/.github/                   @WhitewaterBernz
+/.claude/                   @WhitewaterBernz
+/src/platform/              @WhitewaterBernz
+
+# Bernard's calculation lanes (procurement / EAC / phasing)
+/src/domain/eac.ts          @WhitewaterBernz
+/src/domain/phasing.ts      @WhitewaterBernz
+/src/domain/procurement.ts  @WhitewaterBernz
+/src/domain/rollups.ts      @WhitewaterBernz
+
+# Shared hot files — heads-up to Bernard on any change
+/src/App.tsx                @WhitewaterBernz
+/src/types.ts               @WhitewaterBernz
+/src/domain/types.ts        @WhitewaterBernz
