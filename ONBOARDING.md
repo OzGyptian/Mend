@@ -1,67 +1,70 @@
 # Onboarding — getting set up to build Mend
 
-This guide gets a second developer from zero to a running local Mend, plus the day-to-day
-workflow two people share. It assumes you'll use **Claude Code** as your AI pair.
+This is the shared reference for how two people build Mend together: the access model, the
+daily workflow, ownership lanes, and the one database rule. It assumes you use **Claude Code**
+as your AI pair.
 
-> **The one-line mental model:** everything you need is in this repo plus a set of secrets
-> pulled from Vercel. Your personal global config is irrelevant here — the repo's own
-> `.claude/` rulebook governs how Claude behaves on Mend, identically for both of us.
+> **New developer?** For a full, click-by-click walkthrough (no command-line experience
+> assumed), follow **`GETTING_STARTED_TAREK.md`** — it's the step-by-step version of §1–§4
+> below. This file is the concise "how we work" reference.
 
----
-
-## 1. Access you need (Bernard grants these — 4 invitations)
-
-You can't `git clone` or run the app until these land. Bernard sends them; you accept.
-
-| # | System | What it's for | You'll get… |
-|---|--------|---------------|-------------|
-| 1 | **GitHub** — `OzGyptian/Mend` | The code | Collaborator (push) invite by email |
-| 2 | **Vercel** — the Mend project/team | Deploys + `vercel env pull` (your secrets) | Team invite |
-| 3 | **Supabase** — `mend-migration-scratch` org | The database (synthetic data) | Org member invite |
-| 4 | **Firebase** — the Mend project | Auth + the accept-invite path | Project member invite |
-
-> Data note: the Supabase/Firebase data here is **synthetic/scratch only** — no real
-> customer data. See CLAUDE.md's data-sensitivity section.
+> **The one-line mental model:** everything you need is in this repo. Your development
+> environment runs in the cloud (GitHub Codespaces) and opens in a browser, so it's identical
+> on any machine. The repo's own `.claude/` rulebook governs how Claude behaves on Mend,
+> identically for both of us.
 
 ---
 
-## 2. Tools to install (once, on your machine)
+## 1. Access model (Model B — Bernard owns the platform, you build on it)
 
-- **Node via nvm** — the repo pins the version in `.nvmrc` (currently Node 20).
-- **Vercel CLI** — `npm i -g vercel`
-- **Supabase CLI** — for migrations (`brew install supabase/tap/supabase` or see their docs)
-- **Claude Code** — installed and signed in
+We deliberately keep platform/infrastructure ownership with one person, so a second developer
+can build features without being able to break shared infrastructure. In practice that means
+**you need far less than a full set of platform invites.**
+
+| System | Do you need access? | Why |
+|--------|---------------------|-----|
+| **GitHub** — `OzGyptian/Mend` | ✅ **Yes** — collaborator invite | Push code, open PRs. This is the one invite that matters. |
+| **GitHub Codespaces** | ✅ Comes free with the repo | Your whole dev environment, in the browser. Secrets are injected automatically (Bernard sets them once — see `.devcontainer/SETUP_NOTES.md`). |
+| **Vercel** | ❌ No | Preview deploys build automatically on every PR via the GitHub app — no Vercel login needed. |
+| **Supabase** | ❌ No (Model B) | You build against the existing database via the injected connection keys. You don't manage the project or run migrations — Bernard does. |
+| **Firebase** | ❌ No | The client auth config is committed and public; you just sign in to the app. |
+
+> Data note: the Supabase data here is **synthetic/scratch only** — no real customer data. See
+> CLAUDE.md's data-sensitivity section.
 
 ---
 
-## 3. First-time setup (6 commands)
+## 2. How you work — Codespaces (primary), local (optional)
+
+- **Primary:** open a **Codespace** from the green **Code → Codespaces** button on the repo.
+  Everything is pre-installed (Node 20, deps, Claude Code) and secrets are injected. Works the
+  same on a work laptop (browser only) or a home laptop.
+- **Optional (local):** a full local checkout is possible for speed/offline work. On macOS use
+  `nvm`; on Windows the clean path is **WSL2**. Not required — Codespaces covers everything.
+  See the appendix in `GETTING_STARTED_TAREK.md`.
+
+---
+
+## 3. First run (in a Codespace)
 
 ```bash
-git clone https://github.com/OzGyptian/Mend.git
-cd Mend
-nvm use                     # picks up Node 20 from .nvmrc  (nvm install if prompted)
-npm ci                      # exact dependencies from the lockfile
-vercel link                 # connect this folder to the Mend Vercel project
-vercel env pull .env.local  # materialise secrets locally (this file is gitignored)
-npm run dev                 # → http://localhost:3000
+npm ci        # already run for you on Codespace create
+npm run dev   # → click the forwarded-port pop-up to open the app
 ```
 
-If `npm run dev` serves the app at `localhost:3000`, you're in.
-
-> Prefer not to use Vercel for secrets? You can instead `cp .env.example .env.local` and
-> fill in the values by hand — `.env.example` documents every variable.
+If the app loads, you're in. (In a local checkout, add a `.env.local` first — Codespaces
+injects it automatically.)
 
 ---
 
-## 4. Verify your environment is correct
+## 4. Verify your environment
 
 ```bash
-npm run lint      # type-check — must pass
+npm run lint      # type-check + eslint — must pass
 npm run test      # unit suite — must pass
-./scripts/verify-standalone.sh   # end-to-end check that the repo is self-contained
 ```
 
-Green across all three = your setup matches CI.
+Green on both = your setup matches CI.
 
 ---
 
@@ -72,56 +75,55 @@ Green across all three = your setup matches CI.
 2. New work:           git switch -c feat/<you>-<short-desc>
 3. Code with Claude:   it automatically follows this repo's .claude/ rulebook
 4. Local gate:         npm run lint && npm run test
-5. Push:               git push -u origin HEAD     → a Vercel PREVIEW URL appears
+5. Push:               git push -u origin HEAD     → a Vercel PREVIEW URL appears on the PR
 6. Open a PR:          the template + CI run automatically
 7. Merge when green:   squash-merge → lands as ONE commit on main → deploys to prod
 ```
 
-**Cadence — merge little and often.** A branch should live **hours to a couple of days,
-never a week.** Rebase on `main` at the start of every session. We integrate on `main`
-continuously, *not* in a big batch before a call — that's what keeps merges trivial.
+**Cadence — merge little and often.** A branch should live **hours to a couple of days, never
+a week.** Rebase on `main` at the start of every session. We integrate on `main` continuously,
+*not* in a big batch before a call — that's what keeps merges trivial.
 
-**Branch naming:** `feat/<owner>-<desc>` (e.g. `feat/tarek-risk-export`) so ownership is
-obvious at a glance.
+**Branch naming:** `feat/<owner>-<desc>` (e.g. `feat/tarek-risk-export`) so ownership is obvious
+at a glance.
 
 ---
 
 ## 6. Ownership lanes (fewest collisions)
 
-We each mostly own an area, to keep two people off the same files:
-
-<!-- TODO: Bernard + Tarek confirm this split, then remove this note. -->
+Our working split — keeps two people off the same files. Flag any change to each other rather
+than treating it as fixed:
 
 | Developer | Primary areas |
 |-----------|---------------|
-| **Bernard** | `src/platform/*`, procurement, EAC, phasing |
+| **Bernard** | `src/platform/*`, the database & migrations, procurement, EAC, phasing |
 | **Tarek** | risk, progress, changes, subcontracts |
 | **Shared hot files** | `src/App.tsx`, `src/types.ts` — give a heads-up in the PR; keep edits small and additive |
 
 ---
 
-## 7. Database changes — the one rule that matters
+## 7. Database changes — the one rule that matters (Model B)
 
-We share **one** Supabase database. So:
+We share **one** Supabase database, and under Model B **Bernard owns all schema changes**:
 
-1. **Every schema change is a migration file** in `supabase/migrations/` — never a manual
-   edit in the Supabase Studio SQL editor. (This caused a real breakage, incident P3-0.)
-2. **Tell the other developer.** Opening a PR that touches `supabase/migrations/` triggers
-   the *DB change notify* workflow — it labels the PR `db-change` and @-mentions the other
-   of us automatically. Don't rely only on that; a quick message is polite.
-3. **Migrations reach the shared DB from `main`**, applied with `npx supabase db push`
-   (ideally in CI), *after* merge — never from a feature branch.
+1. **You (Tarek) never change the database structure yourself** — no new tables/columns, no
+   migration files, no edits in the Supabase Studio SQL editor.
+2. **When a feature needs a new field or table**, tell Bernard (a message or a GitHub Issue).
+   He writes the migration and applies it, and tells you when it's live. This is by design —
+   you can't accidentally break the shared database, and you never touch the migration tooling.
+3. **Migrations reach the shared DB from `main`** via `npx supabase db push` — run by Bernard,
+   after merge, never from a feature branch. (This discipline exists because a manual out-of-band
+   change once caused a real breakage, incident P3-0.)
 
-If we start colliding on the shared DB often, that's the signal to graduate to
-per-branch databases (Supabase Branching or local Postgres). Not needed yet.
+If we ever start colliding on the shared DB often, that's the signal to graduate to per-branch
+databases (Supabase Branching or local Postgres). Not needed yet.
 
 ---
 
-## 8. Where the rules live
+## 8. Where the rules and the backlog live
 
 - **`CLAUDE.md`** — project conventions, architecture, the non-negotiable rules.
 - **`.claude/`** — shared Claude Code config; `.claude/README.md` explains it.
 - **`.claude/rules/`** — the engineering standards both of us (and both Claudes) follow.
-
-Questions that aren't answered here belong in a GitHub Issue (that's our backlog) or a
-quick catch-up — not in a private doc only one of us can see.
+- **GitHub Issues** — the backlog. New work, questions, and "the DB needs a new field" requests
+  go here (or a quick catch-up) — not a private doc only one of us can see.
