@@ -1,0 +1,37 @@
+{
+  "name": "Mend",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+
+  // Ports the dev server may bind to (server.ts defaults to 3001; PORT env can set 3000).
+  "forwardPorts": [3000, 3001],
+  "portsAttributes": {
+    "3000": { "label": "Mend app", "onAutoForward": "openPreview" },
+    "3001": { "label": "Mend app (alt)", "onAutoForward": "openPreview" }
+  },
+
+  // Installs deps, installs Claude Code, and materialises .env.local from Codespaces secrets.
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  // These are set ONCE at the repository level (Settings -> Secrets and variables ->
+  // Codespaces) so every member's Codespace inherits them. See .devcontainer/SETUP_NOTES.md.
+  "secrets": {
+    "VITE_ADAPTER": { "description": "Storage adapter: 'supabase' (default) or 'memory'" },
+    "VITE_SUPABASE_URL": { "description": "Mend Supabase URL (client)" },
+    "VITE_SUPABASE_ANON_KEY": { "description": "Mend Supabase anon/public key (client)" },
+    "SUPABASE_URL": { "description": "Mend Supabase URL (server)" },
+    "SUPABASE_SERVICE_ROLE_KEY": { "description": "Mend Supabase service-role key (server)" },
+    "RESEND_API_KEY": { "description": "Resend email API key (server)" },
+    "GEMINI_API_KEY": { "description": "Gemini API key (optional)" },
+    "APP_URL": { "description": "App base URL used in invite links" },
+    "FIREBASE_SERVICE_ACCOUNT_KEY": { "description": "Firebase Admin service-account JSON, single-line (server)" }
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  }
+}

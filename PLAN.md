@@ -1,9 +1,21 @@
-# Mend — Refactor Plan
+# Mend — Refactor Plan  ·  📕 ARCHIVED / HISTORICAL
 
-## Status: Phase 4 complete — Phase 5 (Firestore adapters) is the Tarek review gate
+> **This document is a historical record, not the current plan.** The Firestore→Postgres
+> platform-seam refactor it describes is **complete and merged**, and the Postgres/Supabase
+> build is live (pre-production). Do not treat the phase checkboxes below as current status.
+>
+> **The active backlog now lives in GitHub Issues** (`OzGyptian/Mend`) — that's the single
+> source of truth both developers work from. See also `JOURNAL.md` (running history) and
+> `SYSTEM_REVIEW.md` / `POSTGRES_MIGRATION_PLAN.md` (the deeper analyses this plan drew on).
+>
+> The phase-by-phase detail below is retained because it documents *why* the codebase is shaped
+> the way it is — useful when onboarding or archaeology is needed.
 
-Current branch: `refactor/platform-seam`
-Version: 1.0.3
+---
+
+## (Historical) Status at time of writing: Phase 4 complete — Phase 5 was the Tarek review gate
+
+Branch at the time: `refactor/platform-seam` · Version 1.0.3
 
 ---
 
