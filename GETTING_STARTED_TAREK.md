@@ -186,21 +186,89 @@ Welcome aboard. 🚀
 
 ---
 
-## Appendix (optional, for later) — Full setup on your home laptop
+## Part 10 — Your home Windows laptop
 
-You do **not** need this to work — Codespaces covers everything. But if one day you want the app
-running directly on your home Windows laptop (faster, works offline), the cleanest path on
-Windows is **WSL2** (a built-in Linux layer). It's more involved, so do it with Claude's help or
-ask Bernard to pair on it. Rough shape:
+You have **two** ways to work from your home Windows laptop. **Option 1 is recommended** — it
+needs no setup at all.
 
-1. Install **WSL2** (Microsoft's official 1-command install), then open the "Ubuntu" terminal.
-2. Inside it, install **nvm**, then **Node 20**, and **git**.
-3. `git clone https://github.com/OzGyptian/Mend.git` and `cd Mend`.
-4. `nvm install` → `npm ci`.
-5. Get a `.env.local` from Bernard (secure share) and place it in the folder.
-6. `npm run dev` → open the printed `http://localhost:...` link.
+### Option 1 — Just use Codespaces from home too (recommended, nothing to install)
 
-If any of that snags, stop and ask — the cloud path is always there as the easy default.
+Your home laptop has a browser, and that's all Codespaces needs. Go to
+[github.com/OzGyptian/Mend](https://github.com/OzGyptian/Mend) → green **`< > Code`** →
+**Codespaces**, and open the same Codespace you were already using (or create one). You're back
+exactly where you left off — it's literally the same environment you use at work. Genuinely the
+easiest option, even at home. If that's all you want, you're done — ignore Option 2.
+
+### Option 2 — Install Mend directly on your Windows laptop (optional: faster, works offline)
+
+This runs Mend on your own machine. It's more setup, and the one place you'll do a few
+"technical" steps — take it slowly. Once Claude is installed (Step 3), you can hand the rest to it.
+
+We use **WSL** — a built-in Windows feature that gives you a small Linux system, which is what the
+developer tools expect. It sounds exotic, but it's just a normal Windows install.
+
+**Step 1 — Install WSL (Linux for Windows)**
+
+1. Click **Start**, type **PowerShell**, right-click **Windows PowerShell** → **Run as
+   administrator**.
+2. In the blue window, type this and press Enter:
+   ```powershell
+   wsl --install
+   ```
+3. Let it finish, and **restart your laptop** when it asks.
+4. After the restart, an **Ubuntu** window opens and asks you to create a **username and
+   password** (separate from your Windows login — pick something memorable; the password stays
+   invisible as you type, which is normal).
+
+✅ *You should see:* an Ubuntu window with a prompt ending in `$`. From now on, do everything in
+this **Ubuntu** window (open it any time via Start → type "Ubuntu").
+
+**Step 2 — Install the tools** (paste one block at a time; enter your Ubuntu password if asked)
+
+```bash
+sudo apt update && sudo apt install -y curl git
+```
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+```
+Now **close the Ubuntu window and open a new one**, then:
+```bash
+nvm install 20
+```
+✅ *Check:* `node --version` → shows `v20.something`.
+
+**Step 3 — Install Claude Code**
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+Then start it and sign in when prompted (it opens a browser):
+```bash
+claude
+```
+
+**Step 4 — Let Claude set up the rest.** Inside Claude, just type in plain English:
+
+> *"Log me in to GitHub, clone the OzGyptian/Mend repository into my home folder, and install its
+> dependencies."*
+
+Claude walks you through the GitHub login and runs the rest.
+
+✅ *You should see:* a `Mend` folder in your home directory, with dependencies installed.
+
+**Step 5 — Add your secret keys.** Ask Bernard to send you a `.env.local` file (secure share —
+this is the one time you handle keys directly, because local isn't connected to the cloud
+secrets). Then ask Claude *"help me put this .env.local file into the Mend folder"* and follow
+along — or drag it in with File Explorer (your Linux files appear under
+`\\wsl$\Ubuntu\home\<your-username>\Mend`).
+
+**Step 6 — Run it.** Ask Claude *"start the app"* (or type `npm run dev` inside the Mend folder),
+then open the `http://localhost:...` link it prints in your Windows browser.
+
+✅ **You should see:** Mend running on your own laptop. 🎉
+
+If any step snags, stop and send Bernard the exact message — and remember the **cloud path
+(Option 1) is always there** as the easy fallback.
 
 ---
 
