@@ -6,7 +6,12 @@ name: CI
 # holds if something runs it on every push. This is that something.
 
 on:
+  # PRs to main are the authoritative validation (the DB guard below only has PR
+  # context). Pushes run CI only on main (post-merge) — this avoids duplicate
+  # same-named check runs on a PR head, which could otherwise let the guard be
+  # bypassed. Feature branches get CI via their PR, matching ONBOARDING §5.
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
