@@ -139,18 +139,27 @@ you're only reviewing.
 
 ---
 
-## Part 7 — The database rule (important — and it keeps things simple for you)
+## Part 7 — Your lane, and the one hard rule
 
-We share **one** database, so we've agreed a clean split that means you can't accidentally break it:
+**What you own:** building features in **risk, progress, changes, subcontracts** — that's your
+home turf and the bulk of the work. You can dip into other areas if a feature needs it — just
+mention it in your PR so Bernard knows.
 
-- **You build features** in your areas — **risk, progress, changes, subcontracts** — using the
-  data structure that already exists. That's the large majority of the work.
+**Leave to Bernard:** the behind-the-scenes plumbing (`src/platform/*`), the deploy/hosting setup
+(Vercel, Supabase, Firebase), and the project's config files. You won't normally need these.
+
+**The one hard rule — the database structure.** We share one database, so:
+
 - **You never change the database *structure* yourself** (new tables/columns, etc.).
-- **When a feature needs a new field or table**, just tell Bernard (a message or a GitHub Issue).
-  He makes the change and tells you when it's ready.
+- When a feature needs a new field or table, tell Bernard (a message or a GitHub Issue); he makes
+  the change and tells you when it's ready. You can't accidentally break the shared database, and
+  you never touch the migration tooling.
 
-So: build freely; when you hit *"the database needs to store something new,"* that's your cue to
-ping Bernard rather than doing it yourself.
+**You can merge your own work** once the automated checks pass — they're your safety net. If the
+checks come back red, don't merge: fix it (Claude can help) or ask Bernard.
+
+**Always stop and ask Bernard first** before anything that **deletes data**, **force-pushes**, or
+touches the **live / production database**.
 
 ---
 

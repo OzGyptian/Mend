@@ -89,16 +89,32 @@ at a glance.
 
 ---
 
-## 6. Ownership lanes (fewest collisions)
+## 6. Who does what — rules of engagement
 
-Our working split — keeps two people off the same files. Flag any change to each other rather
-than treating it as fixed:
+Two principles keep two people productive without stepping on each other:
+**lanes are soft, the database is hard.** You can cross a lane with a heads-up in the PR; you
+never cross the database line.
 
-| Developer | Primary areas |
-|-----------|---------------|
-| **Bernard** | `src/platform/*`, the database & migrations, procurement, EAC, phasing |
-| **Tarek** | risk, progress, changes, subcontracts |
-| **Shared hot files** | `src/App.tsx`, `src/types.ts` — give a heads-up in the PR; keep edits small and additive |
+| Area | Bernard | Tarek |
+|------|---------|-------|
+| Feature code — **risk, progress, changes, subcontracts** | supports / reviews | **owns & builds** |
+| Feature code — **procurement, EAC, phasing** | **owns** | may touch with a PR heads-up (soft lane) |
+| **Platform** (`src/platform/*`) | **owns** | avoid; flag if a feature genuinely needs it |
+| **Database schema & migrations** | **owns — Bernard only** | **never changes schema** (hard line) — proposes changes via Issue/message; see §7 |
+| **Merging to `main` / shipping to prod** | self-merges when CI is green | **self-merges when CI is green** — CI is the guardrail (see below) |
+| **Infrastructure** — Vercel, Supabase, Firebase, Codespaces secrets | **owns** | not needed (Model B) |
+| **Repo config** — `.claude/` rulebook, CI workflows, branch protection | **owns** | leave alone |
+| **Adding npm dependencies** | ok | ok if the feature needs it — call it out in the PR |
+| **Risky ops** — delete data, force-push, touch the prod DB | with care | **stop and ask Bernard first** |
+
+**Shared hot files** (`src/App.tsx`, `src/types.ts`): give a heads-up in the PR and keep edits
+small and additive.
+
+**Merging = deploying.** `main` auto-deploys to the production URL, and we run **no human review
+gate** during this pre-production phase — either person merges once CI is green. That makes the
+**CI checks (lint, tests, e2e, build) the real guardrail**: if they're red, nobody merges; keep
+them honest and green. (When real customers exist, we reinstate a review gate — see CLAUDE.md's
+branch strategy.)
 
 ---
 
