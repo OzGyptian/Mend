@@ -6,7 +6,12 @@ name: CI
 # holds if something runs it on every push. This is that something.
 
 on:
+  # PRs to main are the authoritative validation (the DB guard below only has PR
+  # context). Pushes run CI only on main (post-merge) — this avoids duplicate
+  # same-named check runs on a PR head, which could otherwise let the guard be
+  # bypassed. Feature branches get CI via their PR, matching ONBOARDING §5.
   push:
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -18,8 +23,38 @@ jobs:
   verify:
     name: lint, unit tests, build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
+
+      # Model B hard line: the shared database schema is Bernard-only. Because the
+      # team self-merges when CI is green, a failing check here *is* the block — no
+      # human review gate needed. Bernard's own migration PRs pass; anyone else's fail.
+      # See ONBOARDING.md §6/§7.
+      - name: Guard — database schema is Bernard-only (Model B)
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          DB_OWNERS="WhitewaterBernz"   # GitHub logins allowed to change migrations
+          files=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+                    --paginate --jq '.[].filename')
+          migr=$(printf '%s\n' "$files" | grep -E '^supabase/migrations/' || true)
+          if [ -z "$migr" ]; then
+            echo "No migration changes — nothing to guard."
+            exit 0
+          fi
+          if printf '%s ' $DB_OWNERS | grep -qw -- "$PR_AUTHOR"; then
+            echo "✓ $PR_AUTHOR is allowed to change database migrations."
+            exit 0
+          fi
+          echo "::error title=Database schema is Bernard-only::PR by '$PR_AUTHOR' changes supabase/migrations/ — under Model B only [$DB_OWNERS] may. Ask Bernard to make the schema change (see ONBOARDING §7)."
+          printf 'Blocked migration file(s):\n%s\n' "$migr"
+          exit 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
