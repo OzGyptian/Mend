@@ -53,6 +53,7 @@ describe('PostgresChangeAdapter', () => {
       status: 'Open',
     } as never);
     expect(created.description).toBe('Additional structural review required');
+    expect(created.changeId).toBe('CHG-001');
 
     const record = await adapter.createChangeRecord({
       projectId,

@@ -61,7 +61,7 @@ export function toRow<T>(
  */
 export function fromRow<T>(row: Record<string, unknown>, renames: Record<string, string> = {}): T {
   const withRenames: Record<string, unknown> = { ...row };
-  for (const [dbCol, domainSnakeEquivalent] of Object.entries(renames)) {
+  for (const [domainSnakeEquivalent, dbCol] of Object.entries(renames)) {
     if (dbCol in withRenames) {
       withRenames[domainSnakeEquivalent] = withRenames[dbCol];
       delete withRenames[dbCol];

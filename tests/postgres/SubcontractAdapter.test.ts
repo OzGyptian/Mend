@@ -65,9 +65,11 @@ describe('PostgresSubcontractAdapter', () => {
       totalAmount: 250000,
     } as never);
     expect(created.orderName).toBe('Structural Steel Subcontract');
+    expect(created.orderId).toBe('SC-001');
 
     const fetched = await adapter.getSubcontract(created.id);
     expect(fetched?.orderName).toBe('Structural Steel Subcontract');
+    expect(fetched?.orderId).toBe('SC-001');
 
     await adapter.updateSubcontract(created.id, { status: 'Complete' });
     const afterUpdate = await adapter.getSubcontract(created.id);
