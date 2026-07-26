@@ -54,6 +54,55 @@ touched → no env needed → app boots. Verified: `npm run lint` clean; a no-en
 imports without throwing (old code threw) and only errors on actual use.
 
 Unblocks the shared red required check that was holding up PRs #28 and #29 and `main`'s CI.
+## Session — 2026-07-26 — Fix missing Change ID / Risk ID / Order ID on read (v0.2.9)
+
+### What we set out to do
+
+Tarek reported that after creating a Change in Change Management, the "Change ID" column
+came back blank, breaking the click-through into that Change's Records panel.
+
+### Root cause
+
+`src/platform/supabase/caseConvert.ts`'s `fromRow()` applies a per-adapter `renames` map
+(e.g. `{ change_id: 'change_code' }`) to translate a handful of human-facing code columns
+that don't match the generic camelCase-to-snake_case convention back to their domain field
+names. The loop was applying that map in the same direction as `toRow` (the write path)
+instead of inverting it, so the real DB column (`change_code`) was never recognized and
+never renamed back to the domain field (`changeId`) — it just fell through to
+`rowToCamel` and came out as `changeCode`, which nothing reads. Confirmed via direct query
+against the scratch Supabase project that the data itself was correct
+(`change_code: 'INT-001'`); only the read-side mapping was broken.
+
+The same `renames` convention is used by three other adapters — `RiskAdapter`
+(`riskId`/`risk_code`), `SubcontractAdapter` (`orderId`/`order_code`,
+`invoiceId`/`invoice_code`) — so Risk ID and Subcontract Order ID had the identical latent
+bug, just not yet reported.
+
+### Fix
+
+Two-line fix in `fromRow()`: iterate the renames map in the direction it's actually
+documented (`{ domainSnakeForm: actualDbColumn }`) and check for the real DB column rather
+than the pre-rename name. No adapter code needed to change — every adapter using the
+shared `renames` convention is fixed by the one shared function.
+
+### Regression coverage
+
+- New `tests/unit/caseConvert.test.ts` — fast, pure unit test on `toRow`/`fromRow`
+  round-tripping a renamed column, independent of any live database.
+- Added `changeId`/`riskId`/`orderId` assertions to the existing
+  `tests/postgres/{Change,Risk,Subcontract}Adapter.test.ts` integration tests (none of
+  them asserted on the human-facing code before — that's why this shipped unnoticed).
+
+### Verified
+
+- Reproduced first: added the assertion, watched it fail against the real scratch Supabase
+  project, then confirmed it passes after the fix.
+- Full `npm run test:postgres` (62/63, the 1 fail pre-existing/unrelated), `npm run test`
+  (277/277), `npx playwright test` (47/47, memory adapter), `npm run build`, `npm run lint`
+  (0 errors) — all clean.
+- Live-verified on a Vercel preview deploy (`fix/change-id-read-mapping` branch) against the
+  real "Test Project" data (Laing O'Rourke enterprise): Change ID now shows `INT-001` /
+  `INT-002` where it was previously blank. Confirmed visually by Tarek before merge.
 
 ---
 
