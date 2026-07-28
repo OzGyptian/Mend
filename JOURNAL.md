@@ -26,7 +26,30 @@ cause: 0038 derived its allowed set from live data + assumption, never from the 
 `0046` realigns the CHECK to the UI/TS vocabulary (no rows lost — live data is only
 `Active` ×5 and NULL ×4).
 
-### Also in 0046 — the four categoricals 0038 deferred
+### Applying it: two real obstacles, both now resolved
+
+**1. Migration-history drift (issue #26, no longer hypothetical).** `supabase db push` was
+unsafe: the ledger recorded 42 timestamp-named versions (`20260712...`-`20260717...`) while the
+repo names files `0001`-`0046` -- zero overlap, so the CLI believed nothing had been applied and
+would have replayed all 46 against a live database. Probing proved the *schema* was already at
+`0045` (0038 constraint present, 0041/0044 dropped columns gone); only the bookkeeping was wrong.
+Fixed with `migration repair --status applied 0001..0045` + `--status reverted` on the 42 orphans
+(ledger-only, no SQL executed). Ledger is now clean: 46 applied, 0 pending, 0 orphans.
+
+**2. Half of this migration was redundant.** The first push failed at the `progress_items`
+constraint. Cause was not the data -- `0008` had ALREADY created those CHECKs inline at table
+creation (and `0017` did the same for `etc_details.phasing_method`), with Postgres auto-naming
+them exactly the names used here. 0038 had listed them as "pending investigation" without
+checking whether they already existed. Their vocabularies match the UI/TS sets exactly, which
+independently corroborates the research above. 0046 was reduced to what is genuinely unguarded:
+`cost_codes.eac_method` and `sheets.forecast_method` (both confirmed unconstrained by writing an
+invalid value and observing it accepted). A false lead about apostrophes in SQL comments was
+investigated and discarded on evidence.
+
+**Verified live after applying** (probe row restored afterwards): `Closed` ACCEPTED, `Archived`
+ACCEPTED, `On Hold` ACCEPTED, `Bogus` still REJECTED, and an invalid `eac_method` now rejected.
+
+### Also in 0046 — the categoricals 0038 deferred
 
 Each vocabulary was confirmed three ways (UI options == TS type ⊇ live values) before
 constraining, precisely to avoid repeating the above:
