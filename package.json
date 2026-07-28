@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.2.15",
+  "version": "0.2.16",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -12,6 +12,7 @@
     "lint": "tsc --noEmit && eslint src --ext .ts,.tsx",
     "lint:boundary": "eslint src --ext .ts,.tsx",
     "ratchet": "node scripts/ratchet.mjs",
+    "db:drift": "node scripts/check-migration-drift.mjs",
     "ratchet:write": "node scripts/ratchet.mjs --write",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
