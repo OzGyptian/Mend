@@ -53,8 +53,10 @@ describe('PostgresRiskAdapter', () => {
       residualExposure: 0,
     } as never);
     expect(created.description).toBe('Ground conditions worse than expected');
+    expect(created.riskId).toBe('RISK-001');
 
     const list = await adapter.listRisks(projectId);
+    expect(list.find((r) => r.id === created.id)?.riskId).toBe('RISK-001');
     expect(list.map((r) => r.id)).toContain(created.id);
 
     await adapter.updateRisk(created.id, { status: 'Mitigated' });
