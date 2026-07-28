@@ -2,6 +2,60 @@
 
 ---
 
+## Session — 2026-07-28 (late) — RCA + remediation: close the schema-verification gap (v0.2.16)
+
+### Why
+
+Three failures in one fortnight (10-day CI outage, 11-day production bug, a near-miss that
+would have replayed 46 migrations on the live DB) all had the same shape: **two
+representations of one fact diverged and nothing detected it.** Full analysis in
+`docs/audit/rca-2026-07-28.md`.
+
+The structural cause: the ports-and-adapters seam is the codebase strength, but **all
+enforced testing runs against the in-memory fake, which has no schema, no constraints and
+no migrations.** No CI job touches the real database (verified: zero references to
+test:postgres / SUPABASE in any workflow). So the whole class of schema defects is invisible
+to CI by construction.
+
+### What was built
+
+1. **`tests/unit/vocabulary-contract.test.ts`** — parses CHECK sets straight out of the
+   migration files and asserts **code-vocabulary is a SUBSET OF db-vocabulary** for every
+   registered column. Needs no database, runs in the existing unit job. A completeness guard
+   fails when a new CHECK appears with no registered code vocabulary, so constraints cannot
+   be added unverified.
+   **It immediately found a second live bug** (below) — the exact class it was built for.
+2. **e2e failure legibility** (`tests/e2e/memory.fixtures.ts`) — page/console errors are
+   captured and surfaced in the assertion when the shell fails to render. The 10-day outage
+   presented as 30 silent timeouts with the true cause (`supabaseUrl is required`) buried in
+   a trace artifact; it now appears in the CI log.
+3. **`tests/unit/adapter-boot.test.ts`** — encodes the rule that importing a storage adapter
+   must never require that adapter env, statically. Prevents the F1 regression class.
+4. **`scripts/check-migration-drift.mjs`** + `npm run db:drift` — diffs repo migrations
+   against the live ledger, reporting pending and orphaned versions. Local-only (needs
+   credentials), which is itself an argument for issue #26.
+
+### Second live bug found (F5) — changes.status rejects "Withdrawn"
+
+The new contract test caught it on first run. The app writes
+`'Approved' | 'Pending' | 'Rejected' | 'Withdrawn'` (domain/types.ts:465, schemas/change.ts:10,
+the dropdown at ChangeManagement.tsx:611, and the grid editor at change-management/columns.tsx:105),
+but `changes_status_check` from 0038 permits `Open/Pending/Under Review/Approved/Rejected/Cancelled`
+— no `Withdrawn`. Verified live: the update is rejected. Same class and same origin as the
+projects.status bug fixed in 0046.
+
+`0047_fix_changes_status_vocabulary.sql` widens the CHECK to include the four values the app
+writes (retaining the three legacy values, since the enforced invariant is subset, not equality).
+**Written and proven by the test, but NOT yet applied** — applying a new migration to the
+shared production-serving database needs explicit sign-off.
+
+Worth recording honestly: earlier in the same session I asserted that `changes.status` was
+"a strict superset of the UI options, so it cannot break a UI action". That was wrong — read
+from three lines of a dropdown instead of all four. The mechanical check found in one run what
+careful reading had missed. That is the whole point of the remediation.
+
+---
+
 ## Session — 2026-07-28 — D1 remainder + fix a LIVE breakage from 0038 (v0.2.14)
 
 ### Headline: migration 0038 broke two project-status options in production
