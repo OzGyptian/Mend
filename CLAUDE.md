@@ -341,20 +341,42 @@ The platform-seam refactor (Firestore → Postgres/Supabase) is complete and mer
 
 **This changes once there's a real production deployment with real users.** At that point, reinstate a review-before-merge gate (or equivalent — CI-enforced checks, a staging environment, whatever fits by then) before anything reaches production. The current permissiveness is specific to this being pre-production, synthetic-data development — see the data-sensitivity note above, which draws the same production/development line.
 
+### Cadence & mechanics
+
+- **Branch naming:** `feat/<owner>-<short-desc>` (e.g. `feat/tarek-risk-export`) so ownership is visible at a glance.
+- **Merge little and often.** A feature branch lives **hours to a couple of days, never a week.** We integrate on `main` continuously — *not* in a big batch before a call. Long-lived branches are what make merges (and shared-DB schema drift) painful.
+- **Rebase at the start of every session:** `git switch main && git pull --rebase origin main`, then branch. Branch protection requires branches be up to date before merge, which enforces this.
+- **Squash-merge only.** Each PR collapses to exactly one commit on `main` — one clean feature commit, linear history. Commit incrementally on your branch (per the version-bump rule below); those squash away on merge.
+- **Merge gate:** PR + all CI checks green. No mandatory human approval during this pre-production phase (see above).
+
+### Production boundary — how 1.0.0 ships (design ahead of time)
+
+Today there is exactly **one** long-lived branch: `main`, which Vercel auto-deploys to the production URL. There is **no separate `production` branch**, and we are not going to add one. When 1.0.0 arrives, the production boundary is a **tag**, not a second branch:
+
+- **Release = an annotated, immutable git tag** (`v1.0.0`, `v1.0.1`, …) on a commit of `main`. Production deploys are pinned to a tag, never to "whatever `main` is right now."
+- **Why a tag, not a `production` branch:** a tag is immutable and cannot drift. A second long-lived branch promoted from `main` (via squash- or merge-commit) develops a permanently divergent history even when the *trees* are identical — the "phantom-ahead" trap where production reads as forever behind `main`. A tag sidesteps that class of bug entirely: there is no promotion merge, so there is nothing to drift.
+- **If a promotion merge is ever unavoidable** (e.g. a real `release` branch is introduced later), it must be **fast-forward-only** — never squash or merge-commit across the production boundary — precisely to avoid the drift above. Squash-only (below) is correct for `feature → main`; it is *wrong* for any `main → release` promotion. Keep the two rules distinct.
+- **Rollback = re-deploy the previous tag.** No revert-and-repush dance on `main`.
+
+This is a forward design note, not a live process yet — nothing here changes the current single-branch, squash-into-`main` flow.
+
 ---
 
 ## PR Workflow
 
-Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge.
+Short-lived feature branches → PR → `main`. Either Bernard or Tarek can open and merge. Opening a PR loads `.github/pull_request_template.md` (the checklist below, plus the DB-change question).
 
 Feature PR checklist before opening:
-- [ ] `npm run lint` passes (type-check)
-- [ ] `npm run test` passes (unit suite)
-- [ ] `npm run test:postgres` passes (integration suite against the scratch Supabase project)
-- [ ] `npx playwright test` passes (e2e acid test, `VITE_ADAPTER=memory`)
-- [ ] `npm run build` passes
+- [ ] `npm run lint` passes (type-check) — *also enforced in CI*
+- [ ] `npm run test` passes (unit suite) — *also enforced in CI*
+- [ ] `npm run test:postgres` passes (integration suite against the scratch Supabase project) — **local pre-PR check only, not a CI gate** (see note below)
+- [ ] `npx playwright test` passes (e2e acid test, `VITE_ADAPTER=memory`) — *also enforced in CI*
+- [ ] `npm run build` passes — *also enforced in CI*
 - [ ] No `firebase/*` imports outside `src/platform/`
 - [ ] JOURNAL.md updated
+- [ ] Schema change? → migration in `supabase/migrations/` **and** the other dev flagged (the `db-change-notify` workflow auto-labels + @-mentions on PRs touching migrations)
+
+> **Why `test:postgres` is not a CI gate.** It runs `dotenv -e .env.local -- vitest …` against the scratch Supabase project, and `.env.local` (the Supabase scratch credentials) is gitignored — so CI has no way to run it without provisioning those secrets. It is deliberately a **local pre-PR check**, run by whoever opens the PR. The three checks that *are* branch-protection-required in CI are `lint, unit tests, build`, `firestore rules (emulator)`, and `e2e (memory adapter)`. **At 1.0.0**, wire `test:postgres` into CI against a dedicated ephemeral test schema (its own project or a per-run Supabase branch) with credentials injected as CI secrets, and promote it to a required check.
 
 ---
 
@@ -362,5 +384,6 @@ Feature PR checklist before opening:
 
 - **Bernard** and **Tarek** both actively build features, in parallel, on separate short-lived branches
 - Coordination happens via GitHub Issues (the project backlog) and regular catch-ups, not a single gatekeeper reviewing every change — see the backlog reference in memory for the issue list
-- Bernard uses Claude Code; Tarek uses Gemini. Both should work from this file (`CLAUDE.md`) for project conventions — if Tarek's tooling wants its own file (e.g. `GEMINI.md`), it should point back here rather than fork into a second, potentially divergent copy
-- Rough ownership lanes (which of the two takes which features) are agreed between them directly, not dictated by this file
+- **Both develop with Claude Code.** The repo is self-contained for AI-assisted work: shared conventions live in this file (`CLAUDE.md`) and in the committed `.claude/` config (see `.claude/README.md`). Project-level `.claude/rules/` and `.claude/agents/` override each person's personal global config, so both of us — and both Claude instances — code to an identical rulebook. If any tooling wants its own entrypoint file, it should point back here rather than fork a divergent copy.
+- **New-developer setup lives in `ONBOARDING.md`** (access grants, local bootstrap, the daily loop).
+- **Ownership lanes** (which of the two takes which areas) are agreed directly and recorded in `ONBOARDING.md §6`; they keep two people off the same files. Shared hot files (`src/App.tsx`, `src/types.ts`) get a heads-up in the PR.
