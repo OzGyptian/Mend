@@ -26,6 +26,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run lint
+      # Debt ratchet (A1/#18): fails if no-explicit-any count or >800-line file count
+      # rises above the committed baseline. Warnings don't fail a build; the trend does.
+      - run: npm run ratchet
       - run: npm run test
       - run: npm run build
 
