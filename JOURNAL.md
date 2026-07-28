@@ -2,6 +2,57 @@
 
 ---
 
+## Session — 2026-07-28 — D1 remainder + fix a LIVE breakage from 0038 (v0.2.14)
+
+### Headline: migration 0038 broke two project-status options in production
+
+While reconciling the D1 remainder (#25), found that `0038_d1_enum_normalise_and_checks.sql`
+(applied 2026-07-17) added `projects_status_check` allowing
+`('Active','Inactive','Complete','On Hold')` — but the status dropdown offers
+**Active / On Hold / Closed / Archived** (`EnterpriseAdmin.tsx`,
+`enterprise-admin/columns.tsx`), and `domain/types.ts` declares
+`ProjectStatus = 'Active' | 'On Hold' | 'Closed' | 'Archived'`.
+
+Only `Active` and `On Hold` overlap, so **selecting "Closed" or "Archived" has been failing
+since 0038**. Verified live against the scratch/prod DB (reversible probe, row restored):
+
+```
+update projects set status='Closed'
+  -> ERROR: new row violates check constraint "projects_status_check"
+```
+
+Same class as incident P3-0: a constraint whose vocabulary disagrees with the code. Root
+cause: 0038 derived its allowed set from live data + assumption, never from the UI.
+`0046` realigns the CHECK to the UI/TS vocabulary (no rows lost — live data is only
+`Active` ×5 and NULL ×4).
+
+### Also in 0046 — the four categoricals 0038 deferred
+
+Each vocabulary was confirmed three ways (UI options == TS type ⊇ live values) before
+constraining, precisely to avoid repeating the above:
+
+- `cost_codes.eac_method` — the EAC strategy switch (a typo mis-computes cost-at-completion)
+- `progress_items.phasing_curve` / `current_phasing_curve` / `phasing_method` / `current_phasing_method`
+- `etc_details.phasing_method` (`Manual` | `Auto-Phase` — a different vocabulary from the
+  same-named progress column, confirmed and constrained as-is)
+- `sheets.forecast_method`
+
+**Still deferred, with reasons:** `invoice_items.type` (all rows NULL, no evidence for a
+canonical set — guessing is exactly what broke projects.status); `changes.status` (0038's
+set is a strict superset of the UI options, so it cannot break an action).
+
+### Found but NOT bundled (behaviour change — needs its own characterization test)
+
+There are **two phasing implementations**: `src/domain/phasing.ts` `calculatePhasing()`
+(title-case, 13 unit tests, used by cost/timephasing/subcontracts) and an inline duplicate
+`calculateDistribution()` in `ProgressTracking.tsx:345` (lowercase vocabulary, used by
+progress). They are each internally consistent, so **there is no live wrong-number bug** —
+but they have diverged: the domain engine treats `Bell` and `S-Curve` as distinct curves,
+while the component copy computes them identically. Unifying them changes displayed progress
+numbers, so it is deliberately left out of this migration.
+
+---
+
 ## Session — 2026-07-28 — Wave 1 (A1): debt ratchet — the enforcement half of the ESLint work (v0.2.11)
 
 ### Context
