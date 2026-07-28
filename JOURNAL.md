@@ -2,6 +2,33 @@
 
 ---
 
+## Session — 2026-07-28 — Wave 1 (A1): debt ratchet — the enforcement half of the ESLint work (v0.2.11)
+
+### Context
+
+Audit Wave 1 (`docs/audit/phase-5-report.md`) was ~80% delivered in PR #27 (07-17): the
+ESLint react-hooks rules (`rules-of-hooks` error, `exhaustive-deps` warn) and
+`no-explicit-any` warn are live and `npm run lint` is clean (0 errors). The one piece the
+audit called for that was **not** built is the **ratchet** (issue #18) — warnings don't fail
+a build, so nothing stops the debt from growing back.
+
+### What was added
+
+- `scripts/ratchet.mjs` + `ratchet-baseline.json` (committed baseline) + `npm run ratchet` /
+  `ratchet:write`. Tracks two metrics: `no-explicit-any` warning count (via ESLint JSON) and
+  count of `src/**/*.{ts,tsx}` files >800 lines. Fails if either **rises** above baseline;
+  when a metric drops, it says to re-run `ratchet:write` to lock the gain in. Debt can shrink,
+  never grow.
+- Wired into `ci.yml`'s required `lint, unit tests, build` job (after `npm run lint`), so the
+  trend is enforced on every PR — consistent with the self-merge-when-green model.
+- Baseline captured today: **1092** `no-explicit-any`, **19** files >800 lines.
+
+Verified: passes at baseline; a negative test (baseline set 1 lower) correctly fails the build.
+This closes the enforcement gap in A1 (#18); the remaining Wave 1 items (D1 enum remainder #25,
+platform-admin finish #12/#13, dev/prod DB split #26) are unaffected.
+
+---
+
 ## Session — 2026-07-28 — Fix e2e blank-page / boot crash: lazy Supabase client (v0.2.9)
 
 ### Root cause
