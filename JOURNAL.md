@@ -2,6 +2,34 @@
 
 ---
 
+## Session — 2026-07-28 — Fix e2e blank-page / boot crash: lazy Supabase client (v0.2.9)
+
+### Root cause
+
+Every `e2e (memory adapter)` CI run had been failing for ~10 days — each a 1h17m timeout where
+the app rendered a blank page (`<div id="root"></div>`, no `<nav>`) and all ~30 tests timed out.
+Trace evidence from a failed run showed the page-side error **`supabaseUrl is required.`** thrown
+from `new SupabaseClient(...)`.
+
+`src/platform/supabase/client.ts` constructed the client **eagerly at module load**, and the
+composition root (`context.tsx`) statically imports all 12 Postgres adapters regardless of
+`VITE_ADAPTER`. So `createClient(undefined, …)` ran on every boot — including memory/e2e mode,
+where `VITE_SUPABASE_URL` is intentionally absent — throwing before React could mount. Masked
+locally because dev `.env.local` supplies the URL; CI's memory job (correctly) does not. This is
+GitHub issue #14 (static Postgres-adapter imports) surfacing as a hard CI failure.
+
+### Fix
+
+Made the Supabase client **lazy** (`src/platform/supabase/client.ts`): a `getClient()` memoised
+constructor behind a `Proxy` so `supabase.from(...)`/`.auth`/`.channel(...)` call sites are
+unchanged, but nothing is constructed until first real use. In memory mode the client is never
+touched → no env needed → app boots. Verified: `npm run lint` clean; a no-env module-import test
+imports without throwing (old code threw) and only errors on actual use.
+
+Unblocks the shared red required check that was holding up PRs #28 and #29 and `main`'s CI.
+
+---
+
 ## Session — 2026-07-18 — Fix Cost/Change/Risk crash on malformed reportingPeriods (v0.2.6)
 
 ### What we set out to do
