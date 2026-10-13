@@ -270,7 +270,15 @@ Vercel's environment variable UI). **Never commit the JSON file or check it into
 Run these before writing any code:
 
 1. Read JOURNAL.md (last entry) and PLAN.md (current phase) to orient
-2. Check for orphaned Claude branches: `git branch -a | grep claude/`; check for unique commits with `git log main..<branch> --oneline`
+2. **Check for abandoned work** — `npm run branches`. It reports every branch and stash, says which are
+   finished with, and names the ones holding work `main` does not have. `npm run branches:prune` deletes
+   only the proven-merged ones and prints how to get each back; it never touches a long-lived branch such
+   as `production`, nor one with an open pull request.
+
+   Do not answer this with `git log main..<branch>`. Where pull requests are squash-merged the work gets a
+   new commit identity, so the originals never appear in `main` even though every line of them did — on
+   EA_Explorer that reported 38 branches of "unmerged work" against a true number of zero. A check that
+   cries wolf is a check nobody runs, which is how the branches accumulated in the first place.
 3. Verify clean working tree: `git status` must be clean before making changes
 4. Baseline type-check: `npm run lint` must pass before any changes
 5. State out loud what you are building and which files will change

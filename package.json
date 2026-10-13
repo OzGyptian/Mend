@@ -24,7 +24,9 @@
     "test:rules": "firebase emulators:exec --only firestore --project mend-rules-test \"vitest run --config vitest.rules.config.ts\"",
     "test:postgres": "dotenv -e .env.local -- vitest run --config vitest.postgres.config.ts",
     "dev:memory": "VITE_ADAPTER=memory vite --port 5178 --strictPort",
-    "dev:postgres": "VITE_ADAPTER=postgres dotenv -e .env.local -- vite --port 5179 --strictPort"
+    "dev:postgres": "VITE_ADAPTER=postgres dotenv -e .env.local -- vite --port 5179 --strictPort",
+    "branches": "node scripts/branches.cjs",
+    "branches:prune": "node scripts/branches.cjs --prune"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
